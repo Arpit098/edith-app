@@ -8,12 +8,14 @@ import { colors, radius, space } from '../../ui/theme';
 import { toast } from '../../ui/toast';
 import { ItemView } from './ItemView';
 import { summarize, type Item, type LiveModel, type LiveState } from './model';
+import { VoiceBar } from './VoiceBar';
+import type { VoiceModel, VoiceState } from './voice';
 
 const selectItems = (s: LiveState) => s.items;
 const selectTitle = (s: LiveState) => s.session?.title ?? null;
 const keyOf = (item: Item) => String(item.id);
 
-export function LiveScreen({ model }: { model: LiveModel }) {
+export function LiveScreen({ model, voice }: { model: LiveModel; voice: VoiceModel }) {
   const items = useStore(model.store, selectItems);
   const onPress = useCallback(
     (id: number, action: string) =>
@@ -45,7 +47,7 @@ export function LiveScreen({ model }: { model: LiveModel }) {
         // Outside the list: an inverted list would draw its empty component upside down.
         <Empty icon="message-processing-outline" title="Nothing yet" detail="EDITH's live session shows up here as it happens, from the app, Telegram or the terminal." />
       )}
-      <Composer model={model} />
+      <Composer model={model} voice={voice} />
     </View>
   );
 }
@@ -80,18 +82,33 @@ const TurnBar = memo(function TurnBar({ model }: { model: LiveModel }) {
 
 const selectBusy = (s: LiveState) => summarize(s).busy;
 
-const Composer = memo(function Composer({ model }: { model: LiveModel }) {
+const selectVoicePhase = (s: VoiceState) => s.phase;
+const selectVoiceError = (s: VoiceState) => s.error;
+const selectVoiceAvailable = (s: VoiceState) => s.available;
+
+const Composer = memo(function Composer({ model, voice }: { model: LiveModel; voice: VoiceModel }) {
   const busy = useStore(model.store, selectBusy);
+  const voicePhase = useStore(voice.store, selectVoicePhase);
+  const voiceError = useStore(voice.store, selectVoiceError);
+  const canTalk = useStore(voice.store, selectVoiceAvailable);
   const [text, setText] = useState('');
+  const [fromVoice, setFromVoice] = useState(false); // the box holds words Arpit said: send them as voice
   const [sending, setSending] = useState(false);
   const [stopping, setStopping] = useState(false);
 
+  const edit = (t: string) => {
+    setText(t);
+    if (!t.trim()) setFromVoice(false);
+  };
   const send = () => {
     const t = text.trim();
     if (!t || sending) return;
     setSending(true);
-    model.send(t).then(
-      () => setText(''),
+    model.send(t, { voice: fromVoice }).then(
+      () => {
+        setText('');
+        setFromVoice(false);
+      },
       (e: unknown) => toast(`Not sent: ${e instanceof Error ? e.message : String(e)}`),
     ).finally(() => setSending(false));
   };
@@ -99,21 +116,40 @@ const Composer = memo(function Composer({ model }: { model: LiveModel }) {
     setStopping(true);
     model.stop().then(toast, (e: unknown) => toast(`Couldn't stop: ${e instanceof Error ? e.message : String(e)}`)).finally(() => setStopping(false));
   };
+  const stopTalking = () =>
+    void voice.stop().then((said) => {
+      if (!said) return;
+      setText((t) => (t.trim() ? `${t.trimEnd()} ${said}` : said)); // add to what's typed, never replace it
+      setFromVoice(true);
+    });
 
+  const talking = voicePhase !== 'idle' && voicePhase !== 'starting';
   return (
-    <View style={styles.composer}>
-      <TextInput
-        style={styles.input}
-        value={text}
-        onChangeText={setText}
-        placeholder="Message EDITH"
-        placeholderTextColor={colors.textDim}
-        multiline
-        maxLength={8000}
-        accessibilityLabel="Message"
-      />
-      {busy ? <Button icon="stop" variant="danger" onPress={stop} busy={stopping} accessibilityLabel="Stop" /> : null}
-      <Button icon="send" variant="primary" onPress={send} busy={sending} disabled={!text.trim()} accessibilityLabel="Send" />
+    <View>
+      {voiceError && !talking ? <Text style={styles.voiceError}>{voiceError}</Text> : null}
+      <View style={styles.composer}>
+        {talking ? (
+          <VoiceBar voice={voice} onStop={stopTalking} />
+        ) : (
+          <TextInput
+            style={styles.input}
+            value={text}
+            onChangeText={edit}
+            placeholder="Message EDITH"
+            placeholderTextColor={colors.textDim}
+            multiline
+            maxLength={8000}
+            accessibilityLabel="Message"
+          />
+        )}
+        {busy && !talking ? <Button icon="stop" variant="danger" onPress={stop} busy={stopping} accessibilityLabel="Stop" /> : null}
+        {canTalk && !talking && !text.trim() ? (
+          <Button icon="microphone" variant="secondary" onPress={() => void voice.start()} busy={voicePhase === 'starting'} accessibilityLabel="Talk to EDITH" />
+        ) : null}
+        {!talking && (text.trim() || !canTalk) ? (
+          <Button icon="send" variant="primary" onPress={send} busy={sending} disabled={!text.trim()} accessibilityLabel="Send" />
+        ) : null}
+      </View>
     </View>
   );
 });
@@ -127,5 +163,6 @@ const styles = StyleSheet.create({
   barText: { color: colors.text, fontSize: 13, flex: 1 },
   barTitle: { color: colors.textDim, fontSize: 12, maxWidth: '40%' },
   composer: { flexDirection: 'row', alignItems: 'flex-end', gap: space.s, padding: space.s, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
+  voiceError: { color: colors.danger, fontSize: 13, paddingHorizontal: space.m, paddingTop: space.s },
   input: { flex: 1, color: colors.text, backgroundColor: colors.surface, borderRadius: radius.m, paddingHorizontal: space.m, paddingVertical: space.s, fontSize: 15, maxHeight: 140, minHeight: 44 },
 });
