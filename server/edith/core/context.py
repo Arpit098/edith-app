@@ -55,6 +55,7 @@ class Command:
     menu: bool = False        # listed in the command menu
     order: int = 1000         # position in /help and the menu
     group: str | None = None  # commands of one group share a /help line ("/brief /mail … – quick actions")
+    takes_prompt: bool = False  # the frontend builds CommandCall.prompt (with attachments) for it, e.g. /queue
 
 
 @dataclass
@@ -181,10 +182,11 @@ class Context:
         self._log = logging.getLogger(f"edith.feature.{feature}")
 
     def add_command(self, name: str, description: str, handler, *, help: str | None = None, usage: str = "",
-                    menu: bool = False, order: int = 1000, group: str | None = None) -> None:
+                    menu: bool = False, order: int = 1000, group: str | None = None, takes_prompt: bool = False) -> None:
         """A /command on every frontend. `help`, `usage`, `menu`, `order` and `group` place it in
         /help and the command menu (see Registry.help_lines and Registry.menu)."""
-        self._registry.add_command(Command(name, description, handler, self.feature, help, usage, menu, order, group))
+        self._registry.add_command(Command(name, description, handler, self.feature, help, usage, menu, order, group,
+                                           takes_prompt))
 
     @property
     def registry(self) -> Registry:

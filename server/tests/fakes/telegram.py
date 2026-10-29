@@ -30,6 +30,19 @@ class FakeTelegram:
 
     def send_file(self, chat_id, path: str, caption: str | None = None) -> bool:
         self.files.append({"chat_id": chat_id, "path": path, "caption": caption})
+        self.calls.append(("send_file", {k: v for k, v in (("chat_id", chat_id), ("path", path), ("caption", caption)) if v}))
+        return True
+
+    def get_updates(self, offset, timeout=30):
+        """The new frontend's long poll (legacy calls getUpdates through urllib itself)."""
+        self.calls.append(("getUpdates", {"offset": offset}))
+        out, self.updates = self.updates, []
+        return out
+
+    def download(self, file_path: str, dest: str) -> bool:
+        """Stands in for fetching a file Arpit sent: writes a small placeholder."""
+        with open(dest, "wb") as f:
+            f.write(b"fake " + file_path.encode())
         return True
 
     def texts(self) -> list[str]:

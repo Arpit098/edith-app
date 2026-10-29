@@ -26,7 +26,7 @@ token_file = "~/.config/edith/app-token"
 credentials_dir = "~/.config/edith-google"   # OAuth client + token; never in git
 
 [adapter.telegram]
-state_dir = "~/.claude/channels/telegram"
+telegram_dir = "~/.claude/channels/telegram"   # bot token (.env) and access.json; never in git
 
 [features]
 enabled = ["sessions", "approvals", "control", "reminders", "mail", "calendar", "changes", "quick_actions"]

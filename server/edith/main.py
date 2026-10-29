@@ -4,12 +4,15 @@
 """
 import argparse
 import logging
+import os
 import signal
 import sys
 import threading
 import tomllib
 
 from .core import EventBus, JobRunner, Ports, Registry, load_adapter, load_features, load_port
+
+log = logging.getLogger("edith.main")
 
 
 def build(config: dict):
@@ -39,7 +42,7 @@ def main(argv=None) -> int:
     ap.add_argument("--check", action="store_true", help="load everything, print a report, exit")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
-    with open(args.config, "rb") as f:
+    with open(os.path.expanduser(args.config), "rb") as f:
         config = tomllib.load(f)
 
     bus, registry, ports, frontends, report = build(config)
@@ -48,19 +51,37 @@ def main(argv=None) -> int:
           f"actions: {sorted(registry.actions)}")
     if args.check:
         return 1 if report.failed else 0
-    if ports.agent:
-        ports.agent.start(bus)
-    for fe in frontends:
-        fe.start(bus, registry, ports.agent)
-    jobs = JobRunner(list(registry.jobs.values()))
-    jobs.start()
 
     stopping = threading.Event()  # frontends and jobs run in their own threads
-    for sig in (signal.SIGTERM, signal.SIGINT):
+    for sig in (signal.SIGTERM, signal.SIGINT):  # /restart and systemd stop: shut down cleanly
         signal.signal(sig, lambda *_: stopping.set())
-    stopping.wait()
-    jobs.stop()
+    if ports.agent:
+        ports.agent.start(bus)
+    started = []
     for fe in frontends:
+        try:
+            fe.start(bus, registry, ports.agent)
+            started.append(fe)
+        except Exception:
+            log.exception("frontend %s failed to start", getattr(fe, "name", fe))
+    # A required frontend (Telegram by default) that can't run means exit 1, so systemd retries
+    # (as the legacy bridge did on a missing token); the others may fail on their own.
+    missing = set(config.get("adapters", {}).get("required_frontends", ["telegram"])) - {fe.name for fe in started}
+    if missing:
+        log.error("required frontend(s) %s not running; exiting so systemd restarts us", sorted(missing))
+        for fe in started:
+            fe.stop()
+        if ports.agent:
+            ports.agent.shutdown()
+        return 1
+    jobs = JobRunner(list(registry.jobs.values()))
+    jobs.start()
+    log.info("E.D.I.T.H running: features %s, frontends %s", report.loaded, [fe.name for fe in started])
+
+    stopping.wait()
+    log.info("shutting down")
+    jobs.stop()
+    for fe in started:
         fe.stop()
     if ports.agent:
         ports.agent.shutdown()

@@ -51,7 +51,7 @@ def setup(ctx: Context) -> None:
         os.kill(os.getpid(), signal.SIGTERM)  # main.py shuts down cleanly; systemd (Restart=always) restarts it
 
     ctx.add_command("queue", "Run after the current task", queue_, usage="<task>", menu=True, order=40,
-                    help="wait for the current task instead of running in parallel")
+                    help="wait for the current task instead of running in parallel", takes_prompt=True)
     ctx.add_command("stop", "Stop all running tasks", stop, menu=True, order=80, help="stop all running tasks")
     ctx.add_command("status", "What E.D.I.T.H is doing", status, menu=True, order=90, help="what I'm doing right now")
     ctx.add_command("restart", "Restart the bridge", restart, menu=True, order=100,
