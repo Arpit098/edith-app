@@ -1,0 +1,37 @@
+{
+ "calls": [
+  {
+   "chat_id": 111,
+   "method": "sendMessage",
+   "reply_markup": {
+    "inline_keyboard": [
+     [
+      {
+       "callback_data": "quick:brief",
+       "text": "☀️ Brief"
+      },
+      {
+       "callback_data": "quick:mail",
+       "text": "📧 Mail"
+      },
+      {
+       "callback_data": "quick:today",
+       "text": "📅 Today"
+      }
+     ],
+     [
+      {
+       "callback_data": "quick:servers",
+       "text": "🖥 Servers"
+      },
+      {
+       "callback_data": "quick:changes",
+       "text": "📝 Changes"
+      }
+     ]
+    ]
+   },
+   "text": "Quick actions:"
+  }
+ ]
+}

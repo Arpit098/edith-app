@@ -45,6 +45,7 @@ Fields the agent adds (new fields only; existing meanings unchanged):
 - `turn.stopped` with `lane: queued` is a queued message dropped by /stop (it never ran).
 - `message.system` may carry `key`, a feature's name for that message. A later
   `message.buttons_cleared {key}` removes its buttons (e.g. an approval answered elsewhere or timed out).
+  It may also carry `ref`, the turn it belongs to: frontends then send it where that turn came from.
 - `permission.resolved.decision` is `allow`, `deny` or `gone` (answered elsewhere or timed out).
 
 ## Replies and buttons

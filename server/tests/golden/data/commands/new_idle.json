@@ -1,0 +1,12 @@
+{
+ "calls": [
+  {
+   "chat_id": 111,
+   "method": "sendMessage",
+   "text": "🆕 Fresh conversation started. The old one is still in /sessions."
+  }
+ ],
+ "typed": [
+  "/clear"
+ ]
+}

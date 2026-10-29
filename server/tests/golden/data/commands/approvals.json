@@ -1,0 +1,102 @@
+{
+ "calls": [
+  {
+   "chat_id": "111",
+   "method": "sendMessage",
+   "reply_markup": {
+    "inline_keyboard": [
+     [
+      {
+       "callback_data": "perm:allow:ab12cd34",
+       "text": "✅ Allow"
+      },
+      {
+       "callback_data": "perm:deny:ab12cd34",
+       "text": "❌ Deny"
+      }
+     ]
+    ]
+   },
+   "text": "🔐 Permission needed: Bash\n\nsudo systemctl restart nginx"
+  },
+  {
+   "callback_query_id": "cb1",
+   "method": "answerCallbackQuery",
+   "text": "✅ Allowed"
+  },
+  {
+   "chat_id": 111,
+   "message_id": 500,
+   "method": "editMessageText",
+   "text": "🔐 Permission needed: Bash\n\nsudo systemctl restart nginx\n\n✅ Allowed"
+  },
+  {
+   "callback_query_id": "cb1",
+   "method": "answerCallbackQuery",
+   "text": "That request has expired."
+  },
+  {
+   "callback_query_id": "cb1",
+   "method": "answerCallbackQuery"
+  },
+  {
+   "chat_id": 111,
+   "method": "sendMessage",
+   "reply_markup": {
+    "inline_keyboard": [
+     [
+      {
+       "callback_data": "perm:allow:ee55ff66",
+       "text": "✅ Allow"
+      },
+      {
+       "callback_data": "perm:deny:ee55ff66",
+       "text": "❌ Deny"
+      }
+     ]
+    ]
+   },
+   "text": "🔐 Permission needed (parallel lane): Write\n\n/home/ubuntu/.ssh/config"
+  },
+  {
+   "callback_query_id": "cb1",
+   "method": "answerCallbackQuery",
+   "text": "❌ Denied"
+  },
+  {
+   "chat_id": 111,
+   "message_id": 500,
+   "method": "editMessageText",
+   "text": "x\n\n❌ Denied"
+  },
+  {
+   "chat_id": "111",
+   "method": "sendMessage",
+   "reply_markup": {
+    "inline_keyboard": [
+     [
+      {
+       "callback_data": "perm:allow:99887766",
+       "text": "✅ Allow"
+      },
+      {
+       "callback_data": "perm:deny:99887766",
+       "text": "❌ Deny"
+      }
+     ]
+    ]
+   },
+   "text": "🔐 Permission needed: Bash\n\nsudo reboot"
+  },
+  {
+   "chat_id": "111",
+   "message_id": 1002,
+   "method": "editMessageReplyMarkup",
+   "reply_markup": {
+    "inline_keyboard": []
+   }
+  }
+ ],
+ "decision": "allow",
+ "deny": "deny"
+}

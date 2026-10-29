@@ -1,0 +1,14 @@
+{
+ "calls": [
+  {
+   "callback_query_id": "cb1",
+   "method": "answerCallbackQuery",
+   "text": "Switching…"
+  },
+  {
+   "chat_id": 111,
+   "method": "sendMessage",
+   "text": "❌ That conversation doesn't exist any more."
+  }
+ ]
+}

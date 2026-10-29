@@ -75,7 +75,8 @@ def setup(ctx: Context) -> None:
         wait = store.next_wake()
         return CHECK_FILE_EVERY if wait is None else min(wait, CHECK_FILE_EVERY)
 
-    ctx.add_command("reminders", "Upcoming reminders", list_reminders)
+    ctx.add_command("reminders", "Upcoming reminders", list_reminders, menu=True, order=30,
+                    help="upcoming reminders (say \"remind me…\" to add one)")
     ctx.add_action("rem", press)
     ctx.add_job("fire", fire_due)
 

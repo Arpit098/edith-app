@@ -1,0 +1,20 @@
+{
+ "calls": [
+  {
+   "chat_id": 111,
+   "method": "sendMessage",
+   "text": "🔄 Restarting the bridge, back in a few seconds."
+  },
+  {
+   "chat_id": 111,
+   "method": "sendMessage",
+   "text": "⚠️ 1 task(s) running; a restart would kill them. Send /restart now to force."
+  },
+  {
+   "chat_id": 111,
+   "method": "sendMessage",
+   "text": "🔄 Restarting the bridge, back in a few seconds."
+  }
+ ],
+ "kills": 2
+}

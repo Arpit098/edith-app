@@ -1,0 +1,9 @@
+{
+ "calls": [
+  {
+   "chat_id": 111,
+   "method": "sendMessage",
+   "text": "⚠️ I'm in the middle of a task. /stop it first, then /new."
+  }
+ ]
+}
