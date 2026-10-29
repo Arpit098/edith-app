@@ -145,6 +145,7 @@ crashing bundle shows up.
 the server config's pinned `app_updates.cert_sha256` (if set). **Debug-signed APKs are never offered**
 (the debug key is public; §6). The server keeps the newest 5 APKs and the updates of the newest 3
 runtimeVersions.
+At most the newest 10 updates are kept per runtimeVersion (only the newest is served; older ones only use disk).
 
 ## 4. runtimeVersion and channel
 
