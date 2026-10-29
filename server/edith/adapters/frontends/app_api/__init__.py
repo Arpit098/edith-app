@@ -24,6 +24,7 @@ import secrets
 import select
 import socket
 import stat
+import sys
 import threading
 import time
 import urllib.parse
@@ -370,6 +371,13 @@ class Server(http.server.ThreadingHTTPServer):
             super().process_request_thread(request, client_address)
         finally:
             self.api._slots.release()
+
+    def handle_error(self, request, client_address):
+        """A client that hangs up is normal (the phone loses signal); anything else is logged."""
+        if isinstance(sys.exc_info()[1], (ConnectionError, TimeoutError)):
+            log.debug("client %s went away", client_address[0])
+        else:
+            log.exception("App API connection from %s failed", client_address[0])
 
 
 class Handler(http.server.BaseHTTPRequestHandler):

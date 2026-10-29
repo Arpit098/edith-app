@@ -312,6 +312,18 @@ class RoutesTest(unittest.TestCase):
         self.assertEqual(self.a.call("DELETE", "/v1/status")[0], 405)
         self.assertEqual(self.a.call("POST", "/v1/messages", raw=b"x" * (17 * 1024))[0], 413)
 
+    def test_too_large_is_refused_from_the_headers_and_a_hang_up_is_quiet(self):
+        with self.assertNoLogs("edith.adapter.app_api", "ERROR"):
+            with socket.create_connection((self.a.host, self.a.port), timeout=5) as s:
+                s.sendall(("POST /v1/messages HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer " + TOKEN +
+                           "\r\nContent-Type: application/json\r\nContent-Length: 999999\r\n\r\n").encode())
+                self.assertTrue(s.recv(100).startswith(b"HTTP/1.1 413"))  # none of the body was read
+            deadline = time.monotonic() + 5  # its audit line marks the end of that request
+            while "413" not in pathlib.Path(self.a.audit).read_text() if os.path.exists(self.a.audit) else True:
+                if time.monotonic() > deadline:
+                    break
+                time.sleep(0.01)
+
     def test_audit_log(self):
         self.a.call("POST", "/v1/messages", {"text": "hello there"})
         self.a.call("GET", "/v1/status", token="wrong")
