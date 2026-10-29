@@ -201,10 +201,14 @@ jobs:
           # expo-updates 57 writes the fingerprint policy's runtimeVersion to assets/fingerprint
           # (utils/build/createFingerprintForBuildAsync.js), and the app reads it from there.
           embedded=$(unzip -p "$apk" assets/fingerprint) || { echo "::error::assets/fingerprint is missing from the APK"; exit 1; }
-          if [ "$embedded" != "$RUNTIME_VERSION" ]; then
-            echo "::error::The APK's runtimeVersion ($embedded) differs from the resolved one ($RUNTIME_VERSION)"; exit 1
+          # Resolved again after Gradle: the build must not have changed anything the fingerprint hashes
+          # (it did once: Kotlin's .kotlin/ in an included build; see fingerprint.config.js).
+          after=$(npx expo-updates runtimeversion:resolve --platform android | node -pe "JSON.parse(require('fs').readFileSync(0)).runtimeVersion")
+          find node_modules -maxdepth 4 -type d -name .kotlin | sed 's/^/Kotlin state dir (ignored by the fingerprint): /'
+          if [ "$embedded" != "$RUNTIME_VERSION" ] || [ "$after" != "$RUNTIME_VERSION" ]; then
+            echo "::error::runtimeVersion mismatch: before build $RUNTIME_VERSION, in the APK $embedded, after build $after"; exit 1
           fi
-          echo "runtimeVersion check: APK assets/fingerprint = resolved = $RUNTIME_VERSION"
+          echo "runtimeVersion check: before build = APK assets/fingerprint = after build = $RUNTIME_VERSION"
           jq -n \
             --arg versionName "$(node -p "require('./app.json').expo.version")" \
             --argjson versionCode "$EDITH_VERSION_CODE" \
