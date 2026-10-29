@@ -4,7 +4,7 @@ openWakeWord (Apache-2.0) custom model, trained on Arpit's MacBook from clips re
 
 ```
 wakeword/
-├── training/   notebook + config (phrase, augmentation, thresholds)
-├── recordings/ manifest only; the audio is kept out of git (see .gitignore)
-└── models/     exported hey_edith.onnx / .tflite + metrics.md
+├── training/   fetch.py (recordings from edith), data.py (training data), train.py; README.md has the steps
+├── work/       git-ignored: recordings, training data, generated clips, the venv
+└── models/     hey_edith.onnx + hey_edith.json + metrics.md, pushed to main by the trainer
 ```
