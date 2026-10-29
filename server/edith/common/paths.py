@@ -62,6 +62,11 @@ class Paths:
         return os.path.join(self.state_dir, "changes")
 
     @property
+    def app_updates(self) -> str:
+        """Collected app builds (features/app_updates)."""
+        return os.path.join(self.state_dir, "app-updates")
+
+    @property
     def inbox(self) -> str:
         return os.path.join(self.work_dir, "inbox")
 

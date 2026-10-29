@@ -1,0 +1,180 @@
+"""App updates (contracts/app-updates.md): collect the app's builds from GitHub and serve them.
+
+- A job lists successful build-apk.yml runs on main (gh), downloads only artifacts it has not seen
+  (edith-apk, edith-ota; one at a time), verifies every file's SHA-256 and keeps them under
+  <state_dir>/app-updates (store.py). It runs every `interval` seconds (10 min); a failed pass is
+  retried by the job runner with backoff.
+- Routes: GET /v1/updates/manifest and /v1/updates/assets/{sha256} (Expo Updates protocol v1),
+  GET /v1/app/latest and /v1/app/apk/{versionCode} (Range resume). Files are streamed from disk.
+- Only release-signed APKs whose certificate matches the pinned `cert_sha256` are offered.
+
+Config [features.app_updates]: cert_sha256, repo, workflow, branch, interval, gh.
+"""
+import logging
+import re
+import secrets
+import shutil
+import threading
+
+from edith.common.paths import resolve
+from edith.core import ApiError, Context, Feature, Response
+
+from .github import GhError, GitHub, MissingArtifact
+from .store import Rejected, Store, is_sha256, normalize_cert
+
+log = logging.getLogger("edith.feature.app_updates")
+
+EXPO_HEADERS = {"expo-current-update-id": "current_update_id", "expo-embedded-update-id": "embedded_update_id",
+                "expo-fatal-error": "fatal_error"}
+OFFERED = ("versionName", "versionCode", "sha", "built_at", "runtimeVersion", "size", "sha256", "cert_sha256")
+
+
+def setup(ctx: Context) -> None:
+    cfg = ctx.config
+    pin = cfg.get("cert_sha256") or ""
+    interval = float(cfg.get("interval", 600))
+    gh = GitHub(cfg.get("repo", "Arpit098/edith-app"), cfg.get("workflow", "build-apk.yml"), cfg.get("branch", "main"),
+                cfg.get("gh", "gh"))
+    root = resolve(cfg).app_updates
+    lock, holder = threading.Lock(), []
+
+    def store():
+        """Opened on first use, so loading the feature (e.g. `make check`) touches no file."""
+        with lock:
+            if not holder:
+                holder.append(Store(root))
+            return holder[0]
+
+    def offerable(apk):
+        return apk.get("signing") == "release" and (not pin or normalize_cert(apk.get("cert_sha256")) == normalize_cert(pin))
+
+    # ---- collecting ----
+
+    def notes_for(s, record):
+        older = [a for v, a in s.index["apks"].items() if int(v) < record["versionCode"] and offerable(a)]
+        base = max(older, key=lambda a: a["versionCode"])["sha"] if older else None
+        try:
+            return gh.subjects(base, record["sha"])
+        except GhError as e:
+            log.warning("no commit notes for %s: %s", record["versionCode"], e)
+            return []
+
+    def collect_one(s, run_id, kind):
+        folder = s.scratch(f"run-{run_id}-{kind}")
+        try:
+            gh.download(run_id, "edith-apk" if kind == "apk" else "edith-ota", folder)
+            if kind == "ota":
+                s.add_update(run_id, folder)
+                return "collected"
+            result = s.add_apk(run_id, folder, pin)
+            if isinstance(result, str):
+                return result
+            s.update_apk(result["versionCode"], notes=notes_for(s, result))
+            return "collected"
+        finally:
+            shutil.rmtree(folder, ignore_errors=True)
+
+    def collect():
+        s = store()
+        runs = gh.runs()
+        if runs:
+            s.forget_runs_before(min(r["id"] for r in runs))
+        failed = []
+        for run in sorted(runs, key=lambda r: r["id"]):  # oldest first: notes and versionCodes follow the order
+            for kind in ("apk", "ota"):
+                if s.seen(run["id"], kind):
+                    continue  # collected, missing or rejected before: never downloaded again
+                try:
+                    outcome = collect_one(s, run["id"], kind)
+                except MissingArtifact:
+                    outcome = "missing"
+                except Rejected as e:
+                    outcome = f"rejected: {e}"
+                    log.warning("run %s %s rejected: %s", run["id"], kind, e)
+                except (GhError, OSError) as e:  # transient: not recorded, so the next pass tries again
+                    failed.append(f"{run['id']} {kind}: {e}")
+                    continue
+                s.mark(run["id"], kind, outcome)
+                if outcome == "collected":
+                    log.info("collected run %s %s", run["id"], kind)
+        s.prune()
+        if failed:
+            raise GhError("; ".join(failed)[:500])  # the job runner retries with backoff
+        return interval
+
+    ctx.add_job("collect", collect)
+
+    # ---- routes ----
+
+    def expo_audit(headers):
+        found = {key: headers[h][:1024] for h, key in EXPO_HEADERS.items() if headers.get(h)}
+        return {"expo": found} if found else {}
+
+    def manifest(req):
+        h = req.get("headers") or {}
+        runtime, platform = h.get("expo-runtime-version"), h.get("expo-platform", "android")
+        if not runtime:
+            raise ApiError(400, "expo-runtime-version is required")
+        if platform != "android":
+            raise ApiError(400, f"unsupported platform {platform!r}")
+        audit = expo_audit(h)
+        protocol = {"expo-protocol-version": "1", "expo-sfv-version": "0", "cache-control": "private, max-age=0"}
+        update = store().newest_update(runtime, h.get("expo-channel-name", "main"))
+        if not update or update["id"] == h.get("expo-current-update-id"):
+            return Response(204, protocol, audit=audit)
+        try:
+            with open(store().update_file(update["id"], "manifest.json"), "rb") as f:
+                body = f.read()
+            with open(store().update_file(update["id"], "manifest.sig")) as f:
+                signature = f.read().strip()
+        except OSError:  # pruned between the lookup and here
+            return Response(204, protocol, audit=audit)
+        boundary = secrets.token_hex(16)
+        part = (f"--{boundary}\r\ncontent-type: application/json; charset=utf-8\r\n"
+                f"content-disposition: form-data; name=\"manifest\"\r\nexpo-signature: {signature}\r\n\r\n").encode()
+        return Response(200, {**protocol, "content-type": f"multipart/mixed; boundary={boundary}"},
+                        part + body + f"\r\n--{boundary}--\r\n".encode(), audit=audit)
+
+    def asset(req):
+        sha = req["params"]["sha256"].lower()
+        info = store().assets.get(sha) if is_sha256(sha) else None
+        if not info:
+            raise ApiError(404, "unknown asset")
+        return Response(200, {"content-type": info["contentType"], "cache-control": "public, max-age=31536000, immutable"},
+                        file=store().asset_path(sha))
+
+    def offered():
+        return [a for a in store().index["apks"].values() if offerable(a)]
+
+    def latest(req):
+        apks = offered()
+        if not apks:
+            raise ApiError(404, "no app build yet")
+        apk = max(apks, key=lambda a: a["versionCode"])
+        return {**{k: apk.get(k) for k in OFFERED}, "notes": "\n".join((apk.get("notes") or [])[:20]),
+                "url": f"/v1/app/apk/{apk['versionCode']}"}
+
+    def apk_file(req):
+        code = req["params"]["versionCode"]
+        apk = next((a for a in offered() if str(a["versionCode"]) == code), None)
+        if apk is None:
+            raise ApiError(404, "no such app build")
+        size, headers = apk["size"], {"content-type": "application/vnd.android.package-archive",
+                                      "etag": f"\"{apk['sha256']}\"", "accept-ranges": "bytes"}
+        path = store().apk_path(apk["versionCode"])
+        m = re.fullmatch(r"bytes=(\d+)-(\d*)", ((req.get("headers") or {}).get("range") or "").strip())
+        if not m:  # no Range (or one we don't serve, e.g. several ranges): the whole file
+            return Response(200, headers, file=path)
+        start, end = int(m[1]), min(int(m[2]) if m[2] else size - 1, size - 1)
+        if start >= size or end < start:
+            return Response(416, {**headers, "content-range": f"bytes */{size}"})
+        return Response(206, {**headers, "content-range": f"bytes {start}-{end}/{size}"}, file=path,
+                        offset=start, length=end - start + 1)
+
+    ctx.add_route("GET", "/v1/updates/manifest", manifest)
+    ctx.add_route("GET", "/v1/updates/assets/{sha256}", asset)
+    ctx.add_route("GET", "/v1/app/latest", latest)
+    ctx.add_route("GET", "/v1/app/apk/{versionCode}", apk_file)
+
+
+FEATURE = Feature(name="app_updates", setup=setup, description="Collects app builds from GitHub and serves app updates")
