@@ -234,7 +234,54 @@ Playwright, **rendering the same overlay components as the phone**.
 The preview page shows a small "Preview: device differs" tag in a corner (outside the 412 × 915 frame,
 or hidden with `&clean=1` for screenshots), so no one mistakes a screenshot for the phone.
 
-## 9. Open questions for Arpit
+## 9. Proposal: over-the-air JS updates, self-hosted on edith
+
+Most changes in Phase 3 and later are JavaScript (screens, the overlay's look, feature logic). Today
+each one means a new APK (about 8 minutes of CI, a download and an install). With **expo-updates**
+(MIT, part of Expo) the app fetches a new JS bundle from **our own server on edith** and uses it on
+the next launch, with no EAS and no Expo account. A new APK is needed only when native code changes.
+
+- **What decides OTA vs APK:** `runtimeVersion: { policy: "fingerprint" }`. `@expo/fingerprint` (already
+  in the tree) hashes everything native: dependencies with native code, config plugins, `app.json`
+  native fields, `android-modules/`. An APK accepts only updates with its exact fingerprint, so a JS
+  bundle can never reach an APK whose native side doesn't match. When the fingerprint changes, CI builds
+  an APK instead.
+- **Build (CI, x86):** in the same workflow, `npx expo export --platform android` (Hermes bytecode needs
+  the x86 `hermesc`; it doesn't run on edith's ARM) → `dist/` with the bundle, assets and
+  `metadata.json` → uploaded as an `ota-<fingerprint>-<sha>` artifact. The APK build is skipped when
+  the fingerprint matches the last APK's, which saves most CI minutes.
+- **Publish (on edith, pull only):** `deploy/ota-publish.sh <run-id>` uses `gh run download` to fetch
+  that artifact and checks its fingerprint and size. It **signs the manifest** with a private key that
+  lives only on edith (`~/.config/edith/ota-signing-key.pem`, 0600, never in git), and moves it into
+  `~/.local/share/edith/updates/<runtimeVersion>/<updateId>/`. Nothing reaches edith from outside;
+  GitHub never needs access to the tailnet.
+- **Serve:** a small server feature `updates` (`server/edith/features/updates/`) implementing the Expo
+  Updates protocol v1:
+  - `GET /v1/updates/manifest`, which reads the `expo-runtime-version` / `expo-platform` headers and
+    answers a signed `multipart/mixed` manifest (or "no update" / "roll back to embedded");
+  - `GET /v1/updates/assets/<hash>`, which serves files by content hash with long cache headers.
+  It runs on the App API, so it's on the **Tailscale IP only**, like everything else.
+- **Auth:** expo-updates sends fixed request headers set at build time, so it can't use Arpit's
+  bearer token (which is entered at runtime and must never be baked into the APK). Proposal: a separate
+  **read-only updates token** (it allows only the two `updates` routes) is injected into
+  `app.json`'s `updates.requestHeaders` by CI from a GitHub secret. Even if it leaked, it would allow only
+  downloading our own signed app code, and only inside the tailnet. The manifest signature (the app
+  embeds the public certificate, `updates.codeSigningCertificate`) means the app runs only bundles
+  signed on edith.
+- **On the phone:**
+  - `checkAutomatically: ON_LOAD` with `fallbackToCacheTimeout: 0`: launch never waits for the
+    network; a new bundle downloads in the background and applies on the next cold start.
+  - Settings gets "Check for update" (download and reload now) and shows the running update id and date in IST.
+  - expo-updates' error recovery rolls back to the previous bundle if a new one crashes at launch.
+- **Rollback:** `deploy/ota-publish.sh --rollback` points the manifest back at the previous update id,
+  or "roll back to embedded" (the APK's own bundle).
+- **Cost:** free. Each check is one small HTTP request at cold start, over Tailscale, and is skipped
+  when offline. No polling.
+- **Needs approval** (it changes the live service): the `updates` server feature, the signing key on
+  edith, the updates token (GitHub secret + server config), and one APK that adds expo-updates (a native
+  module). After that, JS-only changes ship as OTA bundles.
+
+## 10. Open questions for Arpit
 
 1. **Partial transcripts:** worth the server work (a faster partial mode on whisper.cpp, §5), or show
    "Listening…" and only the final transcript in Phase 3?
