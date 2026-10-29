@@ -14,8 +14,11 @@ EDITH, and you build it from this server. Arpit reviews the work.
   shared code goes in `common/`, which imports core only. `server/tests/test_isolation.py` enforces this.
 - **Tests:** run `cd server && make test` before every commit. Add tests with every feature.
 - **Git:**
-  - Work on a branch and open a PR for Arpit to review. Don't push to `main` directly.
-  - Keep commits small, one feature or step each.
+  - Only big phases get a PR: each phase is one branch (`phase-1`, `phase-2`, …) and one PR for Arpit
+    to review. Each step inside a phase is a few small commits on that branch.
+  - Small work (doc fixes, tiny tweaks) goes straight to `main`, with no PR.
+  - Live deploys use tags made from the phase branch (see `deploy/README.md`).
+  - No co-author lines in commits.
 - **Live system is separate from this repo.** The running Telegram bridge lives in `~/edith/bridge/`,
   with services `edith-bridge` and `edith-claude` (systemd --user).
   - Never edit, restart or replace them (or `~/edith/.claude/settings.json`) without first sending
