@@ -15,6 +15,13 @@ export class ApiError extends Error {
   }
 }
 
+/** Failures worth retrying: the server wasn't reached (0) or a gateway/overload answer. */
+export const RETRY_STATUS: ReadonlySet<number> = new Set([0, 502, 503, 504]);
+
+export function isRetryable(e: unknown): boolean {
+  return e instanceof ApiError && RETRY_STATUS.has(e.status);
+}
+
 export interface Reply {
   text: string;
   buttons: ButtonRows;

@@ -1,9 +1,9 @@
 // HTTP half of the transport: JSON requests with a timeout per attempt, and retries with backoff
 // for requests that are safe to repeat.
 
-import { ApiError } from '../../../core/api';
+import { backoffDelay, sleep, type Backoff } from '../../../common/backoff';
+import { ApiError, isRetryable } from '../../../core/api';
 import type { RequestOptions, ServerConfig } from '../../../core/ports';
-import { backoffDelay, sleep, type Backoff } from './backoff';
 
 export type Fetch = (url: string, init: RequestInit) => Promise<Response>;
 
@@ -14,8 +14,6 @@ export interface HttpOptions {
   attempts: number;
   backoff: Backoff;
 }
-
-const RETRY_STATUS = new Set([0, 502, 503, 504]);
 
 export async function httpRequest<T>(
   server: ServerConfig | null,
@@ -31,7 +29,7 @@ export async function httpRequest<T>(
     try {
       return await once<T>(server, method, path, body, opts.timeoutMs ?? http.timeoutMs, http.fetch);
     } catch (e) {
-      if (!(e instanceof ApiError) || !RETRY_STATUS.has(e.status) || attempt + 1 >= attempts) throw e;
+      if (!isRetryable(e) || attempt + 1 >= attempts) throw e;
       await sleep(backoffDelay(attempt, http.backoff));
     }
   }

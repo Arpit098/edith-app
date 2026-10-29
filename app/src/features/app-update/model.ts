@@ -1,13 +1,15 @@
 // App updates (contracts/app-updates.md): OTA JS bundles through the OtaUpdates port, and new APKs
 // from edith: GET /v1/app/latest → download (SHA-256 checked natively) → Android's installer.
 
-import type { Api, AppRelease } from '../../core/api';
+import { backoffDelay, sleep as wait, type Backoff } from '../../common/backoff';
+import { isRetryable, type Api, type AppRelease } from '../../core/api';
 import type { EventBus } from '../../core/events';
 import type { AppInstaller, InstallStatus, OtaInfo, OtaUpdates, Transport } from '../../core/ports';
 import { createStore, type Store } from '../../core/store';
 
 export const AUTO_CHECK_EVERY_S = 6 * 3600; // automatic checks on connect, at most this often
 export const DOWNLOAD_ATTEMPTS = 3; // a failed download resumes from where it stopped
+const DOWNLOAD_BACKOFF: Backoff = { baseMs: 2000, maxMs: 15_000 };
 const CHANNEL = 'main';
 
 export type Phase = 'idle' | 'needs-permission' | 'downloading' | 'installing' | 'failed';
@@ -39,6 +41,7 @@ export interface AppUpdateDeps {
   notify: (text: string) => void;
   now?: () => number; // unix seconds
   sleep?: (ms: number) => Promise<void>;
+  random?: () => number; // backoff jitter
 }
 
 export interface AppUpdateModel {
@@ -70,7 +73,7 @@ const STATUS_TEXT: Record<InstallStatus, { phase: Phase; text: string }> = {
 export function createAppUpdateModel(deps: AppUpdateDeps): AppUpdateModel {
   const { bus, api, transport, installer, ota } = deps;
   const now = deps.now ?? (() => Date.now() / 1000);
-  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const sleep = deps.sleep ?? wait;
   const store = createStore<AppUpdateState>({
     installed: installer ? { versionName: installer.versionName, versionCode: installer.versionCode } : null,
     ota: ota ? ota.info() : null,
@@ -157,18 +160,20 @@ export function createAppUpdateModel(deps: AppUpdateDeps): AppUpdateModel {
       }
       store.set((x) => ({ ...x, phase: 'downloading', received: 0, total: latest.size, message: null }));
       let path: string | null = null;
-      for (let attempt = 1; path === null; attempt++) {
+      for (let attempt = 0; path === null; attempt++) {
         try {
           ({ path } = await installer.download(request, latest.sha256, latest.size, (received, total) =>
             store.set((x) => ({ ...x, received, total: total || x.total })),
           ));
         } catch (e) {
-          const mismatch = /SHA256|sha-256/i.test(message(e));
-          if (mismatch || attempt >= DOWNLOAD_ATTEMPTS) {
+          // Only a network error or a 502/503/504 is worth another try (the partial file resumes).
+          // Anything else, such as a 404 or a SHA-256 mismatch, won't get better by retrying.
+          if (!isRetryable(e) || attempt + 1 >= DOWNLOAD_ATTEMPTS) {
+            const mismatch = /SHA256|sha-256/i.test(message(e));
             store.set((x) => ({ ...x, phase: 'failed', message: mismatch ? 'The download didn’t match its SHA-256 and was deleted' : `Download failed: ${message(e)}` }));
             return;
           }
-          await sleep(2000 * attempt); // then resume where it stopped
+          await sleep(backoffDelay(attempt, DOWNLOAD_BACKOFF, deps.random));
         }
       }
       store.set((x) => ({ ...x, phase: 'installing', message: 'Opening Android’s installer…' }));

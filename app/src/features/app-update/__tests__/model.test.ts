@@ -1,3 +1,4 @@
+import { ApiError } from '../../../core/api';
 import { localEvent } from '../../../core/events';
 import type { AppInstaller, InstallStatus, OtaInfo, OtaUpdates } from '../../../core/ports';
 import { fakeContext, flush } from '../../../testing/fakes';
@@ -72,6 +73,7 @@ function setup(latest: unknown = LATEST) {
   const installer = new FakeInstaller();
   const ota = new FakeOta();
   const notes: string[] = [];
+  const slept: number[] = [];
   let clock = 1_800_000_000;
   const m = createAppUpdateModel({
     bus: ctx.bus,
@@ -81,9 +83,12 @@ function setup(latest: unknown = LATEST) {
     ota,
     notify: (t) => notes.push(t),
     now: () => clock,
-    sleep: async () => {},
+    sleep: async (ms) => {
+      slept.push(ms);
+    },
+    random: () => 1,
   });
-  return { ctx, m, installer, ota, notes, tick: (s: number) => (clock += s) };
+  return { ctx, m, installer, ota, notes, slept, tick: (s: number) => (clock += s) };
 }
 
 describe('app update model', () => {
@@ -107,7 +112,7 @@ describe('app update model', () => {
 
   it('reports no APK, an older APK, and a malformed answer', async () => {
     const none = setup(() => {
-      throw new (jest.requireActual('../../../core/api').ApiError)(404, 'no app build yet');
+      throw new ApiError(404, 'no app build yet');
     });
     await none.m.check();
     expect(none.m.store.get()).toMatchObject({ latest: null, error: null, checking: false });
@@ -170,19 +175,35 @@ describe('app update model', () => {
     expect(m.store.get().phase).toBe('idle');
   });
 
-  it('retries (resuming) a failed download, but never after a SHA-256 mismatch', async () => {
+  it('retries network errors and 502/503/504 with jittered backoff, resuming', async () => {
     const flaky = setup();
     await flaky.m.check();
-    flaky.installer.failures = [new Error('timeout'), new Error('connection reset')];
+    flaky.installer.failures = [new ApiError(0, 'timeout'), new ApiError(503, 'busy')];
     await flaky.m.install();
     expect(flaky.installer.downloads).toHaveLength(3);
     expect(flaky.installer.installed).toHaveLength(1);
+    expect(flaky.slept).toEqual([2000, 4000]); // backoffDelay with random() = 1: base, then doubled
 
     const giveUp = setup();
     await giveUp.m.check();
-    giveUp.installer.failures = [new Error('a'), new Error('b'), new Error('c')];
+    giveUp.installer.failures = [new ApiError(0, 'a'), new ApiError(0, 'b'), new ApiError(0, 'c')];
     await giveUp.m.install();
     expect(giveUp.m.store.get()).toMatchObject({ phase: 'failed', message: 'Download failed: c' });
+  });
+
+  it('does not retry what retrying cannot fix', async () => {
+    const gone = setup();
+    await gone.m.check();
+    gone.installer.failures = [new ApiError(404, 'not offered')];
+    await gone.m.install();
+    expect(gone.installer.downloads).toHaveLength(1);
+    expect(gone.m.store.get()).toMatchObject({ phase: 'failed', message: 'Download failed: not offered' });
+
+    const odd = setup();
+    await odd.m.check();
+    odd.installer.failures = [new Error('disk full')]; // not an ApiError: no retry
+    await odd.m.install();
+    expect(odd.installer.downloads).toHaveLength(1);
 
     const tampered = setup();
     await tampered.m.check();

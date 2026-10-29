@@ -2,6 +2,7 @@
 
 import { requireOptionalNativeModule } from 'expo';
 
+import { ApiError } from '../../../core/api';
 import type { AppInstaller, InstallStatus } from '../../../core/ports';
 
 interface Subscription {
@@ -20,6 +21,18 @@ interface NativeInstaller {
   addListener(event: 'onInstallStatus', listener: (e: { status: InstallStatus; message: string }) => void): Subscription;
 }
 
+/**
+ * The native module's error codes as ApiError statuses, so callers retry by the same rule as HTTP
+ * (core/api.ts isRetryable): NETWORK → 0, HTTP_503 → 503. Others (SHA256_MISMATCH, …) stay as they are.
+ */
+export function asApiError(e: unknown): unknown {
+  const code = (e as { code?: unknown } | null)?.code;
+  const message = e instanceof Error ? e.message : String(e);
+  if (code === 'NETWORK') return new ApiError(0, message);
+  const http = typeof code === 'string' ? /^HTTP_(\d{3})$/.exec(code) : null;
+  return http ? new ApiError(Number(http[1]), message) : e;
+}
+
 /** Null where the native module isn't built in (jest, web, an APK from before it existed). */
 export function createAndroidInstaller(): AppInstaller | null {
   const native = requireOptionalNativeModule<NativeInstaller>('EdithInstaller');
@@ -32,6 +45,8 @@ export function createAndroidInstaller(): AppInstaller | null {
       try {
         const r = await native.download(request.url, request.headers, sha256, size);
         return { path: r.path };
+      } catch (e) {
+        throw asApiError(e);
       } finally {
         sub.remove();
       }

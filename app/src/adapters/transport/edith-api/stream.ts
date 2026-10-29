@@ -11,7 +11,7 @@
 
 import { toEvent, type EdithEvent } from '../../../core/events';
 import type { ServerConfig, StreamStatus } from '../../../core/ports';
-import { backoffDelay, type Backoff } from './backoff';
+import { backoffDelay, type Backoff } from '../../../common/backoff';
 
 export interface WebSocketLike {
   readyState: number;

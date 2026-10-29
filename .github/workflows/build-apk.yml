@@ -101,16 +101,15 @@ jobs:
       - name: Signing keys (from GitHub Secrets, if set)
         id: keys
         env:
-          EDITH_KEYSTORE_B64: ${{ secrets.EDITH_KEYSTORE_B64 }}
-          EDITH_UPDATES_KEY_PEM: ${{ secrets.EDITH_UPDATES_KEY_PEM }}
+          EDITH_KEYSTORE_B64: ${{ secrets.EDITH_KEYSTORE_B64 }} # presence check only
+          EDITH_UPDATES_KEY_PEM: ${{ secrets.EDITH_UPDATES_KEY_PEM }} # presence check only
           EDITH_UPDATES_CERT_PEM: ${{ secrets.EDITH_UPDATES_CERT_PEM }}
         run: |
           set -euo pipefail
           umask 077
           echo "EDITH_VERSION_CODE=$((1000 + GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
+          # Keys are only checked for here; each is written to disk in the one step that uses it.
           if [ -n "$EDITH_KEYSTORE_B64" ]; then
-            printf '%s' "$EDITH_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.p12"
-            echo "EDITH_KEYSTORE_PATH=$RUNNER_TEMP/release.p12" >> "$GITHUB_ENV"
             echo "signing=release" >> "$GITHUB_OUTPUT"
           else
             echo "signing=debug" >> "$GITHUB_OUTPUT"
@@ -120,8 +119,9 @@ jobs:
               echo "**public** debug key. It installs for testing, but edith will never offer it as an update."
             } >> "$GITHUB_STEP_SUMMARY"
           fi
+          # The OTA private key is only checked for here; it's written to disk in the "OTA bundle"
+          # step, after prebuild/Gradle/expo export (third-party code) have run, and deleted at once.
           if [ -n "$EDITH_UPDATES_KEY_PEM" ]; then
-            printf '%s\n' "$EDITH_UPDATES_KEY_PEM" > "$RUNNER_TEMP/ota-key.pem"
             committed=$(openssl x509 -in certs/updates-certificate.pem -outform DER | sha256sum | cut -d' ' -f1)
             if [ -n "$EDITH_UPDATES_CERT_PEM" ]; then
               secret=$(printf '%s\n' "$EDITH_UPDATES_CERT_PEM" | openssl x509 -outform DER | sha256sum | cut -d' ' -f1)
@@ -155,16 +155,25 @@ jobs:
       - name: Gradle assembleRelease
         working-directory: app/android
         env:
+          EDITH_KEYSTORE_B64: ${{ secrets.EDITH_KEYSTORE_B64 }}
           EDITH_KEYSTORE_PASSWORD: ${{ secrets.EDITH_KEYSTORE_PASSWORD }}
           EDITH_KEY_ALIAS: ${{ secrets.EDITH_KEY_ALIAS }}
           EDITH_KEY_PASSWORD: ${{ secrets.EDITH_KEY_PASSWORD }}
-        run: >-
-          ./gradlew assembleRelease --no-daemon --build-cache
-          -PreactNativeArchitectures=arm64-v8a
-          -Pandroid.enableMinifyInReleaseBuilds=false
-          -Pandroid.enableShrinkResourcesInReleaseBuilds=false
-          -Pandroid.enablePngCrunchInReleaseBuilds=false
-          "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g"
+        run: |
+          set -euo pipefail
+          if [ -n "$EDITH_KEYSTORE_B64" ]; then
+            # The keystore exists only for this step (plugins/with-release-signing.js reads the path).
+            export EDITH_KEYSTORE_PATH="$RUNNER_TEMP/release.p12"
+            trap 'rm -f "$EDITH_KEYSTORE_PATH"' EXIT
+            (umask 077; printf '%s' "$EDITH_KEYSTORE_B64" | base64 -d > "$EDITH_KEYSTORE_PATH")
+          fi
+          unset EDITH_KEYSTORE_B64
+          ./gradlew assembleRelease --no-daemon --build-cache \
+            -PreactNativeArchitectures=arm64-v8a \
+            -Pandroid.enableMinifyInReleaseBuilds=false \
+            -Pandroid.enableShrinkResourcesInReleaseBuilds=false \
+            -Pandroid.enablePngCrunchInReleaseBuilds=false \
+            "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g"
       - name: ccache hit rate
         if: always()
         run: ccache --show-stats
@@ -185,10 +194,13 @@ jobs:
           if [ "$SIGNING" = release ] && [ "$digest" != "$RELEASE_CERT_SHA256" ]; then
             echo "::error::Release build is signed with $digest, expected $RELEASE_CERT_SHA256"; exit 1
           fi
-          embedded=$(unzip -p "$apk" assets/fingerprint 2>/dev/null || true)
-          if [ -n "$embedded" ] && [ "$embedded" != "$RUNTIME_VERSION" ]; then
+          # expo-updates 57 writes the fingerprint policy's runtimeVersion to assets/fingerprint
+          # (utils/build/createFingerprintForBuildAsync.js), and the app reads it from there.
+          embedded=$(unzip -p "$apk" assets/fingerprint) || { echo "::error::assets/fingerprint is missing from the APK"; exit 1; }
+          if [ "$embedded" != "$RUNTIME_VERSION" ]; then
             echo "::error::The APK's runtimeVersion ($embedded) differs from the resolved one ($RUNTIME_VERSION)"; exit 1
           fi
+          echo "runtimeVersion check: APK assets/fingerprint = resolved = $RUNTIME_VERSION"
           jq -n \
             --arg versionName "$(node -p "require('./app.json').expo.version")" \
             --argjson versionCode "$EDITH_VERSION_CODE" \
@@ -216,14 +228,21 @@ jobs:
         if: steps.keys.outputs.ota == '1'
         env:
           RUNTIME_VERSION: ${{ steps.runtime.outputs.version }}
+          EDITH_UPDATES_KEY_PEM: ${{ secrets.EDITH_UPDATES_KEY_PEM }}
         run: |
           set -euo pipefail
+          # Third-party code first, while the key isn't on disk.
           npx expo export --platform android --output-dir out/ota/dist
           npx expo config --type public --json > "$RUNNER_TEMP/expo-config.json"
+          # Then the key, for our own script only, and gone right after (also on failure).
+          key="$RUNNER_TEMP/ota-key.pem"
+          trap 'rm -f "$key"' EXIT
+          (umask 077; printf '%s\n' "$EDITH_UPDATES_KEY_PEM" > "$key")
           node scripts/ota.js --dir out/ota --runtime-version "$RUNTIME_VERSION" \
-            --key "$RUNNER_TEMP/ota-key.pem" --cert certs/updates-certificate.pem \
+            --key "$key" --cert certs/updates-certificate.pem \
             --base-url "$UPDATES_BASE_URL" --sha "$GITHUB_SHA" --run-id "$GITHUB_RUN_ID" \
             --expo-config "$RUNNER_TEMP/expo-config.json"
+          rm -f "$key"
           echo "OTA update \`$(jq -r .id out/ota/update.json)\` for runtime \`$RUNTIME_VERSION\`" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         if: steps.keys.outputs.ota == '1'

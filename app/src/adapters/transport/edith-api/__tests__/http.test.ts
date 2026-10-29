@@ -1,5 +1,5 @@
 import { ApiError } from '../../../../core/api';
-import { backoffDelay } from '../backoff';
+import { backoffDelay } from '../../../../common/backoff';
 import { httpRequest, type Fetch, type HttpOptions } from '../http';
 
 const SERVER = { baseUrl: 'http://edith:8787', token: 't0k' };

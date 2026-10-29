@@ -17,6 +17,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
+import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
@@ -61,7 +62,7 @@ class EdithInstallerModule : Module() {
       context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
 
-    AsyncFunction("install") Coroutine { path: String -> install(File(path)) }
+    AsyncFunction("install") Coroutine { path: String -> install(path) }
 
     AsyncFunction("clearDownloads") Coroutine { -> withContext(Dispatchers.IO) { downloadsDir().deleteRecursively(); Unit } }
   }
@@ -131,6 +132,9 @@ class EdithInstallerModule : Module() {
         if (!part.renameTo(dest)) throw CodedException("RENAME_FAILED", "Couldn't finish the download", null)
         sendEvent("onProgress", mapOf("received" to have.toDouble(), "total" to have.toDouble()))
         result(dest, actual)
+      } catch (e: IOException) {
+        // Unreachable, timed out or cut off: JS retries these (the partial file resumes).
+        throw CodedException("NETWORK", e.message ?: e.javaClass.simpleName, e)
       } finally {
         conn.disconnect()
       }
@@ -138,26 +142,46 @@ class EdithInstallerModule : Module() {
 
   private fun result(file: File, sha: String) = mapOf("path" to file.absolutePath, "sha256" to sha, "size" to file.length().toDouble())
 
-  private suspend fun install(apk: File): Int = withContext(Dispatchers.IO) {
-    if (!apk.exists() || apk.canonicalFile.parentFile?.path != downloadsDir().canonicalPath) throw CodedException("NO_APK", "That APK isn't a finished download", null)
+  private suspend fun install(path: String): Int = withContext(Dispatchers.IO) {
+    // Only a finished download: "<sha256>.apk" in our folder (never a .part), whose content still
+    // hashes to its name.
+    val apk = File(path).canonicalFile
+    val name = FINISHED_APK.matchEntire(apk.name)
+    if (name == null || apk.parentFile?.path != downloadsDir().canonicalPath || !apk.isFile) {
+      throw CodedException("NO_APK", "That isn't a finished EDITH download", null)
+    }
+    if (sha256(apk) != name.groupValues[1]) {
+      apk.delete()
+      throw CodedException("SHA256_MISMATCH", "The APK changed since it was downloaded; deleted", null)
+    }
     val installer = context.packageManager.packageInstaller
     val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL).apply {
       setAppPackageName(context.packageName)
       setSize(apk.length())
     }
     val sessionId = installer.createSession(params)
-    installer.openSession(sessionId).use { session ->
-      apk.inputStream().use { input ->
-        session.openWrite("edith.apk", 0, apk.length()).use { out ->
-          input.copyTo(out, 64 * 1024)
-          session.fsync(out)
+    try {
+      installer.openSession(sessionId).use { session ->
+        apk.inputStream().use { input ->
+          session.openWrite("edith.apk", 0, apk.length()).use { out ->
+            input.copyTo(out, 64 * 1024)
+            session.fsync(out)
+          }
         }
+        val intent = Intent(context, InstallResultReceiver::class.java).setPackage(context.packageName)
+        // The installer adds its result (and the confirmation intent) to this PendingIntent: mutable.
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_MUTABLE else 0)
+        val pending = PendingIntent.getBroadcast(context, sessionId, intent, flags)
+        session.commit(pending.intentSender)
       }
-      val intent = Intent(context, InstallResultReceiver::class.java).setPackage(context.packageName)
-      // The installer adds its result (and the confirmation intent) to this PendingIntent: mutable.
-      val flags = PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_MUTABLE else 0)
-      val pending = PendingIntent.getBroadcast(context, sessionId, intent, flags)
-      session.commit(pending.intentSender)
+    } catch (e: Exception) {
+      // Don't leave a half-written session behind (it holds a copy of the APK).
+      try {
+        installer.abandonSession(sessionId)
+      } catch (ignored: Exception) {
+        // already committed or gone
+      }
+      throw e
     }
     sessionId
   }
@@ -178,4 +202,8 @@ class EdithInstallerModule : Module() {
   }
 
   private fun hex(bytes: ByteArray) = bytes.joinToString("") { "%02x".format(it) }
+
+  companion object {
+    private val FINISHED_APK = Regex("([0-9a-f]{64})\\.apk")
+  }
 }
