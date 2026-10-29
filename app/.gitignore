@@ -19,6 +19,8 @@ expo-env.d.ts
 *.p12
 *.key
 *.pem
+# ...except the OTA code-signing *certificate*: public, embedded in the APK (contracts/app-updates.md §6)
+!certs/updates-certificate.pem
 .env*
 
 # Metro / debug

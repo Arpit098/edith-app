@@ -175,8 +175,16 @@ runtimeVersions.
 |---|---|
 | `EDITH_KEYSTORE_B64` | The release keystore (`.jks`), base64 |
 | `EDITH_KEYSTORE_PASSWORD`, `EDITH_KEY_ALIAS`, `EDITH_KEY_PASSWORD` | Its passwords and alias |
-| `EDITH_UPDATES_KEY_PEM` | The OTA code-signing private key (PEM) |
-| `EDITH_UPDATES_CERT_PEM` | Its self-signed certificate (PEM; public, embedded in the APK) |
+| `EDITH_UPDATES_KEY_PEM` | The OTA code-signing private key (PEM; RSA, from `expo-updates codesigning:generate`) |
+| `EDITH_UPDATES_CERT_PEM` | Its certificate. CI checks it equals the committed one before signing |
+
+- The OTA **certificate** is public and committed: `app/certs/updates-certificate.pem` (CN=EDITH, valid
+  until 2056-10-29, SHA-256 fingerprint `0C:72:EB:EE:37:7F:84:70:0B:25:19:13:0A:5A:42:E9:44:26:D1:68:82:80:28:D7:39:00:4F:A2:2B:B3:BB:0D`).
+  The private key lives only in GitHub Secrets and on edith in `~/.config/edith-signing/ota/` (0600).
+- The release **APK** certificate (PKCS12 keystore, alias `edith`) has SHA-256
+  `2B:6C:D3:6E:EA:02:20:9B:55:D9:7D:7A:78:20:E1:F6:81:A6:B1:60:67:3A:4A:49:F2:2B:43:9F:3F:D8:02:AB`.
+  CI fails a release build whose APK doesn't print this digest. It's the value for the server's
+  `app_updates.cert_sha256` pin.
 
 - No release keystore: CI signs with Expo's public debug key, says so in the job summary, and writes
   `"signing": "debug"`. The server never offers that APK.
