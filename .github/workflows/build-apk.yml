@@ -189,15 +189,11 @@ jobs:
           mv android/app/build/outputs/apk/release/app-release.apk out/apk/edith.apk
           apk=out/apk/edith.apk
           apksigner="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)/apksigner"
-          # apksigner labels signers "Signer #1" or, with v3.1 blocks, "Signer (minSdkVersion=…, …)".
-          # Every signer must carry the same certificate.
+          # apksigner's digest lines vary by scheme ("Signer #1", "V2 Signer:", …); the parser
+          # (tested in scripts/__tests__/cert-digest.test.ts) needs exactly one distinct certificate.
           certs=$("$apksigner" verify --print-certs "$apk")
           echo "$certs" | grep -i "certificate SHA-256 digest" || true
-          digests=$(echo "$certs" | sed -n 's/^Signer.* certificate SHA-256 digest: //p' | sort -u)
-          if [ -z "$digests" ] || [ "$(echo "$digests" | wc -l)" -ne 1 ]; then
-            echo "::error::Expected one signing certificate, apksigner printed: ${digests:-none}"; exit 1
-          fi
-          digest=$(echo "$digests" | tr 'a-f' 'A-F' | sed 's/../&:/g; s/:$//')
+          digest=$(printf '%s\n' "$certs" | scripts/cert-digest.sh) || { echo "::error::Couldn't read one signing certificate from apksigner"; exit 1; }
           echo "Signing certificate SHA-256: $digest"
           if [ "$SIGNING" = release ] && [ "$digest" != "$RELEASE_CERT_SHA256" ]; then
             echo "::error::Release build is signed with $digest, expected $RELEASE_CERT_SHA256"; exit 1
