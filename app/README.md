@@ -70,5 +70,55 @@ typecheck and jest, then `expo prebuild` and `./gradlew assembleRelease` (arm64-
 The APK is uploaded as a workflow artifact. For now it's signed with the **debug keystore**. Release
 signing comes later with a keystore Arpit creates and keeps in GitHub Secrets.
 
-**Install:** download the artifact from the workflow run, unzip it, open the `.apk` on the phone
-(allow "Install unknown apps" for the browser or file manager), then connect with Tailscale on.
+**Install:** download the `edith-apk` artifact from the workflow run, unzip it, open `edith.apk` on the
+phone (allow "Install unknown apps" for the browser or file manager), then connect with Tailscale on.
+After that, updates come from inside the app (below).
+
+## Updates from inside the app (contracts/app-updates.md)
+
+- **Code (OTA):** expo-updates checks `http://edith:8787/v1/updates/manifest` in the background at
+  launch, sending Arpit's token (set at runtime; the APK only embeds a `Bearer -` placeholder). A newer
+  bundle is used on the next start, or at once with Settings → Updates → "Restart now". Bundles are
+  code-signed in CI, and the APK runs only bundles signed with `certs/updates-certificate.pem`'s key.
+  A bundle that crashes at start is rolled back by expo-updates. Only bundles with the APK's exact
+  `runtimeVersion` (a fingerprint of the native side; `fingerprint.config.js`) reach it.
+- **APK:** Settings → Updates shows "Update available" when edith offers a higher `versionCode`. "Download
+  and install" streams `/v1/app/apk/{versionCode}` to the cache (resumable, SHA-256 checked in Kotlin,
+  `android-modules/edith-installer`), then opens Android's installer. Android always asks for one tap.
+  The first time, it asks to allow EDITH to install apps.
+- CI (`build-apk.yml`) publishes `edith-apk` (APK + `apk.json`) and, when the OTA key is set,
+  `edith-ota` (export + signed manifest, built by `scripts/ota.js`). edith collects them from successful
+  `main` runs. `versionCode` is `1000 + run number`.
+
+## Signing keys (Arpit creates them; never in git, never printed)
+
+| Key | Where it lives | GitHub Secrets |
+|---|---|---|
+| Release keystore (PKCS12, RSA 4096, alias `edith`) | edith `~/.config/edith-signing/` + offline backup | `EDITH_KEYSTORE_B64`, `EDITH_KEYSTORE_PASSWORD`, `EDITH_KEY_ALIAS`, `EDITH_KEY_PASSWORD` |
+| OTA code-signing key (RSA, 30-year cert, CN EDITH) | edith `~/.config/edith-signing/ota/` + offline backup; the **certificate** is committed as `certs/updates-certificate.pem` | `EDITH_UPDATES_KEY_PEM`, `EDITH_UPDATES_CERT_PEM` |
+
+Creating them (done 2026-10-29; only needed again for a new key, which means a reinstall):
+
+```bash
+umask 077
+# Release keystore (openssl only; no Java needed). Store and key password are the same.
+openssl req -x509 -newkey rsa:4096 -sha256 -days 10950 -subj "/CN=EDITH" -keyout key.pem -out cert.pem
+openssl pkcs12 -export -inkey key.pem -in cert.pem -name edith -out edith-release.p12   # then shred key.pem
+base64 -w0 edith-release.p12 | gh secret set EDITH_KEYSTORE_B64 --repo Arpit098/edith-app
+gh secret set EDITH_KEYSTORE_PASSWORD --repo Arpit098/edith-app   # prompts; same value for EDITH_KEY_PASSWORD
+gh secret set EDITH_KEY_ALIAS --repo Arpit098/edith-app --body edith
+
+# OTA code-signing key (from app/, with the expo-updates CLI)
+npx expo-updates codesigning:generate --key-output-directory ~/.config/edith-signing/ota \
+  --certificate-output-directory ~/.config/edith-signing/ota \
+  --certificate-validity-duration-years 30 --certificate-common-name EDITH
+cp ~/.config/edith-signing/ota/certificate.pem certs/updates-certificate.pem   # public: commit this one
+gh secret set EDITH_UPDATES_KEY_PEM --repo Arpit098/edith-app < ~/.config/edith-signing/ota/private-key.pem
+gh secret set EDITH_UPDATES_CERT_PEM --repo Arpit098/edith-app < ~/.config/edith-signing/ota/certificate.pem
+```
+
+CI checks the release APK prints the pinned certificate SHA-256
+(`2B:6C:D3:6E:EA:02:20:9B:55:D9:7D:7A:78:20:E1:F6:81:A6:B1:60:67:3A:4A:49:F2:2B:43:9F:3F:D8:02:AB`), that
+`EDITH_UPDATES_CERT_PEM` equals the committed certificate, and that the OTA key signs for it.
+**Switching from the debug key to the release key needs one uninstall + install** (Android refuses an
+update with a different signature). After that, every update keeps the app's data.

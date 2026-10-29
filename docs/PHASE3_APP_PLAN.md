@@ -257,15 +257,16 @@ the next launch, with no EAS and no Expo account. A new APK is needed only when 
   native fields, `android-modules/`. An APK accepts only updates with its exact fingerprint, so a JS
   bundle can never reach an APK whose native side doesn't match. When the fingerprint changes, CI builds
   an APK instead.
-- **Build (CI, x86):** in the same workflow, `npx expo export --platform android` (Hermes bytecode needs
-  the x86 `hermesc`; it doesn't run on edith's ARM) → `dist/` with the bundle, assets and
-  `metadata.json` → uploaded as an `ota-<fingerprint>-<sha>` artifact. The APK build is skipped when
-  the fingerprint matches the last APK's, which saves most CI minutes.
-- **Publish (on edith, pull only):** `deploy/ota-publish.sh <run-id>` uses `gh run download` to fetch
-  that artifact and checks its fingerprint and size. It **signs the manifest** with a private key that
-  lives only on edith (`~/.config/edith/ota-signing-key.pem`, 0600, never in git), and moves it into
-  `~/.local/share/edith/updates/<runtimeVersion>/<updateId>/`. Nothing reaches edith from outside;
-  GitHub never needs access to the tailnet.
+- **Build and sign (CI, x86):** _as built (2026-10-29), see contracts/app-updates.md:_ in the same
+  workflow, `npx expo export --platform android` (Hermes bytecode needs the x86 `hermesc`; it doesn't
+  run on edith's ARM) → `scripts/ota.js` builds the manifest and **signs it with the OTA key from GitHub
+  Secrets** (`EDITH_UPDATES_KEY_PEM`; also kept on edith in `~/.config/edith-signing/ota/`) → the
+  `edith-ota` artifact. The server serves the signed bytes unchanged and holds no private key.
+  (Earlier draft: sign on edith. Changed so the server stays simple.) Later: skip the APK build when
+  the fingerprint matches the last APK's.
+- **Publish (on edith, pull only):** a server job uses `gh run download` to fetch the artifacts of
+  successful `main` runs into `~/.local/share/edith/updates/` and `~/.local/share/edith/apk/`. Nothing
+  reaches edith from outside; GitHub never needs access to the tailnet.
 - **Serve:** a small server feature `updates` (`server/edith/features/updates/`) implementing the Expo
   Updates protocol v1:
   - `GET /v1/updates/manifest`, which reads the `expo-runtime-version` / `expo-platform` headers and
