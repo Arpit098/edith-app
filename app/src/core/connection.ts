@@ -50,11 +50,18 @@ export class Connection {
 
   /** Restore the saved server at startup and start streaming from it. */
   async load(): Promise<void> {
-    const [baseUrl, token] = await Promise.all([this.storage.get(KEY_URL), this.storage.get(KEY_TOKEN)]);
+    let baseUrl: string | null = null;
+    let token: string | null = null;
+    let error: string | null = null;
+    try {
+      [baseUrl, token] = await Promise.all([this.storage.get(KEY_URL), this.storage.get(KEY_TOKEN)]);
+    } catch (e) {
+      error = `Couldn't read the saved token: ${e instanceof Error ? e.message : String(e)}`; // e.g. a reset Keystore
+    }
     if (baseUrl && token) {
       this.start({ baseUrl, token });
     } else {
-      this.store.set({ link: 'unconfigured', baseUrl, error: null, retryInMs: null });
+      this.store.set({ link: 'unconfigured', baseUrl, error, retryInMs: null });
     }
   }
 
