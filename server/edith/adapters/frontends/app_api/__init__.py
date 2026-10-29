@@ -30,7 +30,7 @@ import time
 import urllib.parse
 
 from edith.common.paths import resolve
-from edith.core import ApiError, CommandCall, Event, Reply, Route
+from edith.core import ApiError, CommandCall, Event, Reply, Response, Route
 
 from . import ws
 
@@ -459,8 +459,37 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _respond(self, r: Response):
+        """A non-JSON answer: its body, or `length` bytes of its file from `offset`, sent with
+        sendfile (zero-copy, never read into memory). -> extra audit fields."""
+        f = None
+        if r.file:
+            try:
+                f = open(r.file, "rb")
+            except OSError:  # removed (e.g. pruned) since the handler looked
+                self._send(404, {"error": "not found"})
+                return {"status": 404}
+        try:
+            length = len(r.body) if f is None else (
+                r.length if r.length is not None else os.fstat(f.fileno()).st_size - r.offset)
+            self.send_response(r.status)
+            for name, value in r.headers.items():
+                self.send_header(name, value)
+            if r.status not in (204, 304):
+                self.send_header("Content-Length", str(length))
+            self.end_headers()
+            if f is not None:
+                self.wfile.flush()
+                self.connection.sendfile(f, r.offset, length)
+            elif r.body:
+                self.wfile.write(r.body)
+        finally:
+            if f is not None:
+                f.close()
+        return {}
+
     def _handle(self):
-        api, started, status, summary = self.server.api, time.monotonic(), 500, ""
+        api, started, status, summary, extra = self.server.api, time.monotonic(), 500, "", {}
         url = urllib.parse.urlsplit(self.path)
         try:
             given = self.headers.get("Authorization", "")
@@ -485,22 +514,30 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if isinstance(body, dict):
                 summary = str(body.get("text") or body.get("action") or body.get("args") or body.get("title") or "")[:60]
             result = route.handler({"body": body, "raw": raw, "content_type": ctype, "params": params,
-                                    "query": dict(urllib.parse.parse_qsl(url.query)), "origin": "app"})
-            status = 200
-            self._send(200, result if result is not None else {})
+                                    "query": dict(urllib.parse.parse_qsl(url.query)), "origin": "app",
+                                    "headers": {k.lower(): v for k, v in self.headers.items()}})
+            if isinstance(result, Response):
+                status, extra = result.status, dict(result.audit)
+                status = self._respond(result).get("status", status)
+            else:
+                status = 200
+                self._send(200, result if result is not None else {})
         except ApiError as e:
             status = e.status
             self._send(e.status, {"error": e.message})
         except (ValueError, TypeError) as e:
             status = 400
             self._send(400, {"error": str(e)})
+        except (ConnectionError, TimeoutError):  # the phone went away mid-download: nothing to answer
+            self.close_connection = True
+            summary = summary or "client went away"
         except Exception:
             log.exception("App API %s %s failed", self.command, url.path)
             status = 500
             self._send(500, {"error": "internal error"})
         finally:
             api.audit({"ts": time.time(), "ip": self.client_address[0], "method": self.command, "path": url.path,
-                       "status": status, "ms": int((time.monotonic() - started) * 1000), "summary": summary})
+                       "status": status, "ms": int((time.monotonic() - started) * 1000), "summary": summary, **extra})
 
     def _upgrade(self):
         key = self.headers.get("Sec-WebSocket-Key")
