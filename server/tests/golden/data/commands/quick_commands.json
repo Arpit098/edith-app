@@ -1,0 +1,25 @@
+{
+ "calls": [],
+ "prompts": [
+  [
+   "[Quick action /brief from Arpit, 2026-11-02 10:43 IST]\nGive me a short brief for today: my calendar (cd ~/edith/google && ~/edith/venv/bin/python gcal.py today), unread emails that actually matter (cd ~/edith/google && ~/edith/venv/bin/python gmail.py unread; skip promotions and newsletters), and reminders due today (python3 -I ~/edith/bin/remind.py list).",
+   false
+  ],
+  [
+   "[Quick action /mail from Arpit, 2026-11-02 10:43 IST]\nSummarise my unread emails that matter (cd ~/edith/google && ~/edith/venv/bin/python gmail.py unread). Skip promotions, newsletters and notifications. Flag anything that needs a reply. Read-only.",
+   false
+  ],
+  [
+   "[Quick action /today from Arpit, 2026-11-02 10:43 IST]\nWhat's on my calendar today, and the first thing tomorrow? (cd ~/edith/google && ~/edith/venv/bin/python gcal.py today / tomorrow). Mention gaps where I'm free and any reminders due today (python3 -I ~/edith/bin/remind.py list).",
+   false
+  ],
+  [
+   "[Quick action /servers from Arpit, 2026-11-02 10:43 IST]\nRead-only health check, no changes: this server (disk, memory, load, the edith-bridge service) and Cracker GCP via --configuration=cracker (VM status, Cloud Run services and their latest revision status, error logs from the last hour). Lead with 'all good' or what's wrong.",
+   false
+  ],
+  [
+   "[Quick action /changes from Arpit, 2026-11-02 10:43 IST]\nshow changes",
+   false
+  ]
+ ]
+}

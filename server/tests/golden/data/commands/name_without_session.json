@@ -1,0 +1,9 @@
+{
+ "calls": [
+  {
+   "chat_id": 111,
+   "method": "sendMessage",
+   "text": "Usage: /name <title>, e.g. /name youtube automation"
+  }
+ ]
+}

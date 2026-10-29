@@ -3,6 +3,8 @@
 [adapters]
 agent = "claude_tmux"
 stt = "whisper_cpp"
+mail = "google"        # adapters/google serves both mail and calendar, with one login
+calendar = "google"
 frontends = ["telegram", "app_api"]
 notifiers = ["telegram"]
 
@@ -13,7 +15,11 @@ max_side_lanes = 2
 
 [adapter.whisper_cpp]
 url = "http://127.0.0.1:8178"
-model = "small-q5_1"
+# The model is loaded by whisper-server.service (WHISPER_MODEL); this records which one, for reference.
+# small-q8_0: best accuracy, ~2.4 s for 5 s of English. base-q8_0: the fast option (~1-2 s, drops words).
+model = "small-q8_0"
+# deadline_floor = 5.0     # give up after max(floor, factor × audio seconds): HTTP 504, not retried
+# deadline_factor = 1.5
 
 [adapter.app_api]
 bind = "tailscale"          # the Tailscale IP only, never 0.0.0.0
@@ -24,10 +30,10 @@ token_file = "~/.config/edith/app-token"
 credentials_dir = "~/.config/edith-google"   # OAuth client + token; never in git
 
 [adapter.telegram]
-state_dir = "~/.claude/channels/telegram"
+telegram_dir = "~/.claude/channels/telegram"   # bot token (.env) and access.json; never in git
 
 [features]
-enabled = ["sessions", "approvals", "control", "reminders", "mail", "calendar", "changes", "quick_actions"]
+enabled = ["sessions", "approvals", "control", "reminders", "mail", "calendar", "changes", "quick_actions", "voice"]
 
 # Per-feature settings go in [features.<name>], e.g.:
 # [features.reminders]

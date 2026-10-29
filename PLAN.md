@@ -1,9 +1,22 @@
 # EDITH App — Plan
 
-An Android voice assistant ("Hey Edith") for E.D.I.T.H, the Claude Code agent running on the
-`edith` server. Like Siri, but it drives Arpit's own Claude Code session, and shows that session live.
+Arpit's **personal tools app** for Android, built around E.D.I.T.H, the Claude Code agent running on
+the `edith` server. Talking to EDITH by voice ("Hey Edith"), like Siri but driving Arpit's own Claude
+Code session and showing it live, is the first and main tool. Reminders, mail, calendar and more
+tools are added over time, each as its own feature on the app and the server.
 
-_Created 2026-10-29, updated 2026-10-29 (battery-light triggers; modular codebase; existing tools migration; Phase 1 plan approved). Status: Phase 1 (server), step 0. See [docs/PHASE1_PLAN.md](docs/PHASE1_PLAN.md)._
+_Created 2026-10-29, updated 2026-10-29 (battery-light triggers; modular codebase; existing tools migration; Phase 1 plan approved; Phase 1 done). Status: **Phase 1 (server) done** in the repo and live (tag `p1-live-3`); next is Phase 2 (app v1). See [docs/PHASE1_PLAN.md](docs/PHASE1_PLAN.md)._
+
+**Phase 1 wrap-up**
+- Done ahead of Phase 3: the server side of voice (`voice.turn`/`voice.reply`, spoken summaries)
+  is live, and the `[voice]` output-style rule was applied on 2026-10-29 with Arpit's "yes".
+- Live clean-up done 2026-10-29: the old `edith.service`, `edith-check.service/.timer`,
+  `~/.local/bin/edith-{start,check,notify}` and the staging units and dirs are removed (backup in
+  `~/edith-backups/cleanup-20261029/`). The staging run was skipped.
+- Open items: Arpit's Telegram checklist on the live bot; the `edith-claude.sh` swap (the only
+  file the drift check still reports); Hindi clips for the whisper benchmark.
+- For Phase 2: the App API has history by cursor, a JSON ping/pong, tool ids and `session.switched`
+  (contracts/events.md). The Android package name is `com.arpit.edith` (confirmed).
 
 ---
 
@@ -14,6 +27,9 @@ _Created 2026-10-29, updated 2026-10-29 (battery-light triggers; modular codebas
 - See the **live Claude Code session**: messages, tool calls, file edits and diffs as they happen.
 - Do everything the Telegram bot can: switch sessions, stop tasks, Allow/Deny permission prompts.
 - Long-press the power button to open EDITH, by making it Android's **default digital assistant**.
+- **A home for Arpit's tools.** Voice is one feature. Each tool (reminders, mail, calendar, and others
+  later) is a self-contained feature on the server and in the app, opened from a **Tools** grid, so a new
+  tool never means reworking the others. See [docs/ADDING_A_FEATURE.md](docs/ADDING_A_FEATURE.md).
 
 ## 2. Constraints
 
@@ -102,6 +118,7 @@ All of them run in the same `edith-bridge` service, and the existing behaviour m
 - Fully self-hosted alternative if wanted later: Headscale.
 
 ### 4.4 Android app
+- **Package name:** `com.arpit.edith` (confirmed).
 - **Framework:** React Native (Expo, prebuild / dev client, TypeScript), plus native Kotlin modules.
 - **Screens:**
   - **Live**:
@@ -109,6 +126,8 @@ All of them run in the same `edith-bridge` service, and the existing behaviour m
     - Mic button (push-to-talk), text box and Stop button.
     - Allow/Deny cards shown inline.
   - **Sessions**: list, switch, rename, new.
+  - **Tools**: a launcher grid with one tile per tool (`FeatureModule.tool` in `app/src/core/feature.ts`).
+    Only a few screens get a bottom tab (the tab bar fits about 5); every other tool lives here.
   - **Settings**: server address and token, **"Hey Edith" toggle (off by default)** and sensitivity, voice (TTS) on/off, auto-send after speech.
 - **Home-screen widget**: one tap opens EDITH already listening.
 - **Voice out:** Android TextToSpeech (`expo-speech`). It speaks EDITH's short voice summary (see 4.7).
@@ -163,7 +182,8 @@ can resume.
 
 ### 4.9 Existing EDITH tools move into edith-app
 The tools EDITH already uses on the server move into this repo as features and adapters. Today they
-live untracked in `~/edith`; a verbatim copy is kept in `server/legacy/` until each one is migrated.
+lived untracked in `~/edith`; Phase 1 migrated all of them (the legacy copy is deleted; its recorded
+behaviour stays as golden files in `server/tests/golden/`).
 
 | Today (on edith) | Moves to | Notes |
 |---|---|---|
@@ -241,8 +261,8 @@ on edith's ARM64.
 |---|---|---|
 | **0. Plan** | This plan; private repo created | Arpit approves the plan |
 | **1. Server** | Tailscale on edith; bridge split into edith-core + Telegram + App API (same service); **reminders, Gmail and Calendar code moved into edith-app (§4.9)**; whisper.cpp built and benchmarked; whisper-server on localhost | `curl` over Tailscale can send a message, stream the live session, list/switch sessions, approve a permission and transcribe a WAV. `/reminders`, `/mail`, `/today`, `/brief` run from the repo code. **Telegram works exactly as before**; `server/legacy/` is empty |
-| **2. App v1** | RN app: connect (address + token), live session view, text send, stop, sessions, approvals; Actions builds a signed APK | Arpit installs the APK and runs a full task from the phone while watching it live |
-| **3. Voice & triggers** | Push-to-talk → whisper → send; TTS of voice summaries; `[voice]` output-style rule; listening overlay with VAD end-of-speech; **default-assistant role (power button + earbud button)**; **home-screen widget** | Long-press power → "check the server disk space" → spoken answer, under ~10 s plus task time. Same from the widget and the earbuds |
+| **2. App v1** | RN app: connect (address + token), live session view, text send, stop, sessions, approvals, and the **Tools grid screen** (tiles from features' `tool`); Actions builds a signed APK | Arpit installs the APK and runs a full task from the phone while watching it live |
+| **3. Voice & triggers** | Push-to-talk → whisper → send; TTS of voice summaries; `[voice]` output-style rule (applied in Phase 1); listening overlay with VAD end-of-speech; **default-assistant role (power button + earbud button)**; **home-screen widget** | Long-press power → "check the server disk space" → spoken answer, under ~10 s plus task time. Same from the widget and the earbuds |
 | **4. Wake word (optional toggle)** | Trained `hey_edith` model; WakeWordService behind the Settings toggle (off by default) with sound gate | Triggers reliably across the room; under 1 false wake per hour; battery cost measured while on |
 | **5. Notifications & polish** | ntfy notifications; polish | EDITH replaces Google Assistant in daily use |
 

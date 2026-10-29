@@ -15,4 +15,4 @@ One folder per feature, each exposing `FEATURE = Feature(name, setup)`. Turn a f
 | `voice` | `POST /v1/stt`, the `[voice]` tag, spoken summaries | 3 |
 | `notifications` | "Task done" / "approval needed" pushes through the notifier ports | 5 |
 
-Each one is migrated out of `server/legacy/` (today's live code) in Phase 1, one at a time, so Telegram behaves the same at every step.
+The Phase 1 features were migrated from the legacy bridge one at a time, so Telegram behaved the same at every step; tests hold them to its recorded output (`server/tests/golden/`).

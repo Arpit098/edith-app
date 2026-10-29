@@ -1,0 +1,9 @@
+{
+ "calls": [
+  {
+   "chat_id": 111,
+   "method": "sendMessage",
+   "text": "🛑 Stopping 1 task(s). Also dropped 2 queued message(s)."
+  }
+ ]
+}

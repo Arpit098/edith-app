@@ -1,0 +1,46 @@
+{
+ "calls": [
+  {
+   "chat_id": 111,
+   "method": "sendMessage",
+   "reply_markup": {
+    "inline_keyboard": [
+     [
+      {
+       "callback_data": "sess:c0ffee01-1111-4aaa-8bbb-000000000001",
+       "text": "1. Fix the disk alert"
+      }
+     ],
+     [
+      {
+       "callback_data": "sess:0dd5e55e-2222-4aaa-8bbb-000000000002",
+       "text": "2. YouTube automation ideas"
+      }
+     ]
+    ]
+   },
+   "text": "🗂 Recent conversations (tap to switch):\n1. Fix the disk alert · 2m ago ◀ current\n2. YouTube automation ideas · 2h ago\n\n/name <title> names the current one."
+  },
+  {
+   "chat_id": 111,
+   "method": "sendMessage",
+   "reply_markup": {
+    "inline_keyboard": [
+     [
+      {
+       "callback_data": "sess:c0ffee01-1111-4aaa-8bbb-000000000001",
+       "text": "1. Fix the disk alert"
+      }
+     ],
+     [
+      {
+       "callback_data": "sess:0dd5e55e-2222-4aaa-8bbb-000000000002",
+       "text": "2. YouTube automation ideas"
+      }
+     ]
+    ]
+   },
+   "text": "🗂 Recent conversations (tap to switch):\n1. Fix the disk alert · 2m ago ◀ current\n2. YouTube automation ideas · 2h ago\n\n/name <title> names the current one."
+  }
+ ]
+}

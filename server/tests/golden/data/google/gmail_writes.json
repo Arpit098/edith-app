@@ -1,0 +1,49 @@
+[
+ {
+  "body": {
+   "ids": [
+    "m1",
+    "m3"
+   ],
+   "removeLabelIds": [
+    "UNREAD"
+   ]
+  },
+  "kind": "messages.batchModify"
+ },
+ {
+  "body": {
+   "ids": [
+    "m2"
+   ],
+   "removeLabelIds": [
+    "INBOX"
+   ]
+  },
+  "kind": "messages.batchModify"
+ },
+ {
+  "body": {
+   "message": {
+    "raw": "VG86IG11bUBleGFtcGxlLmNvbQpTdWJqZWN0OiBSZTogRGlubmVyPwpJbi1SZXBseS1UbzogPGFiY0BtYWlsPgpSZWZlcmVuY2VzOiA8cHJldkBtYWlsPiA8YWJjQG1haWw-CkNvbnRlbnQtVHlwZTogdGV4dC9wbGFpbjsgY2hhcnNldD0idXRmLTgiCkNvbnRlbnQtVHJhbnNmZXItRW5jb2Rpbmc6IDdiaXQKTUlNRS1WZXJzaW9uOiAxLjAKClllcyEK",
+    "threadId": "t3"
+   }
+  },
+  "kind": "drafts.create"
+ },
+ {
+  "body": {
+   "message": {
+    "raw": "VG86IHhAZXhhbXBsZS5jb20KU3ViamVjdDogTmV3CkNvbnRlbnQtVHlwZTogdGV4dC9wbGFpbjsgY2hhcnNldD0idXRmLTgiCkNvbnRlbnQtVHJhbnNmZXItRW5jb2Rpbmc6IDdiaXQKTUlNRS1WZXJzaW9uOiAxLjAKCkxpbmUgMQpMaW5lIDIK"
+   }
+  },
+  "kind": "drafts.create"
+ },
+ {
+  "body": {
+   "raw": "VG86IHlAZXhhbXBsZS5jb20KU3ViamVjdDogSGVsbG8KQ29udGVudC1UeXBlOiB0ZXh0L3BsYWluOyBjaGFyc2V0PSJ1dGYtOCIKQ29udGVudC1UcmFuc2Zlci1FbmNvZGluZzogN2JpdApNSU1FLVZlcnNpb246IDEuMAoKSGkgdGhlcmUK",
+   "threadId": "t1"
+  },
+  "kind": "messages.send"
+ }
+]

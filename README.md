@@ -1,6 +1,8 @@
 # edith-app
 
-Android voice assistant ("Hey Edith") for **E.D.I.T.H**, the Claude Code agent on the `edith` server.
+Arpit's **personal tools app** for Android, built around **E.D.I.T.H**, the Claude Code agent on the
+`edith` server. Voice ("Hey Edith") is the first tool; reminders, mail, calendar and more are added as
+self-contained features, each opened from the app's Tools grid.
 
 - **[PLAN.md](PLAN.md)**: goals, phases and decisions
 - **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**: ports, adapters and feature folders
@@ -16,4 +18,4 @@ Android voice assistant ("Hey Edith") for **E.D.I.T.H**, the Claude Code agent o
 | `deploy/` | systemd units and install scripts for edith |
 | `docs/` | Architecture and guides |
 
-Status: **Phase 0**. The scaffold and plan are in place; nothing is deployed yet.
+Status: **Phase 1** (server) in progress on the `phase-1` branch; see [docs/PHASE1_PLAN.md](docs/PHASE1_PLAN.md).

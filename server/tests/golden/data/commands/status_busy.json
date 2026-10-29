@@ -1,0 +1,14 @@
+{
+ "calls": [
+  {
+   "chat_id": 111,
+   "method": "sendMessage",
+   "text": "⏳ Main: 75s\n   🔧 $ npm test\n⚡ Parallel: 12s\n   🔧 thinking\nQueued: 1"
+  },
+  {
+   "chat_id": 111,
+   "method": "sendMessage",
+   "text": "🖥 tmux session: down · Fix the disk alert\nWatch live: ssh in, then edith-attach"
+  }
+ ]
+}

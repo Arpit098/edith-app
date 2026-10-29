@@ -27,10 +27,10 @@ repo. **Telegram must work exactly the same at every step.**
    has passed a full run on a **separate test bot** with a separate tmux session.
 5. **Backups before every live change** go to `~/edith-backups/p1-stepN/`. Each step below lists
    its rollback command.
-6. **Per step:** branch → PR → `make test` → Arpit merges → I send the change list → Arpit says
-   "yes" → I deploy and verify → I remove that piece from `server/legacy/` in the next PR.
-   While PR #1 is open, each branch is stacked on the previous one (starting from
-   `legacy-snapshot`), and I retarget them once it merges.
+6. **Per step:** a few commits on the `phase-1` branch (all of Phase 1 is one PR) → `make test`
+   before each commit → I tag the step's last commit and push the tag → I send the change list →
+   Arpit says "yes" → I deploy that tag and verify → I remove that piece from `server/legacy/` in
+   the next step's commits.
 
 Golden tests: before a piece is rewritten, I record what the legacy code outputs for fixed inputs
 (CLI output, Telegram API calls made, files written). The new code must match it exactly. These
@@ -49,7 +49,7 @@ tests stay in the repo after `legacy/` is gone.
 - `server/edith/core/`: button and action support in `Context`/`Registry`, `Ports` for `mail` and `calendar`.
 - `server/edith/ports/`: `mail.py`, `calendar.py`.
 - `server/edith/common/paths.py`: one place for `~/.cache/edith/…`, `~/edith/…` paths, all
-  overridable from config and env (needed so staging can run against separate dirs).
+  overridable from config and env (so tests and a second copy can run against separate dirs).
 - `server/tests/fakes/`: a fake Telegram API (records calls), a fake tmux and a fake `claude -p`.
 - `server/tests/golden/`: golden-output harness.
 - `deploy/README.md`: deploy checkout, tags, backup and rollback conventions.
@@ -102,7 +102,7 @@ the deploy clone. **No restart**, because EDITH runs it fresh each time.
 **Repo**
 - `server/edith/adapters/google/`:
   - `auth.py`: from `google/auth.py` + `gauth.py`, with tokens still in `~/.config/edith-google/`.
-  - `mail.py` and `calendar.py`: implement the new ports.
+  - `gmail.py` and `gcal.py`: implement the new ports. `api.py`: retries and batching. `login.py`: the `auth.py` login.
   - `requirements.txt`: the Google libraries (already installed in `~/edith/venv`, so nothing new is installed).
 - `features/mail/` and `features/calendar/`: `cli.py` with the same commands and output as
   `gmail.py` / `gcal.py`. They get the adapter through `ctx.ports` / `load_adapter`, never by
@@ -134,7 +134,7 @@ If it has expired, Arpit re-runs the login over Telegram (`auth.py url` / `finis
   - `lanes.py`: main lane plus up to 2 side lanes, the queue, side notes and `/queue`, the same rules as `dispatch()`.
   - `sessions.py`: list, title, resume and new, plus `/name` storage in `bridge-state.json`.
   - `hook.py` and `perm_mcp.py`: copied over unchanged. The `[tg-ref <id>]` marker and the file
-    formats stay the same, and the state dir can be overridden by `EDITH_STATE_DIR` for staging.
+    formats stay the same, and the state dir can be overridden by `EDITH_STATE_DIR`.
   - The adapter emits events from `contracts/events.md` and does no Telegram I/O.
 - Wrappers `deploy/shims/edith/bridge/hooks/edith_hook.py` and `deploy/shims/edith/bridge/perm_mcp.py`.
 - Tests:
@@ -184,16 +184,8 @@ fakes, and golden tests cover the reply text and buttons of every command.
 - An end-to-end golden test: a scripted conversation (text, command, buttons, file) against the fake
   Telegram API must produce **the same API calls** from legacy and from the new code.
 
-**Staging run first (needs "yes", no change to the live bot)**
-- Arpit creates a **test bot** with @BotFather (free) and gives me its token.
-- Run the new code as a temporary `edith-staging` user unit with:
-  - the test bot token
-  - tmux socket `-L edith-staging` with its own Claude
-  - work dir `~/edith-staging` (a copy of `~/edith` config, not data)
-  - state dir `~/.cache/edith-staging`
-- Arpit goes through a checklist on the test bot: every command, a side lane, the queue, Allow/Deny,
-  a reminder, `/sessions` → switch, `/new`, `/stop`, `/restart`, a photo, `SEND_FILE`.
-- Then stop and remove `edith-staging`. This uses some Claude usage for test turns.
+**Staging run: skipped.** Arpit chose to switch the live bot directly (with a full backup and a
+rollback command) instead of a staging run on a test bot; the staging files were removed.
 
 **Switch over (needs "yes", about 10 s of downtime, done when idle)**
 - Back up the unit file and `~/.cache/edith/bridge-state.json`.
@@ -202,8 +194,9 @@ fakes, and golden tests cover the reply text and buttons of every command.
 - `edith-claude.service` and the tmux Claude session are **not** restarted, so the conversation
   carries on.
 
-**Verify:** the staging checklist again on the real bot, plus a reminder firing and an old button
-from before the switch.
+**Verify:** Arpit's checklist on the real bot (every command, a side lane, the queue, Allow/Deny,
+a reminder, `/sessions` → switch, `/new`, `/stop`, `/restart`, a photo, `SEND_FILE`), plus a
+reminder firing and an old button from before the switch.
 
 **Rollback (about 10 s):** `cp ~/edith-backups/p1-step6/edith-bridge.service ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user restart edith-bridge`.
 The state files never changed format, so the old bridge picks up where the new one stopped.
@@ -274,7 +267,8 @@ streams it live, plus list/switch sessions and approve a permission. A request w
 ## Step 10: clean-up and Phase 1 sign-off
 
 **Repo**
-- `server/legacy/` is now empty, so delete it.
+- `server/legacy/` is now empty, so delete it. ✅ Done: deleted with `tests/legacy.py`; the tests
+  compare against the recorded golden files only.
 - `deploy/edith/` gets tracked copies of `~/edith/CLAUDE.md` (the **live** version, which now has
   a "Projects" section the snapshot lacks), `.claude/settings.json`, the output style,
   `edith-claude.sh` and `edith-attach`.
@@ -284,6 +278,8 @@ streams it live, plus list/switch sessions and approve a permission. A request w
 **Live (needs "yes", item by item):**
 - Remove the inactive leftovers from the old setup: `edith.service`, `edith-check.service/.timer`
   and `~/.local/bin/edith-{start,check,notify}`. They get backed up first, and Arpit confirms each deletion.
+  ✅ Done 2026-10-29 with the staging units and dirs (backup in `~/edith-backups/cleanup-20261029/`).
+- Swap in the tracked `edith-claude.sh` (still open).
 - Archive `~/edith/bridge/edith_bridge.py` to backups.
 - **The wrappers stay permanently**, because EDITH's memory, `CLAUDE.md` and the guard hook use those paths.
 
@@ -299,8 +295,9 @@ streams it live, plus list/switch sessions and approve a permission. A request w
 
 | When | What |
 |---|---|
-| Now | Merge PR #1 when ready |
-| Each step | Merge the step's PR; a "yes" to its change list before I touch anything live |
+| Now | Merge PR #1 and #2 |
+| Each step | A "yes" to its change list before I touch anything live |
+| End of Phase 1 | Review and merge the `phase-1` PR |
 | Step 1 | OK to create `~/edith-app-live` (a clone of this repo at a tag) |
 | Step 3 | Re-run the Google login if the Testing-mode token has expired (~2026-11-03) |
 | Step 6 | A test bot token from @BotFather; 10 min on the test bot checklist; a quiet time for the switch |

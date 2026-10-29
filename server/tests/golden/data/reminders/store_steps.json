@@ -1,0 +1,196 @@
+[
+ {
+  "file": "[\n {\n  \"id\": \"000001\",\n  \"due\": 1793499900.0,\n  \"text\": \"Pay rent\",\n  \"every\": \"monthly\",\n  \"chat_id\": null,\n  \"created\": 1793500000.0\n }\n]",
+  "result": {
+   "chat_id": null,
+   "created": 1793500000.0,
+   "due": 1793499900.0,
+   "every": "monthly",
+   "id": "000001",
+   "text": "Pay rent"
+  },
+  "step": "add"
+ },
+ {
+  "file": "[\n {\n  \"id\": \"000001\",\n  \"due\": 1793499900.0,\n  \"text\": \"Pay rent\",\n  \"every\": \"monthly\",\n  \"chat_id\": null,\n  \"created\": 1793500000.0\n },\n {\n  \"id\": \"000001\",\n  \"due\": 1793500050.0,\n  \"text\": \"Renew the domain\",\n  \"every\": null,\n  \"chat_id\": null,\n  \"created\": 1793500000.0\n }\n]",
+  "result": {
+   "chat_id": null,
+   "created": 1793500000.0,
+   "due": 1793500050.0,
+   "every": null,
+   "id": "000001",
+   "text": "Renew the domain"
+  },
+  "step": "add"
+ },
+ {
+  "file": "[\n {\n  \"id\": \"000001\",\n  \"due\": 1793499900.0,\n  \"text\": \"Pay rent\",\n  \"every\": \"monthly\",\n  \"chat_id\": null,\n  \"created\": 1793500000.0\n },\n {\n  \"id\": \"000001\",\n  \"due\": 1793500050.0,\n  \"text\": \"Renew the domain\",\n  \"every\": null,\n  \"chat_id\": null,\n  \"created\": 1793500000.0\n },\n {\n  \"id\": \"000001\",\n  \"due\": 1793507200.0,\n  \"text\": \"Standup\",\n  \"every\": \"weekdays\",\n  \"chat_id\": null,\n  \"created\": 1793500000.0\n }\n]",
+  "result": {
+   "chat_id": null,
+   "created": 1793500000.0,
+   "due": 1793507200.0,
+   "every": "weekdays",
+   "id": "000001",
+   "text": "Standup"
+  },
+  "step": "add"
+ },
+ {
+  "file": "[\n {\n  \"id\": \"000001\",\n  \"due\": 1793499900.0,\n  \"text\": \"Pay rent\",\n  \"every\": \"monthly\",\n  \"chat_id\": null,\n  \"created\": 1793500000.0\n },\n {\n  \"id\": \"000001\",\n  \"due\": 1793500050.0,\n  \"text\": \"Renew the domain\",\n  \"every\": null,\n  \"chat_id\": null,\n  \"created\": 1793500000.0\n },\n {\n  \"id\": \"000001\",\n  \"due\": 1793507200.0,\n  \"text\": \"Standup\",\n  \"every\": \"weekdays\",\n  \"chat_id\": null,\n  \"created\": 1793500000.0\n }\n]",
+  "result": [
+   {
+    "chat_id": null,
+    "created": 1793500000.0,
+    "due": 1793499900.0,
+    "every": "monthly",
+    "id": "000001",
+    "text": "Pay rent"
+   },
+   {
+    "chat_id": null,
+    "created": 1793500000.0,
+    "due": 1793500050.0,
+    "every": null,
+    "id": "000001",
+    "text": "Renew the domain"
+   },
+   {
+    "chat_id": null,
+    "created": 1793500000.0,
+    "due": 1793507200.0,
+    "every": "weekdays",
+    "id": "000001",
+    "text": "Standup"
+   }
+  ],
+  "step": "pending"
+ },
+ {
+  "file": "[\n {\n  \"id\": \"000001\",\n  \"due\": 1793499900.0,\n  \"text\": \"Pay rent\",\n  \"every\": \"monthly\",\n  \"chat_id\": null,\n  \"created\": 1793500000.0\n },\n {\n  \"id\": \"000001\",\n  \"due\": 1793500050.0,\n  \"text\": \"Renew the domain\",\n  \"every\": null,\n  \"chat_id\": null,\n  \"created\": 1793500000.0\n },\n {\n  \"id\": \"000001\",\n  \"due\": 1793507200.0,\n  \"text\": \"Standup\",\n  \"every\": \"weekdays\",\n  \"chat_id\": null,\n  \"created\": 1793500000.0\n },\n {\n  \"id\": \"000001\",\n  \"due\": 1793500900.0,\n  \"text\": \"Pay rent\",\n  \"every\": null,\n  \"chat_id\": null,\n  \"created\": 1793500000.0\n }\n]",
+  "result": {
+   "chat_id": null,
+   "created": 1793500000.0,
+   "due": 1793500900.0,
+   "every": null,
+   "id": "000001",
+   "text": "Pay rent"
+  },
+  "step": "snooze"
+ },
+ {
+  "file": "[\n {\n  \"id\": \"000001\",\n  \"due\": 1793499900.0,\n  \"text\": \"Pay rent\",\n  \"every\": \"monthly\",\n  \"chat_id\": null,\n  \"created\": 1793500000.0\n },\n {\n  \"id\": \"000001\",\n  \"due\": 1793500050.0,\n  \"text\": \"Renew the domain\",\n  \"every\": null,\n  \"chat_id\": null,\n  \"created\": 1793500000.0\n },\n {\n  \"id\": \"000001\",\n  \"due\": 1793507200.0,\n  \"text\": \"Standup\",\n  \"every\": \"weekdays\",\n  \"chat_id\": null,\n  \"created\": 1793500000.0\n },\n {\n  \"id\": \"000001\",\n  \"due\": 1793500900.0,\n  \"text\": \"Pay rent\",\n  \"every\": null,\n  \"chat_id\": null,\n  \"created\": 1793500000.0\n }\n]",
+  "result": null,
+  "step": "snooze"
+ },
+ {
+  "file": "[\n {\n  \"id\": \"000001\",\n  \"due\": 1793499900.0,\n  \"text\": \"Pay rent\",\n  \"every\": \"monthly\",\n  \"chat_id\": null,\n  \"created\": 1793500000.0\n },\n {\n  \"id\": \"000001\",\n  \"due\": 1793500050.0,\n  \"text\": \"Renew the domain\",\n  \"every\": null,\n  \"chat_id\": null,\n  \"created\": 1793500000.0\n },\n {\n  \"id\": \"000001\",\n  \"due\": 1793507200.0,\n  \"text\": \"Standup\",\n  \"every\": \"weekdays\",\n  \"chat_id\": null,\n  \"created\": 1793500000.0\n },\n {\n  \"id\": \"000001\",\n  \"due\": 1793500900.0,\n  \"text\": \"Pay rent\",\n  \"every\": null,\n  \"chat_id\": null,\n  \"created\": 1793500000.0\n }\n]",
+  "result": null,
+  "step": "cancel"
+ },
+ {
+  "file": "[\n {\n  \"id\": \"000001\",\n  \"due\": 1793499900.0,\n  \"text\": \"Pay rent\",\n  \"every\": \"monthly\",\n  \"chat_id\": null,\n  \"created\": 1793500000.0\n },\n {\n  \"id\": \"000001\",\n  \"due\": 1793500050.0,\n  \"text\": \"Renew the domain\",\n  \"every\": null,\n  \"chat_id\": null,\n  \"created\": 1793500000.0\n },\n {\n  \"id\": \"000001\",\n  \"due\": 1793507200.0,\n  \"text\": \"Standup\",\n  \"every\": \"weekdays\",\n  \"chat_id\": null,\n  \"created\": 1793500000.0\n },\n {\n  \"id\": \"000001\",\n  \"due\": 1793500900.0,\n  \"text\": \"Pay rent\",\n  \"every\": null,\n  \"chat_id\": null,\n  \"created\": 1793500000.0\n }\n]",
+  "result": null,
+  "step": "cancel"
+ },
+ {
+  "file": "[\n {\n  \"id\": \"000001\",\n  \"due\": 1796091900.0,\n  \"text\": \"Pay rent\",\n  \"every\": \"monthly\",\n  \"chat_id\": null,\n  \"created\": 1793500000.0\n },\n {\n  \"id\": \"000001\",\n  \"due\": 1793500050.0,\n  \"text\": \"Renew the domain\",\n  \"every\": null,\n  \"chat_id\": null,\n  \"created\": 1793500000.0,\n  \"fired\": 1793500060.0\n },\n {\n  \"id\": \"000001\",\n  \"due\": 1793507200.0,\n  \"text\": \"Standup\",\n  \"every\": \"weekdays\",\n  \"chat_id\": null,\n  \"created\": 1793500000.0\n },\n {\n  \"id\": \"000001\",\n  \"due\": 1793500900.0,\n  \"text\": \"Pay rent\",\n  \"every\": null,\n  \"chat_id\": null,\n  \"created\": 1793500000.0\n }\n]",
+  "result": [
+   {
+    "chat_id": null,
+    "created": 1793500000.0,
+    "due": 1793499900.0,
+    "every": "monthly",
+    "id": "000001",
+    "text": "Pay rent"
+   },
+   {
+    "chat_id": null,
+    "created": 1793500000.0,
+    "due": 1793500050.0,
+    "every": null,
+    "id": "000001",
+    "text": "Renew the domain"
+   }
+  ],
+  "step": "pop_due"
+ },
+ {
+  "file": "[\n {\n  \"id\": \"000001\",\n  \"due\": 1796091900.0,\n  \"text\": \"Pay rent\",\n  \"every\": \"monthly\",\n  \"chat_id\": null,\n  \"created\": 1793500000.0\n },\n {\n  \"id\": \"000001\",\n  \"due\": 1793500050.0,\n  \"text\": \"Renew the domain\",\n  \"every\": null,\n  \"chat_id\": null,\n  \"created\": 1793500000.0,\n  \"fired\": 1793500060.0\n },\n {\n  \"id\": \"000001\",\n  \"due\": 1793507200.0,\n  \"text\": \"Standup\",\n  \"every\": \"weekdays\",\n  \"chat_id\": null,\n  \"created\": 1793500000.0\n },\n {\n  \"id\": \"000001\",\n  \"due\": 1793500900.0,\n  \"text\": \"Pay rent\",\n  \"every\": null,\n  \"chat_id\": null,\n  \"created\": 1793500000.0\n }\n]",
+  "result": [
+   {
+    "chat_id": null,
+    "created": 1793500000.0,
+    "due": 1793500900.0,
+    "every": null,
+    "id": "000001",
+    "text": "Pay rent"
+   },
+   {
+    "chat_id": null,
+    "created": 1793500000.0,
+    "due": 1793507200.0,
+    "every": "weekdays",
+    "id": "000001",
+    "text": "Standup"
+   },
+   {
+    "chat_id": null,
+    "created": 1793500000.0,
+    "due": 1796091900.0,
+    "every": "monthly",
+    "id": "000001",
+    "text": "Pay rent"
+   }
+  ],
+  "step": "pending"
+ },
+ {
+  "file": "[\n {\n  \"id\": \"000001\",\n  \"due\": 1796091900.0,\n  \"text\": \"Pay rent\",\n  \"every\": \"monthly\",\n  \"chat_id\": null,\n  \"created\": 1793500000.0\n },\n {\n  \"id\": \"000001\",\n  \"due\": 1793500050.0,\n  \"text\": \"Renew the domain\",\n  \"every\": null,\n  \"chat_id\": null,\n  \"created\": 1793500000.0,\n  \"fired\": 1793500060.0\n },\n {\n  \"id\": \"000001\",\n  \"due\": 1793507200.0,\n  \"text\": \"Standup\",\n  \"every\": \"weekdays\",\n  \"chat_id\": null,\n  \"created\": 1793500000.0\n },\n {\n  \"id\": \"000001\",\n  \"due\": 1793500900.0,\n  \"text\": \"Pay rent\",\n  \"every\": null,\n  \"chat_id\": null,\n  \"created\": 1793500000.0\n }\n]",
+  "result": null,
+  "step": "snooze"
+ },
+ {
+  "file": "[\n {\n  \"id\": \"000001\",\n  \"due\": 1796091900.0,\n  \"text\": \"Pay rent\",\n  \"every\": \"monthly\",\n  \"chat_id\": null,\n  \"created\": 1793500000.0\n },\n {\n  \"id\": \"000001\",\n  \"due\": 1793852800.0,\n  \"text\": \"Standup\",\n  \"every\": \"weekdays\",\n  \"chat_id\": null,\n  \"created\": 1793500000.0\n },\n {\n  \"id\": \"000001\",\n  \"due\": 1793500900.0,\n  \"text\": \"Pay rent\",\n  \"every\": null,\n  \"chat_id\": null,\n  \"created\": 1793500000.0,\n  \"fired\": 1793845600.0\n }\n]",
+  "result": [
+   {
+    "chat_id": null,
+    "created": 1793500000.0,
+    "due": 1793507200.0,
+    "every": "weekdays",
+    "id": "000001",
+    "text": "Standup"
+   },
+   {
+    "chat_id": null,
+    "created": 1793500000.0,
+    "due": 1793500900.0,
+    "every": null,
+    "id": "000001",
+    "text": "Pay rent"
+   }
+  ],
+  "step": "pop_due"
+ },
+ {
+  "file": "[\n {\n  \"id\": \"000001\",\n  \"due\": 1796091900.0,\n  \"text\": \"Pay rent\",\n  \"every\": \"monthly\",\n  \"chat_id\": null,\n  \"created\": 1793500000.0\n },\n {\n  \"id\": \"000001\",\n  \"due\": 1793852800.0,\n  \"text\": \"Standup\",\n  \"every\": \"weekdays\",\n  \"chat_id\": null,\n  \"created\": 1793500000.0\n },\n {\n  \"id\": \"000001\",\n  \"due\": 1793500900.0,\n  \"text\": \"Pay rent\",\n  \"every\": null,\n  \"chat_id\": null,\n  \"created\": 1793500000.0,\n  \"fired\": 1793845600.0\n }\n]",
+  "result": [
+   {
+    "chat_id": null,
+    "created": 1793500000.0,
+    "due": 1793852800.0,
+    "every": "weekdays",
+    "id": "000001",
+    "text": "Standup"
+   },
+   {
+    "chat_id": null,
+    "created": 1793500000.0,
+    "due": 1796091900.0,
+    "every": "monthly",
+    "id": "000001",
+    "text": "Pay rent"
+   }
+  ],
+  "step": "pending"
+ }
+]

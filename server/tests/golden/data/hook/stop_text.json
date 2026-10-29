@@ -1,0 +1,16 @@
+{
+ "exit": 0,
+ "files": {
+  "perms left": [],
+  "tmux-events.jsonl": [
+   {
+    "event": "stop",
+    "session_id": "s1",
+    "text": "Done ✅",
+    "ts": 0
+   }
+  ]
+ },
+ "request": null,
+ "stdout": ""
+}

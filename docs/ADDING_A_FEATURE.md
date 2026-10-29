@@ -45,11 +45,17 @@
 1. Create `server/edith/adapters/<port>/<name>/__init__.py` with a `create(config)` function that
    returns an object implementing the port in `server/edith/ports/<port>.py`.
 2. Select it in `config.toml`, e.g. `[adapters] stt = "my_engine"`.
+3. **One service, several ports** (e.g. Google for mail and calendar): make one package
+   `server/edith/adapters/<name>/` with `PORTS = ("mail", "calendar")` and a `create(config)` that
+   returns an object with one attribute per port (`.mail`, `.calendar`). With `mail = "google"` and
+   `calendar = "google"`, it is created once and both ports share it (one login). Build nothing
+   expensive in `create()`; connect on first use.
 
 ## App feature
 
 1. Copy `app/src/features/_template` to `app/src/features/my-feature`.
-2. Fill in the exported `FeatureModule`: its screens, settings and event handlers.
+2. Fill in the exported `FeatureModule`: its screens, settings, event handlers and, for a tool, its
+   `tool` tile for the Tools grid (see "Adding a new tool" below).
 3. Add it to `app/src/features/index.ts` (one line).
 4. If it needs a device capability, add or use a **port** in `app/src/core/ports.ts` and an
    adapter in `app/src/adapters/`. Don't call native modules from the feature directly.
@@ -57,3 +63,19 @@
 ## New event or API shape
 
 Add it to `contracts/events.md` first. Both the server and the app read from that single description.
+
+## Adding a new tool (app + server)
+
+A "tool" is a feature Arpit opens from the app's **Tools** grid (and usually also uses from Telegram).
+
+1. **Contract first:** add its events and API routes to `contracts/events.md`.
+2. **Server:** a feature folder (see "Server feature" above) with its commands (`help`/`menu` place
+   them in `/help` and the Telegram menu), button actions, `ctx.add_route(...)` for the app, and any
+   background job. Outside services go behind a port and an adapter.
+3. **Server tests:** `server/tests/features/test_<tool>.py`; `make test` must stay green.
+4. **App:** a feature folder (see "App feature" above) with its screen, plus a tile:
+   ```ts
+   tool: { title: 'Reminders', icon: 'alarm', screen: 'reminders' },  // screen: one of its own screens
+   ```
+   Give it `tab: true` on a screen only if it really deserves one of the ~5 bottom tabs.
+5. **Enable it:** one line in `server/config.toml` (`[features] enabled`) and one in `app/src/features/index.ts`.

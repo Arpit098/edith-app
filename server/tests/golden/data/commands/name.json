@@ -1,0 +1,19 @@
+{
+ "calls": [
+  {
+   "chat_id": 111,
+   "method": "sendMessage",
+   "text": "Usage: /name <title>, e.g. /name youtube automation"
+  },
+  {
+   "chat_id": 111,
+   "method": "sendMessage",
+   "text": "Usage: /name <title>, e.g. /name youtube automation"
+  },
+  {
+   "chat_id": 111,
+   "method": "sendMessage",
+   "text": "🏷 This conversation is now \"Disk alert work Disk alert work Disk alert work Disk alert w\"."
+  }
+ ]
+}

@@ -1,0 +1,19 @@
+{
+ "calls": [
+  {
+   "callback_query_id": "cb1",
+   "method": "answerCallbackQuery",
+   "text": "On it"
+  },
+  {
+   "callback_query_id": "cb1",
+   "method": "answerCallbackQuery"
+  }
+ ],
+ "prompts": [
+  [
+   "[Quick action /brief from Arpit, 2026-11-02 10:43 IST]\nGive me a short brief for today: my calendar (cd ~/edith/google && ~/edith/venv/bin/python gcal.py today), unread emails that actually matter (cd ~/edith/google && ~/edith/venv/bin/python gmail.py unread; skip promotions and newsletters), and reminders due today (python3 -I ~/edith/bin/remind.py list).",
+   false
+  ]
+ ]
+}

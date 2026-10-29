@@ -1,0 +1,62 @@
+[
+ {
+  "command": "menu",
+  "description": "Quick action buttons"
+ },
+ {
+  "command": "brief",
+  "description": "Today's brief: calendar, mail, reminders"
+ },
+ {
+  "command": "mail",
+  "description": "Unread emails that matter"
+ },
+ {
+  "command": "today",
+  "description": "Today's calendar"
+ },
+ {
+  "command": "servers",
+  "description": "Server + Cracker health check"
+ },
+ {
+  "command": "changes",
+  "description": "Recent file changes"
+ },
+ {
+  "command": "reminders",
+  "description": "Upcoming reminders"
+ },
+ {
+  "command": "queue",
+  "description": "Run after the current task"
+ },
+ {
+  "command": "new",
+  "description": "Start a fresh conversation"
+ },
+ {
+  "command": "sessions",
+  "description": "Switch to an earlier conversation"
+ },
+ {
+  "command": "name",
+  "description": "Name the current conversation"
+ },
+ {
+  "command": "stop",
+  "description": "Stop all running tasks"
+ },
+ {
+  "command": "status",
+  "description": "What E.D.I.T.H is doing"
+ },
+ {
+  "command": "restart",
+  "description": "Restart the bridge"
+ },
+ {
+  "command": "help",
+  "description": "Help"
+ }
+]

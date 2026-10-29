@@ -1,0 +1,447 @@
+{
+ "calls": [
+  {
+   "chat_id": 111,
+   "message_id": 1,
+   "method": "setMessageReaction",
+   "reaction": [
+    {
+     "emoji": "👌",
+     "type": "emoji"
+    }
+   ]
+  },
+  {
+   "chat_id": 111,
+   "method": "sendMessage",
+   "text": "I'm E.D.I.T.H. Just text me what you need.\n\nIf I'm busy, new messages run in a parallel lane straight away (up to 2).\n\n/menu – quick action buttons\n/brief /mail /today /servers /changes – quick actions\n/reminders – upcoming reminders (say \"remind me…\" to add one)\n/queue <task> – wait for the current task instead of running in parallel\n/new – start a fresh conversation\n/sessions – switch back to an earlier conversation\n/resume <n|name> – switch by number or name\n/name <title> – name the current conversation\n/stop – stop all running tasks\n/status – what I'm doing right now\n/restart – restart the bridge (after updates)\n/help – this message"
+  },
+  {
+   "chat_id": 111,
+   "message_id": 2,
+   "method": "setMessageReaction",
+   "reaction": [
+    {
+     "emoji": "👀",
+     "type": "emoji"
+    }
+   ]
+  },
+  {
+   "chat_id": 111,
+   "message_id": 2,
+   "method": "setMessageReaction",
+   "reaction": [
+    {
+     "emoji": "👨‍💻",
+     "type": "emoji"
+    }
+   ]
+  },
+  {
+   "chat_id": 111,
+   "method": "sendMessage",
+   "text": "⏳ On it…"
+  },
+  {
+   "chat_id": 111,
+   "message_id": 2,
+   "method": "setMessageReaction",
+   "reaction": [
+    {
+     "emoji": "🎉",
+     "type": "emoji"
+    }
+   ]
+  },
+  {
+   "chat_id": 111,
+   "message_id": 1001,
+   "method": "editMessageText",
+   "text": "✅ Done in Ns · 1 steps"
+  },
+  {
+   "chat_id": 111,
+   "method": "sendMessage",
+   "text": "Here you go."
+  },
+  {
+   "chat_id": 111,
+   "method": "send_file",
+   "path": "~/report.txt"
+  },
+  {
+   "chat_id": 111,
+   "method": "sendMessage",
+   "text": "⚠️ File not found: ~/missing.txt"
+  },
+  {
+   "chat_id": 111,
+   "message_id": 3,
+   "method": "setMessageReaction",
+   "reaction": [
+    {
+     "emoji": "👀",
+     "type": "emoji"
+    }
+   ]
+  },
+  {
+   "chat_id": 111,
+   "message_id": 3,
+   "method": "setMessageReaction",
+   "reaction": [
+    {
+     "emoji": "👨‍💻",
+     "type": "emoji"
+    }
+   ]
+  },
+  {
+   "chat_id": 111,
+   "method": "sendMessage",
+   "text": "⏳ On it…"
+  },
+  {
+   "chat_id": 111,
+   "message_id": 4,
+   "method": "setMessageReaction",
+   "reaction": [
+    {
+     "emoji": "👀",
+     "type": "emoji"
+    }
+   ]
+  },
+  {
+   "chat_id": 111,
+   "message_id": 4,
+   "method": "setMessageReaction",
+   "reaction": [
+    {
+     "emoji": "⚡",
+     "type": "emoji"
+    }
+   ]
+  },
+  {
+   "chat_id": 111,
+   "method": "sendMessage",
+   "reply_parameters": {
+    "allow_sending_without_reply": true,
+    "message_id": 4
+   },
+   "text": "⚡ ⏳ On it (parallel lane)…"
+  },
+  {
+   "chat_id": 111,
+   "message_id": 4,
+   "method": "setMessageReaction",
+   "reaction": [
+    {
+     "emoji": "👍",
+     "type": "emoji"
+    }
+   ]
+  },
+  {
+   "chat_id": 111,
+   "message_id": 1005,
+   "method": "editMessageText",
+   "text": "⚡ ✅ Done in Ns · 1 steps"
+  },
+  {
+   "chat_id": 111,
+   "method": "sendMessage",
+   "reply_parameters": {
+    "allow_sending_without_reply": true,
+    "message_id": 4
+   },
+   "text": "Side answer."
+  },
+  {
+   "chat_id": 111,
+   "message_id": 5,
+   "method": "setMessageReaction",
+   "reaction": [
+    {
+     "emoji": "👌",
+     "type": "emoji"
+    }
+   ]
+  },
+  {
+   "chat_id": 111,
+   "message_id": 5,
+   "method": "setMessageReaction",
+   "reaction": [
+    {
+     "emoji": "🥱",
+     "type": "emoji"
+    }
+   ]
+  },
+  {
+   "chat_id": 111,
+   "method": "sendMessage",
+   "text": "📥 Queued (#1). I'll get to it after the current task. /stop to cancel."
+  },
+  {
+   "chat_id": 111,
+   "message_id": 3,
+   "method": "setMessageReaction",
+   "reaction": [
+    {
+     "emoji": "👍",
+     "type": "emoji"
+    }
+   ]
+  },
+  {
+   "chat_id": 111,
+   "message_id": 1004,
+   "method": "editMessageText",
+   "text": "✅ Done in Ns · 1 steps"
+  },
+  {
+   "chat_id": 111,
+   "method": "sendMessage",
+   "text": "Long task done."
+  },
+  {
+   "chat_id": 111,
+   "message_id": 5,
+   "method": "setMessageReaction",
+   "reaction": [
+    {
+     "emoji": "👨‍💻",
+     "type": "emoji"
+    }
+   ]
+  },
+  {
+   "chat_id": 111,
+   "method": "sendMessage",
+   "text": "⏳ On it…"
+  },
+  {
+   "chat_id": 111,
+   "message_id": 5,
+   "method": "setMessageReaction",
+   "reaction": [
+    {
+     "emoji": "👍",
+     "type": "emoji"
+    }
+   ]
+  },
+  {
+   "chat_id": 111,
+   "message_id": 1009,
+   "method": "editMessageText",
+   "text": "✅ Done in Ns · 1 steps"
+  },
+  {
+   "chat_id": 111,
+   "method": "sendMessage",
+   "text": "Queued one done."
+  },
+  {
+   "chat_id": 111,
+   "message_id": 6,
+   "method": "setMessageReaction",
+   "reaction": [
+    {
+     "emoji": "👀",
+     "type": "emoji"
+    }
+   ]
+  },
+  {
+   "file_id": "big",
+   "method": "getFile"
+  },
+  {
+   "chat_id": 111,
+   "message_id": 6,
+   "method": "setMessageReaction",
+   "reaction": [
+    {
+     "emoji": "👨‍💻",
+     "type": "emoji"
+    }
+   ]
+  },
+  {
+   "chat_id": 111,
+   "method": "sendMessage",
+   "text": "⏳ On it…"
+  },
+  {
+   "chat_id": 111,
+   "message_id": 6,
+   "method": "setMessageReaction",
+   "reaction": [
+    {
+     "emoji": "👍",
+     "type": "emoji"
+    }
+   ]
+  },
+  {
+   "chat_id": 111,
+   "message_id": 1011,
+   "method": "editMessageText",
+   "text": "✅ Done in Ns · 1 steps"
+  },
+  {
+   "chat_id": 111,
+   "method": "sendMessage",
+   "text": "A cat."
+  },
+  {
+   "callback_query_id": "cb1",
+   "method": "answerCallbackQuery",
+   "text": "On it"
+  },
+  {
+   "chat_id": 111,
+   "method": "sendMessage",
+   "text": "⏳ On it…"
+  },
+  {
+   "chat_id": 111,
+   "message_id": 1013,
+   "method": "editMessageText",
+   "text": "✅ Done in Ns · 1 steps"
+  },
+  {
+   "chat_id": 111,
+   "method": "sendMessage",
+   "text": "Mail summary."
+  },
+  {
+   "chat_id": 111,
+   "message_id": 7,
+   "method": "setMessageReaction",
+   "reaction": [
+    {
+     "emoji": "👌",
+     "type": "emoji"
+    }
+   ]
+  },
+  {
+   "chat_id": 111,
+   "method": "sendMessage",
+   "text": "Nothing is running."
+  },
+  {
+   "chat_id": 111,
+   "message_id": 8,
+   "method": "setMessageReaction",
+   "reaction": [
+    {
+     "emoji": "👀",
+     "type": "emoji"
+    }
+   ]
+  },
+  {
+   "chat_id": 111,
+   "message_id": 8,
+   "method": "setMessageReaction",
+   "reaction": [
+    {
+     "emoji": "👨‍💻",
+     "type": "emoji"
+    }
+   ]
+  },
+  {
+   "chat_id": 111,
+   "method": "sendMessage",
+   "text": "⏳ On it…"
+  },
+  {
+   "chat_id": 111,
+   "message_id": 9,
+   "method": "setMessageReaction",
+   "reaction": [
+    {
+     "emoji": "👌",
+     "type": "emoji"
+    }
+   ]
+  },
+  {
+   "chat_id": 111,
+   "method": "sendMessage",
+   "text": "🛑 Stopping 1 task(s)."
+  },
+  {
+   "chat_id": 111,
+   "message_id": 8,
+   "method": "setMessageReaction",
+   "reaction": [
+    {
+     "emoji": "🫡",
+     "type": "emoji"
+    }
+   ]
+  },
+  {
+   "chat_id": 111,
+   "message_id": 1016,
+   "method": "editMessageText",
+   "text": "🛑 Stopped."
+  },
+  {
+   "chat_id": 111,
+   "message_id": 11,
+   "method": "setMessageReaction",
+   "reaction": [
+    {
+     "emoji": "👌",
+     "type": "emoji"
+    }
+   ]
+  },
+  {
+   "chat_id": 111,
+   "method": "sendMessage",
+   "text": "💤 Idle. Conversation in progress."
+  },
+  {
+   "chat_id": 111,
+   "method": "sendMessage",
+   "text": "🖥 tmux session: running · First chat\nWatch live: ssh in, then edith-attach"
+  }
+ ],
+ "prompts": {
+  "main": [
+   "[Telegram message from Arpit, 2026-11-02 10:43 IST]\nhello\n[tg-ref R]",
+   "[Telegram message from Arpit, 2026-11-02 10:43 IST]\na long task\n[tg-ref R]",
+   "[While you were busy, parallel lanes (forks of this conversation) handled these. You didn't see them, so here they are for context:]\n- Arpit: quick question\n  EDITH: Side answer.\n\n[Telegram message from Arpit, 2026-11-02 10:43 IST]\nafter that\n[tg-ref R]",
+   "[Telegram message from Arpit, 2026-11-02 10:43 IST]\nwhat is this\n[Arpit is replying to EDITH's message: Earlier answer]\n[Attached file saved at: ~/edith/inbox/T_photo.jpg]\n[tg-ref R]",
+   "[Quick action /mail from Arpit, 2026-11-02 10:43 IST]\nSummarise my unread emails that matter (cd ~/edith/google && ~/edith/venv/bin/python gmail.py unread). Skip promotions, newsletters and notifications. Flag anything that needs a reply. Read-only.\n[tg-ref R]",
+   "[Telegram message from Arpit, 2026-11-02 10:43 IST]\nstop me\n[tg-ref R]"
+  ],
+  "side": [
+   [
+    "-p",
+    "[Telegram message from Arpit, 2026-11-02 10:43 IST]\nquick question",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--mcp-config",
+    "~/edith/bridge/mcp.json",
+    "--permission-prompt-tool",
+    "mcp__edith_perm__approve",
+    "--resume",
+    "s1",
+    "--fork-session"
+   ]
+  ]
+ }
+}

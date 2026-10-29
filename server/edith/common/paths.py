@@ -1,8 +1,7 @@
 """Where EDITH keeps its files, in one place.
 
 The defaults are today's live locations, so the new code and the legacy bridge share the same
-files. Every root can be moved, so a staging copy can run beside the live one
-(docs/PHASE1_PLAN.md, step 6). A value in config.toml wins, then the environment, then the default:
+files. Every root can be moved, so tests (or a second copy) can run beside the live one. A value in config.toml wins, then the environment, then the default:
 
 | Root          | config key     | env var              | default                         |
 |---------------|----------------|----------------------|---------------------------------|

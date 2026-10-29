@@ -1,0 +1,7 @@
+{
+ "bridge state fallback": "cwd=~/edith tmux=1 args=--resume s3\n",
+ "explicit session that exists": "cwd=~/edith tmux=1 args=--resume s1\n",
+ "explicit session that's gone": "cwd=~/edith tmux=1 args=\n",
+ "last tmux session": "cwd=~/edith tmux=1 args=--resume s2\n",
+ "nothing saved": "cwd=~/edith tmux=1 args=\n"
+}

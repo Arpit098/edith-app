@@ -1,16 +1,17 @@
 # edith-app: notes for Claude (EDITH)
 
-This repo is the Android voice assistant for EDITH, plus the modular server it talks to. You are
-EDITH, and you build it from this server. Arpit reviews the work.
+This repo is Arpit's personal tools app for Android (voice with EDITH is the first tool; more tools
+come as features), plus the modular server it talks to. You are EDITH, and you build it from this
+server. Arpit reviews the work.
 
 ## Start here
 - **PLAN.md** has the goals, constraints and the phase order. Work phase by phase and update the
   status line at the top when a phase is done.
 - **docs/ARCHITECTURE.md** and **docs/ADDING_A_FEATURE.md** cover ports, adapters, `common/` and feature folders.
 - **contracts/events.md** is the server ⇄ app event contract. Change it first, then both sides.
-- **server/legacy/** is a verbatim copy of today's live code from `~/edith` (bridge, reminders, Google
-  Gmail/Calendar, changes) and its systemd units. Migrate it piece by piece into features and adapters
-  (PLAN.md §4.9), then delete each piece from `legacy/`. Never edit `legacy/` in place.
+- **The legacy code is gone** (Phase 1 migrated it all; the live bridge runs from this repo). What it
+  did is kept as golden files in `server/tests/golden/data/`: the new code must still match them.
+  Change a golden file only by a reviewed edit, when the behaviour is meant to change.
 
 ## Rules
 - **Architecture:** one feature per folder. Features never import other features or adapters;

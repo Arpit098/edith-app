@@ -1,0 +1,24 @@
+{
+ "calls": [
+  {
+   "chat_id": 111,
+   "method": "sendMessage",
+   "text": "💤 Idle. Conversation in progress."
+  },
+  {
+   "chat_id": 111,
+   "method": "sendMessage",
+   "text": "🖥 tmux session: running · Fix the disk alert\nWatch live: ssh in, then edith-attach"
+  },
+  {
+   "chat_id": 111,
+   "method": "sendMessage",
+   "text": "💤 Idle. No conversation yet."
+  },
+  {
+   "chat_id": 111,
+   "method": "sendMessage",
+   "text": "🖥 tmux session: running\nWatch live: ssh in, then edith-attach"
+  }
+ ]
+}
