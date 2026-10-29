@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+server/config.toml
+node_modules/
+app/android/
+app/ios/
+*.keystore
+*.jks
+wakeword/recordings/**/*.wav
+.env*

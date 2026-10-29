@@ -1,0 +1,31 @@
+# Copy to config.toml on edith. Secrets (bot token, API token) are read from files/env, never stored here.
+
+[adapters]
+agent = "claude_tmux"
+stt = "whisper_cpp"
+frontends = ["telegram", "app_api"]
+notifiers = ["telegram"]
+
+[adapter.claude_tmux]
+work_dir = "~/edith"
+tmux_socket = "edith"
+max_side_lanes = 2
+
+[adapter.whisper_cpp]
+url = "http://127.0.0.1:8178"
+model = "small-q5_1"
+
+[adapter.app_api]
+bind = "tailscale"          # the Tailscale IP only, never 0.0.0.0
+port = 8787
+token_file = "~/.config/edith/app-token"
+
+[adapter.telegram]
+state_dir = "~/.claude/channels/telegram"
+
+[features]
+enabled = ["sessions", "approvals", "control", "reminders", "quick_actions"]
+
+# Per-feature settings go in [features.<name>], e.g.:
+# [features.reminders]
+# timezone = "Asia/Kolkata"

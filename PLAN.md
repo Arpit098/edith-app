@@ -3,7 +3,7 @@
 An Android voice assistant ("Hey Edith") for E.D.I.T.H, the Claude Code agent running on the
 `edith` server. Like Siri, but it drives Arpit's own Claude Code session, and shows that session live.
 
-_Created 2026-10-29, updated 2026-10-29 (battery-light triggers). Status: Phase 0 (planning)._
+_Created 2026-10-29, updated 2026-10-29 (battery-light triggers; modular codebase). Status: Phase 0 (planning)._
 
 ---
 
@@ -162,14 +162,31 @@ can resume.
 
 ## 5. Repository layout (`Arpit098/edith-app`, private)
 
+The code is organised as **ports, adapters and feature folders**, so a feature can be added or
+removed without touching the others. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and
+[docs/ADDING_A_FEATURE.md](docs/ADDING_A_FEATURE.md).
+
 ```
 edith-app/
 ├── PLAN.md                 ← this file
-├── server/                 edith-core + App API (deployed to ~/edith/bridge on edith)
-├── app/                    React Native app (+ android/ native Kotlin modules)
+├── docs/                   ARCHITECTURE.md, ADDING_A_FEATURE.md
+├── contracts/              events.md: the event/API contract shared by server and app
+├── server/edith/           (deployed to edith in Phase 1)
+│   ├── core/               event bus, registry, feature context
+│   ├── ports/              interfaces: agent, frontend, stt, notifier
+│   ├── common/             shared helpers (imports core only)
+│   ├── adapters/           frontends/{telegram,app_api}, agents/claude_tmux, stt/whisper_cpp, notifiers/{telegram,ntfy}
+│   └── features/           sessions, approvals, control, reminders, quick_actions, voice, notifications (+ _template)
+├── app/
+│   ├── src/core/           events, ports, feature loader
+│   ├── src/common/         shared helpers (imports core only)
+│   ├── src/adapters/       transport, stt, tts, recorder, wakeword, storage
+│   ├── src/features/       live-session, sessions, approvals, settings, voice, assistant, widget, wakeword
+│   ├── src/ui/             shared components
+│   └── android-modules/    Kotlin: assistant-role, widget, wakeword-service
 ├── wakeword/               training notebook, recordings manifest, exported models
 ├── deploy/                 systemd units, install scripts, whisper build script
-└── .github/workflows/      build-apk.yml (signed release APK as an artifact)
+└── .github/workflows/      build-apk.yml (signed release APK as an artifact; Phase 2)
 ```
 
 **APK builds** run in GitHub Actions on x86 Ubuntu runners. The Android build tools don't run well

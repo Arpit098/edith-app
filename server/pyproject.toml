@@ -1,0 +1,6 @@
+[project]
+name = "edith-server"
+version = "0.1.0"
+description = "E.D.I.T.H core: event bus, ports, adapters and features behind Telegram and the Android app"
+requires-python = ">=3.12"
+dependencies = []  # core is stdlib-only; an adapter that needs a library lists it here with a comment
