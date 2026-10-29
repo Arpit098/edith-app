@@ -29,6 +29,7 @@ Every event on the bus, and on the app's `/v1/stream` WebSocket, has this shape:
 | `turn.failed` | `{ref, reason, detail}` | A turn ends without a reply. `reason`: `not_ready`, `crashed` or `error` |
 | `reminder.due` | `{id, text, every, due, late}` | A reminder fires. `due` is a unix time; `late` is true if it fired over 2 minutes late |
 | `message.system` | `{text, buttons}` | A feature has something for Arpit that isn't a reply to a turn (a reminder, the crash notice). Frontends show it; Telegram sends it to the first allowed chat |
+| `command.reply` | `{ref, text, buttons}` | A command or button the app used answers later (e.g. a conversation switch); `ref` is the one its request returned |
 
 | `turn.retrying` | `{ref, lane, reason}` | A turn starts over (a side lane whose conversation is gone runs again fresh); frontends drop that turn's status message |
 
@@ -64,3 +65,36 @@ A command's reply, and the `data` of `message.system`, can carry buttons:
 - Pressing a button returns `{toast, note}`, both optional. `toast` is a short popup. `note` is
   appended to the pressed message, which then loses its buttons. Telegram shows these with
   `answerCallbackQuery` and `editMessageText`; the app gets them from `POST /v1/actions`.
+
+## Live view
+
+`message.user`, `message.assistant`, `tool.call`, `tool.result` and `file.diff` come from the
+conversation's transcript, for every turn, whoever started it. `message.user.origin` is
+`telegram`, `app` or `terminal` (typed in tmux); the others have origin `system`. `session_id` is set.
+`file.diff.diff` is a unified diff of an Edit/MultiEdit/Write (at most 20,000 characters).
+
+## App API (v1)
+
+Base `http://<edith's Tailscale IP>:8787`, reachable over Tailscale only. Every request carries
+`Authorization: Bearer <token>`; without it: `401 {"error": "unauthorized"}`. Errors are
+`{"error": "<message>"}` with 400, 404, 405, 413 (body too large) or 429. JSON in and out.
+
+| Method | Path | Body | Answer |
+|---|---|---|---|
+| POST | `/v1/messages` | `{text, voice?: bool, queue?: bool}` | `{ref, lane}`; the turn's events then arrive on the stream with this `ref` |
+| GET | `/v1/stream` | WebSocket | every event above as one JSON text message `{type, ts, session_id, origin, data}`; the server pings every 25 s |
+| POST | `/v1/stop` | | `{running, dropped: [ref]}` |
+| GET | `/v1/status` | | `{main: busy/idle, queued, runs: [{ref, lane, seconds, step}], tmux: running/down, conversation: bool, session: {id, title} \| null}` |
+| GET | `/v1/sessions` | | `{sessions: [{session_id, title, updated, current}]}` |
+| POST | `/v1/sessions/{id}/resume` | | `{status: "switching", ref}`; the outcome comes as `command.reply` (and `session.changed`) |
+| POST | `/v1/sessions/new` | | `{result: ok/busy}` |
+| PATCH | `/v1/sessions/{id}` | `{title}` | `{session_id, title}` |
+| GET | `/v1/permissions` | | `{pending: [{id, tool, detail, ref, lane}]}` |
+| POST | `/v1/permissions/{id}` | `{allow: bool}` | `{id, decision}`; 404 if it has expired |
+| POST | `/v1/actions` | `{action}` | `{ref, toast, note, replies: [{text, buttons}]}` (a button from any reply) |
+| GET | `/v1/commands` | | `{commands: [{name, description, usage, help}]}` |
+| POST | `/v1/commands/{name}` | `{args?}` | `{ref, replies: [{text, buttons}]}`; later replies come as `command.reply` |
+| POST | `/v1/stt` | audio body (step 9) | `{text, language, seconds}` |
+
+App messages reach Claude as `[App message from Arpit, <time>]` (plus ` [voice]` for speech) and
+the text on the next line.

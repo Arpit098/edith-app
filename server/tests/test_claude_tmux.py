@@ -59,11 +59,11 @@ class Harness:
         self.agent.start(self.bus)
         test.addCleanup(self.agent.shutdown)
 
-    def set_session(self, sid, ts=0.0):
+    def set_session(self, sid, ts=0.0, source="resume"):
         transcript = self.transcripts / f"{sid}.jsonl"
         transcript.touch()
         tmp = self.state_dir / "tmux-session.json.tmp"
-        tmp.write_text(json.dumps({"session_id": sid, "transcript_path": str(transcript), "source": "x", "ts": ts}))
+        tmp.write_text(json.dumps({"session_id": sid, "transcript_path": str(transcript), "source": source, "ts": ts}))
         os.replace(tmp, self.state_dir / "tmux-session.json")
         self.transcript = transcript
 
@@ -281,6 +281,53 @@ class SideLaneTest(unittest.TestCase):
             old, new = [json.loads(line) for line in pathlib.Path(log).read_text().splitlines()]
             self.assertEqual(new, old)
             self.assertIn(str(home), old[old.index("--mcp-config") + 1])
+
+
+class LiveViewTest(unittest.TestCase):
+    def test_every_transcript_entry_becomes_an_event(self):
+        h = Harness(self)
+        self.assertTrue(h.agent._live.ready.wait(5))
+        h.transcript_line({"type": "user", "message": {"content": "typed in tmux"}})
+        h.transcript_line({"type": "user", "message": {"content": "<command-name>/clear</command-name>"}})
+        h.transcript_line({"type": "user", "isSidechain": True, "message": {"content": "a subagent"}})
+        h.transcript_line({"type": "user", "message": {"content": "[Telegram message from Arpit]\nhi [voice]\n[tg-ref abc123]"}})
+        h.transcript_line({"type": "assistant", "message": {"content": [
+            {"type": "text", "text": "Fixing it."},
+            {"type": "tool_use", "id": "tu1", "name": "Edit",
+             "input": {"file_path": "/x/a.py", "old_string": "x = 1\n", "new_string": "x = 2\n"}}]}})
+        h.transcript_line({"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "tu1", "is_error": False, "content": "Updated /x/a.py\nmore"}]}})
+        result = h.wait("tool.result")
+        self.assertIsNotNone(result)
+        live = [(e.type, e.origin, e.data) for e in h.events if e.type.startswith(("message.", "tool.", "file."))]
+        self.assertEqual(live[:4], [
+            ("message.user", "terminal", {"text": "typed in tmux", "voice": False}),
+            ("message.user", "telegram", {"text": "[Telegram message from Arpit]\nhi [voice]", "voice": True}),
+            ("message.assistant", "system", {"text": "Fixing it."}),
+            ("tool.call", "system", {"name": "Edit", "summary": "Edit: /x/a.py"})])
+        self.assertEqual(live[4][0], "file.diff")
+        self.assertIn("-x = 1\n+x = 2\n", live[4][2]["diff"])
+        self.assertEqual(live[5], ("tool.result", "system", {"name": "Edit", "ok": True, "summary": "Updated /x/a.py"}))
+        self.assertEqual(result.session_id, "s1")
+
+    def test_follows_a_new_transcript_without_replaying_a_resumed_one(self):
+        h = Harness(self)
+        h.transcript_line({"type": "user", "message": {"content": "history, before the start"}})
+        self.assertTrue(h.agent._live.ready.wait(5))
+        # A resumed conversation: its history is not replayed, only what comes next.
+        (h.transcripts / "s2.jsonl").write_text(json.dumps({"type": "user", "message": {"content": "s2 history"}}) + "\n")
+        h.set_session("s2", source="resume")
+        time.sleep(0.2)
+        h.transcript_line({"type": "user", "message": {"content": "new in s2"}})
+        self.assertEqual(h.wait("message.user").data["text"], "new in s2")
+        # A fresh conversation (/clear): read from its start, even if Claude wrote before we noticed.
+        (h.transcripts / "s3.jsonl").write_text(json.dumps({"type": "user", "message": {"content": "first in s3"}}) + "\n")
+        h.set_session("s3", source="clear")
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not any(e.data.get("text") == "first in s3" for e in h.events):
+            time.sleep(0.02)
+        texts = [e.data["text"] for e in h.events if e.type == "message.user"]
+        self.assertEqual(texts, ["new in s2", "first in s3"])
 
 
 class ConstructionTest(unittest.TestCase):

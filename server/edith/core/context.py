@@ -98,10 +98,22 @@ class Job:
 
 @dataclass
 class Route:
+    """An App API route. `path` may hold {name} parts ("/v1/sessions/{id}/resume"). The handler gets
+    {"body": parsed JSON or None, "raw": bytes, "content_type": str, "params": {name: value},
+     "query": {name: value}, "origin": "app"} and returns a JSON-able value (200), or raises ApiError."""
     method: str
-    path: str  # e.g. "/v1/sessions"
-    handler: Callable[[dict[str, Any]], Any]  # request JSON -> response JSON
+    path: str
+    handler: Callable[[dict[str, Any]], Any]
     owner: str
+    max_body: int = 64 * 1024  # bytes; larger requests get 413
+
+
+class ApiError(Exception):
+    """Raised by a route handler: the App API answers `status` with {"error": message}."""
+
+    def __init__(self, status: int, message: str):
+        super().__init__(message)
+        self.status, self.message = status, message
 
 
 @dataclass
@@ -193,8 +205,9 @@ class Context:
         """Read-only use only (e.g. building /help from the registered commands)."""
         return self._registry
 
-    def add_route(self, method: str, path: str, handler) -> None:
-        self._registry.add_route(Route(method, path, handler, self.feature))
+    def add_route(self, method: str, path: str, handler, *, max_body: int = 64 * 1024) -> None:
+        """An App API route (see Route). Raise ApiError(status, message) from the handler for errors."""
+        self._registry.add_route(Route(method.upper(), path, handler, self.feature, max_body))
 
     def add_action(self, prefix: str, handler) -> None:
         """Handle presses of buttons whose action starts with "<prefix>:"."""

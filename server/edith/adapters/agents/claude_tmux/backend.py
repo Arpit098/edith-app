@@ -37,6 +37,7 @@ from edith.common.text import take_directives
 from edith.core import Event
 from edith.ports.agent import RunInfo, StopResult, TurnHandle
 
+from .live import LiveView
 from .sessions import Sessions
 from .tmux import Tmux
 from .transcript import Tail, tool_uses
@@ -77,6 +78,8 @@ class ClaudeTmux:
         self.ready_timeout = float(config.get("ready_timeout", 90))
         self.alive_every = float(config.get("check_alive_every", 5))
         self.stop_grace = float(config.get("stop_grace", 15))
+        self.live_view = bool(config.get("live_view", True))  # transcript -> message/tool events for every turn
+        self._live = None
         self.tmux = tmux or Tmux(config.get("tmux_socket", "edith"), config.get("tmux_target", "edith"),
                                  config.get("tmux_service", "edith-claude"))
         self._chat_key = config.get("chat_key")
@@ -124,7 +127,11 @@ class ClaudeTmux:
             os.remove(os.path.join(self.paths.perm_dir, name))
         self._remove(self.paths.tmux_run)
         workers = [("main", self._main_worker)] + [(f"side{i}", self._side_worker) for i in range(self.max_side)]
-        for name, target in workers + [("perms", self._perm_watcher)]:
+        workers += [("perms", self._perm_watcher)]
+        if self.live_view:
+            self._live = LiveView(self.paths, self._tmux_session, self._publish_live, self._origin_of)
+            workers.append(("live", lambda: self._live.run(self._stopping)))
+        for name, target in workers:
             t = threading.Thread(target=target, name=f"claude_tmux:{name}", daemon=True)
             t.start()
             self._threads.append(t)
@@ -144,9 +151,11 @@ class ClaudeTmux:
                     pass
         if self._perm_watch:
             self._perm_watch.wake()
+        if self._live and self._live.watch:
+            self._live.watch.wake()
         deadline = time.monotonic() + timeout
         for t in self._threads:
-            if t.name.startswith(("claude_tmux:side", "claude_tmux:perms")):
+            if t.name.startswith(("claude_tmux:side", "claude_tmux:perms", "claude_tmux:live")):
                 t.join(max(0.0, deadline - time.monotonic()))
 
     @staticmethod
@@ -155,6 +164,15 @@ class ClaudeTmux:
             os.killpg(proc.pid, signal.SIGTERM)
         except ProcessLookupError:
             pass  # already gone
+
+    def _publish_live(self, type, origin, session_id, data):
+        if self.bus:
+            self.bus.publish(Event(type, data, origin=origin, session_id=session_id))
+
+    def _origin_of(self, rid):
+        with self._lock:
+            run = self._runs.get(rid)
+        return run.origin if run else None
 
     def _publish(self, type, run_or_origin, **data):
         if self.bus:
@@ -467,9 +485,9 @@ class ClaudeTmux:
     def session_title(self, session_id):
         return self.sessions.title(session_id)
 
-    def name_session(self, title):
-        sid = self.current_session()
-        if not sid:
+    def name_session(self, title, session_id=None):
+        sid = session_id or self.current_session()
+        if not sid or (session_id and not self.sessions.exists(session_id)):
             return None
         self.state.update(lambda s: s.setdefault("session_names", {}).__setitem__(sid, title[:60]))
         return sid

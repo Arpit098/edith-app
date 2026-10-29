@@ -50,6 +50,23 @@ def setup(ctx: Context) -> None:
         call.reply("🔄 Restarting the bridge, back in a few seconds.")
         os.kill(os.getpid(), signal.SIGTERM)  # main.py shuts down cleanly; systemd (Restart=always) restarts it
 
+    # ---- App API ----
+
+    def api_stop(req):
+        r = agent.stop()
+        return {"running": r.running, "dropped": r.dropped}
+
+    def api_status(req):
+        runs, queued = agent.status()
+        sid = agent.current_session()
+        return {"main": "busy" if agent.busy() else "idle", "queued": queued,
+                "runs": [{"ref": r.ref, "lane": r.lane, "seconds": int(time.time() - r.started), "step": r.step}
+                         for r in runs],
+                "tmux": "running" if agent.tmux_alive() else "down", "conversation": agent.has_conversation(),
+                "session": {"id": sid, "title": agent.session_title(sid)} if sid else None}
+
+    ctx.add_route("POST", "/v1/stop", api_stop)
+    ctx.add_route("GET", "/v1/status", api_status)
     ctx.add_command("queue", "Run after the current task", queue_, usage="<task>", menu=True, order=40,
                     help="wait for the current task instead of running in parallel", takes_prompt=True)
     ctx.add_command("stop", "Stop all running tasks", stop, menu=True, order=80, help="stop all running tasks")

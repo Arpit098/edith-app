@@ -7,7 +7,7 @@ so switches run one at a time on this feature's own background job, never on the
 import queue
 import time
 
-from edith.core import ActionCall, ActionResult, Button, CommandCall, Context, Feature, Reply
+from edith.core import ActionCall, ActionResult, ApiError, Button, CommandCall, Context, Event, Feature, Reply
 
 SWITCH_MESSAGES = {
     "busy": "⚠️ I'm in the middle of a task. /stop it first, then switch.",
@@ -86,8 +86,43 @@ def setup(ctx: Context) -> None:
                     help="switch by number or name")
     ctx.add_command("name", "Name the current conversation", name, usage="<title>", menu=True, order=70,
                     help="name the current conversation")
+    # ---- App API ----
+
+    def api_list(req):
+        current = agent.current_session()
+        return {"sessions": [{**s, "current": s["session_id"] == current} for s in agent.list_sessions()]}
+
+    def api_resume(req):
+        """Switching takes a while: it runs on the switch job, and its messages arrive on the stream
+        as command.reply events with this ref (plus session.changed when done)."""
+        ref = f"app:switch:{req['params']['id'][:8]}:{int(time.time() * 1000)}"
+
+        def reply(out):
+            data = out.as_data() if isinstance(out, Reply) else {"text": out, "buttons": []}
+            ctx.bus.publish(Event("command.reply", {"ref": ref, **data}, origin="app"))
+        try:
+            switches.put_nowait((req["params"]["id"], reply))
+        except queue.Full:
+            raise ApiError(429, "Too many switches waiting")
+        return {"status": "switching", "ref": ref}
+
+    def api_new(req):
+        return {"result": agent.new_session()}
+
+    def api_rename(req):
+        title = ((req.get("body") or {}).get("title") or "").strip()
+        if not title:
+            raise ApiError(400, "title is required")
+        if not agent.name_session(title, req["params"]["id"]):
+            raise ApiError(404, "No such conversation")
+        return {"session_id": req["params"]["id"], "title": title[:60]}
+
     ctx.add_action("sess", press)
     ctx.add_job("switch", switch_job)
+    ctx.add_route("GET", "/v1/sessions", api_list)
+    ctx.add_route("POST", "/v1/sessions/{id}/resume", api_resume)
+    ctx.add_route("POST", "/v1/sessions/new", api_new)
+    ctx.add_route("PATCH", "/v1/sessions/{id}", api_rename)
 
 
 FEATURE = Feature(name="sessions", setup=setup, description="/sessions, /resume, /name, /new")

@@ -59,8 +59,8 @@ class AgentBackend(Protocol):
 
     def session_title(self, session_id: str) -> str | None: ...
 
-    def name_session(self, title: str) -> str | None:
-        """Name the current conversation; returns its id, or None if there is none."""
+    def name_session(self, title: str, session_id: str | None = None) -> str | None:
+        """Name a conversation (the current one by default); returns its id, or None if there is none."""
 
     def resume(self, session_id: str, before: Callable[[], None] | None = None) -> str:
         """Switch the main lane to a conversation. Returns busy | missing | already | failed | ok;
