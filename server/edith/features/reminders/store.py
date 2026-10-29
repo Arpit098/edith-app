@@ -209,7 +209,7 @@ class Store:
 
 # ---- The legacy module API (reminders.FILE, reminders.pending(), …) for the wrapper ----
 # The path follows the environment (HOME, EDITH_STATE_DIR) at call time, not import time, so a
-# staging copy or a test with its own HOME never touches the live file.
+# test (or a second copy) with its own HOME never touches the live file.
 
 _default = None
 

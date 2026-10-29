@@ -1,7 +1,8 @@
-# Voice rule for EDITH's output style (proposed, PLAN.md §4.7)
+# Voice rule for EDITH's output style (PLAN.md §4.7)
 
-To add to EDITH's output style (`~/edith/.claude/output-styles/`, tracked in `deploy/edith/` from
-Phase 1 step 10). Not applied: changing the live style needs Arpit's "yes".
+**Applied** on 2026-10-29 with Arpit's "yes": appended to `~/edith/.claude/output-styles/edith.md`
+(tracked as `deploy/edith/.claude/output-styles/edith.md`). This is the rule as written; change the
+live style only through a change list.
 
 ---
 

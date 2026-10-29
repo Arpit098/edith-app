@@ -49,7 +49,7 @@ tests stay in the repo after `legacy/` is gone.
 - `server/edith/core/`: button and action support in `Context`/`Registry`, `Ports` for `mail` and `calendar`.
 - `server/edith/ports/`: `mail.py`, `calendar.py`.
 - `server/edith/common/paths.py`: one place for `~/.cache/edith/…`, `~/edith/…` paths, all
-  overridable from config and env (needed so staging can run against separate dirs).
+  overridable from config and env (so tests and a second copy can run against separate dirs).
 - `server/tests/fakes/`: a fake Telegram API (records calls), a fake tmux and a fake `claude -p`.
 - `server/tests/golden/`: golden-output harness.
 - `deploy/README.md`: deploy checkout, tags, backup and rollback conventions.
@@ -134,7 +134,7 @@ If it has expired, Arpit re-runs the login over Telegram (`auth.py url` / `finis
   - `lanes.py`: main lane plus up to 2 side lanes, the queue, side notes and `/queue`, the same rules as `dispatch()`.
   - `sessions.py`: list, title, resume and new, plus `/name` storage in `bridge-state.json`.
   - `hook.py` and `perm_mcp.py`: copied over unchanged. The `[tg-ref <id>]` marker and the file
-    formats stay the same, and the state dir can be overridden by `EDITH_STATE_DIR` for staging.
+    formats stay the same, and the state dir can be overridden by `EDITH_STATE_DIR`.
   - The adapter emits events from `contracts/events.md` and does no Telegram I/O.
 - Wrappers `deploy/shims/edith/bridge/hooks/edith_hook.py` and `deploy/shims/edith/bridge/perm_mcp.py`.
 - Tests:
@@ -184,16 +184,8 @@ fakes, and golden tests cover the reply text and buttons of every command.
 - An end-to-end golden test: a scripted conversation (text, command, buttons, file) against the fake
   Telegram API must produce **the same API calls** from legacy and from the new code.
 
-**Staging run first (needs "yes", no change to the live bot)**
-- Arpit creates a **test bot** with @BotFather (free) and gives me its token.
-- Run the new code as a temporary `edith-staging` user unit with:
-  - the test bot token
-  - tmux socket `-L edith-staging` with its own Claude
-  - work dir `~/edith-staging` (a copy of `~/edith` config, not data)
-  - state dir `~/.cache/edith-staging`
-- Arpit goes through a checklist on the test bot: every command, a side lane, the queue, Allow/Deny,
-  a reminder, `/sessions` → switch, `/new`, `/stop`, `/restart`, a photo, `SEND_FILE`.
-- Then stop and remove `edith-staging`. This uses some Claude usage for test turns.
+**Staging run: skipped.** Arpit chose to switch the live bot directly (with a full backup and a
+rollback command) instead of a staging run on a test bot; the staging files were removed.
 
 **Switch over (needs "yes", about 10 s of downtime, done when idle)**
 - Back up the unit file and `~/.cache/edith/bridge-state.json`.
@@ -202,8 +194,9 @@ fakes, and golden tests cover the reply text and buttons of every command.
 - `edith-claude.service` and the tmux Claude session are **not** restarted, so the conversation
   carries on.
 
-**Verify:** the staging checklist again on the real bot, plus a reminder firing and an old button
-from before the switch.
+**Verify:** Arpit's checklist on the real bot (every command, a side lane, the queue, Allow/Deny,
+a reminder, `/sessions` → switch, `/new`, `/stop`, `/restart`, a photo, `SEND_FILE`), plus a
+reminder firing and an old button from before the switch.
 
 **Rollback (about 10 s):** `cp ~/edith-backups/p1-step6/edith-bridge.service ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user restart edith-bridge`.
 The state files never changed format, so the old bridge picks up where the new one stopped.
@@ -285,6 +278,8 @@ streams it live, plus list/switch sessions and approve a permission. A request w
 **Live (needs "yes", item by item):**
 - Remove the inactive leftovers from the old setup: `edith.service`, `edith-check.service/.timer`
   and `~/.local/bin/edith-{start,check,notify}`. They get backed up first, and Arpit confirms each deletion.
+  ✅ Done 2026-10-29 with the staging units and dirs (backup in `~/edith-backups/cleanup-20261029/`).
+- Swap in the tracked `edith-claude.sh` (still open).
 - Archive `~/edith/bridge/edith_bridge.py` to backups.
 - **The wrappers stay permanently**, because EDITH's memory, `CLAUDE.md` and the guard hook use those paths.
 

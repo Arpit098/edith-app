@@ -6,12 +6,11 @@ Every change on edith is shown as a change list and approved by Arpit before it 
 | Path | What |
 |---|---|
 | `bin/edith-bridge` | Launcher the bridge unit runs (`python3 -I`, stdlib only) |
-| `config/edith.toml`, `config/edith-staging.toml` | Live and staging config (copied to `~/.config/edith*/config.toml`) |
-| `systemd/` | `edith-bridge` (new `ExecStart`), `edith-claude` (as live), staging units |
+| `config/edith.toml` | The live config (as `~/.config/edith/config.toml`; no secrets) |
+| `systemd/` | `edith-bridge` (new `ExecStart`), `edith-claude` (as live), `whisper-server` |
 | `shims/edith/…` | Wrappers that replace files under `~/edith/` at the same paths (steps 1–4) |
 | `edith/` | Tracked copies of `~/edith/CLAUDE.md`, `.claude/settings.json`, the output style, `bridge/mcp.json`, and the parametrized `bridge/edith-claude.sh` |
 | `local-bin/edith-attach` | Copy of `~/.local/bin/edith-attach` |
-| `staging/README.md` | The step 6 staging run on a test bot |
 | `install.sh` | **Drift check, read-only:** each tracked file vs the live one (`same` / `DIFFERS` / `MISSING`, and the step after which it should match); `--diff` shows the differences. It never installs anything |
 
 ## Where live code runs from

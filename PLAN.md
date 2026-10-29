@@ -8,13 +8,15 @@ tools are added over time, each as its own feature on the app and the server.
 _Created 2026-10-29, updated 2026-10-29 (battery-light triggers; modular codebase; existing tools migration; Phase 1 plan approved; Phase 1 done). Status: **Phase 1 (server) done** in the repo and live (tag `p1-live-3`); next is Phase 2 (app v1). See [docs/PHASE1_PLAN.md](docs/PHASE1_PLAN.md)._
 
 **Phase 1 wrap-up**
-- Moved to Phase 3: the server side of voice (`voice.turn`/`voice.reply`, spoken summaries) is
-  built and live, but the `[voice]` output-style rule for `~/edith/.claude` is only proposed; it
-  waits for Arpit's review before it is applied.
-- Open items: Arpit's Telegram checklist on the live bot; live clean-up of the old setup (step 10
-  live: `edith.service`, `edith-check.service/.timer`, `~/.local/bin/edith-{start,check,notify}`,
-  the `edith-claude.sh` swap, the staging files), each item only after Arpit's "yes"; Hindi clips
-  for the whisper benchmark.
+- Done ahead of Phase 3: the server side of voice (`voice.turn`/`voice.reply`, spoken summaries)
+  is live, and the `[voice]` output-style rule was applied on 2026-10-29 with Arpit's "yes".
+- Live clean-up done 2026-10-29: the old `edith.service`, `edith-check.service/.timer`,
+  `~/.local/bin/edith-{start,check,notify}` and the staging units and dirs are removed (backup in
+  `~/edith-backups/cleanup-20261029/`). The staging run was skipped.
+- Open items: Arpit's Telegram checklist on the live bot; the `edith-claude.sh` swap (the only
+  file the drift check still reports); Hindi clips for the whisper benchmark.
+- For Phase 2: the App API has history by cursor, a JSON ping/pong, tool ids and `session.switched`
+  (contracts/events.md). The Android package name is `com.arpit.edith` (confirmed).
 
 ---
 
@@ -116,6 +118,7 @@ All of them run in the same `edith-bridge` service, and the existing behaviour m
 - Fully self-hosted alternative if wanted later: Headscale.
 
 ### 4.4 Android app
+- **Package name:** `com.arpit.edith` (confirmed).
 - **Framework:** React Native (Expo, prebuild / dev client, TypeScript), plus native Kotlin modules.
 - **Screens:**
   - **Live**:
@@ -236,7 +239,7 @@ on edith's ARM64.
 | **0. Plan** | This plan; private repo created | Arpit approves the plan |
 | **1. Server** | Tailscale on edith; bridge split into edith-core + Telegram + App API (same service); **reminders, Gmail and Calendar code moved into edith-app (§4.9)**; whisper.cpp built and benchmarked; whisper-server on localhost | `curl` over Tailscale can send a message, stream the live session, list/switch sessions, approve a permission and transcribe a WAV. `/reminders`, `/mail`, `/today`, `/brief` run from the repo code. **Telegram works exactly as before**; `server/legacy/` is empty |
 | **2. App v1** | RN app: connect (address + token), live session view, text send, stop, sessions, approvals, and the **Tools grid screen** (tiles from features' `tool`); Actions builds a signed APK | Arpit installs the APK and runs a full task from the phone while watching it live |
-| **3. Voice & triggers** | Push-to-talk → whisper → send; TTS of voice summaries; `[voice]` output-style rule; listening overlay with VAD end-of-speech; **default-assistant role (power button + earbud button)**; **home-screen widget** | Long-press power → "check the server disk space" → spoken answer, under ~10 s plus task time. Same from the widget and the earbuds |
+| **3. Voice & triggers** | Push-to-talk → whisper → send; TTS of voice summaries; `[voice]` output-style rule (applied in Phase 1); listening overlay with VAD end-of-speech; **default-assistant role (power button + earbud button)**; **home-screen widget** | Long-press power → "check the server disk space" → spoken answer, under ~10 s plus task time. Same from the widget and the earbuds |
 | **4. Wake word (optional toggle)** | Trained `hey_edith` model; WakeWordService behind the Settings toggle (off by default) with sound gate | Triggers reliably across the room; under 1 false wake per hour; battery cost measured while on |
 | **5. Notifications & polish** | ntfy notifications; polish | EDITH replaces Google Assistant in daily use |
 
