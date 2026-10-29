@@ -10,8 +10,14 @@
 #   source + build:  ~/opt/whisper.cpp/{src,build}
 #   binaries:        ~/opt/whisper.cpp/bin/{whisper-server,whisper-cli,whisper-bench}
 #   models:          ~/.local/share/whisper/ggml-<name>.bin
-# Re-running is safe: a finished build at the pinned commit and verified models are skipped.
+# Re-running is safe: a finished build at the pinned commit + patches and verified models are skipped.
+#
+# patches/*.patch are applied on top of the release, in order:
+#   0001-server-max-tokens.patch  whisper-server accepts max_tokens (per request and -mt), which whisper.cpp
+#                                 supports but the v1.9.5 server never sets. The adapter uses it to bound
+#                                 a runaway decode (a repetition loop) relative to the audio length.
 set -euo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Pinned release. The commit is checked after the clone, so a moved tag fails the build.
 TAG="v1.9.5"
@@ -37,9 +43,10 @@ LOW=(nice -n 19 ionice -c3)
 log() { printf '[whisper] %s\n' "$*" >&2; }
 
 build() {
-  local src="$PREFIX/src" out="$PREFIX/build"
-  if [[ -x "$PREFIX/bin/whisper-server" && "$(cat "$PREFIX/bin/.commit" 2>/dev/null)" == "$COMMIT" ]]; then
-    log "already built at $TAG ($COMMIT)"
+  local src="$PREFIX/src" out="$PREFIX/build" stamp
+  stamp="$COMMIT+$(cat "$HERE"/patches/*.patch | sha256sum | cut -c1-16)"
+  if [[ -x "$PREFIX/bin/whisper-server" && "$(cat "$PREFIX/bin/.commit" 2>/dev/null)" == "$stamp" ]]; then
+    log "already built at $TAG ($stamp)"
     return
   fi
   mkdir -p "$PREFIX"
@@ -52,6 +59,10 @@ build() {
   local head
   head="$(git -C "$src" rev-parse HEAD)"
   [[ "$head" == "$COMMIT" ]] || { log "tag $TAG is at $head, expected $COMMIT: refusing to build"; exit 1; }
+  git -C "$src" checkout -- .  # drop patches from an earlier build, then apply the current ones
+  for patch in "$HERE"/patches/*.patch; do
+    git -C "$src" apply --verbose "$patch"
+  done
 
   # GGML_NATIVE: tune for this CPU (armv8.2-a + dotprod + fp16 NEON on Neoverse-N1); it is built here, for here.
   # Static libs so the binaries don't depend on the build folder. No GPU backends, no tests.
@@ -71,8 +82,8 @@ build() {
   for b in whisper-server whisper-cli whisper-bench; do
     install -m 755 "$out/bin/$b" "$PREFIX/bin/$b"
   done
-  echo "$COMMIT" > "$PREFIX/bin/.commit"
-  log "built $TAG into $PREFIX/bin"
+  echo "$stamp" > "$PREFIX/bin/.commit"
+  log "built $TAG + patches into $PREFIX/bin"
 }
 
 verify() {  # verify <file> <sha256>
