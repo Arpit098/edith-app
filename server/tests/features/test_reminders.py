@@ -68,6 +68,7 @@ class StoreParityTest(unittest.TestCase):
                 ("pop_due", (NOW + 4 * 86400,)),        # fires again; old fired ones expire
                 ("pending", ()),
             ]
+            recorded = []
             for name, args in steps:
                 with frozen():
                     want = getattr(old, name)(*args)
@@ -75,6 +76,8 @@ class StoreParityTest(unittest.TestCase):
                     got = getattr(new, name)(*args)
                 self.assertEqual(got, want, name)
                 self.assertEqual(pathlib.Path(new.path).read_bytes(), pathlib.Path(old.FILE).read_bytes(), name)
+                recorded.append({"step": name, "result": want, "file": pathlib.Path(old.FILE).read_text()})
+            assert_golden(self, "reminders/store_steps.json", recorded)  # only legacy records golden files
 
     def test_next_due(self):
         ist = store.TZ
@@ -165,6 +168,16 @@ CLI_SCRIPT = [
 ]
 
 
+CLOCK = datetime(2026, 11, 2, 10, 43, tzinfo=store.TZ)  # a fixed "now" for clock-time parsing
+CLOCK_INPUTS = ("00:00", "10:43", "12:30", "23:59", "+2h", "+1d", "2026-12-01T10:00", "2026-12-01")
+
+
+class FrozenDatetime(datetime):
+    @classmethod
+    def now(cls, tz=None):
+        return CLOCK.astimezone(tz)
+
+
 class CliTest(unittest.TestCase):
     def transcript(self, main):
         with frozen():
@@ -181,9 +194,13 @@ class CliTest(unittest.TestCase):
     def test_clock_times_match_legacy(self):
         with legacy_home():
             legacy = load("bin/remind.py", extra_paths=[LEGACY / "bridge"])
-            for when in ("00:00", "12:30", "23:59", "+2h", "+1d", "2026-12-01T10:00"):
+            legacy.datetime = FrozenDatetime  # legacy reads the clock itself; freeze it at CLOCK
+            recorded = {}
+            for when in CLOCK_INPUTS:
                 with mock.patch("time.time", return_value=NOW):
-                    self.assertEqual(cli.parse_when(when), legacy.parse_when(when), when)
+                    recorded[when] = legacy.parse_when(when)
+                    self.assertEqual(cli.parse_when(when, now=CLOCK), recorded[when], when)
+            assert_golden(self, "reminders/parse_when.json", recorded)  # only legacy records golden files
 
 
 class FeatureTest(unittest.TestCase):

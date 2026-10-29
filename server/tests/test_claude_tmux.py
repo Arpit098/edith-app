@@ -17,6 +17,7 @@ from edith.adapters.agents.claude_tmux.tmux import Tmux
 from edith.core import EventBus
 from tests.fakes import FAKE_CLAUDE, FakeTelegram, FakeTmux
 from tests.fakes.claude import plan
+from tests.golden import assert_golden
 from tests.legacy import legacy_home, load
 
 REF = re.compile(r"\[tg-ref ([0-9a-f]+)\]")
@@ -281,6 +282,8 @@ class SideLaneTest(unittest.TestCase):
             old, new = [json.loads(line) for line in pathlib.Path(log).read_text().splitlines()]
             self.assertEqual(new, old)
             self.assertIn(str(home), old[old.index("--mcp-config") + 1])
+            # only legacy records golden files (its HOME shown as ~)
+            assert_golden(self, "claude/side_lane_argv.json", [a.replace(str(home), "~") for a in old])
 
 
 class LiveViewTest(unittest.TestCase):

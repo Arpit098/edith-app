@@ -1,0 +1,14 @@
+[
+ "-p",
+ "hello\nworld",
+ "--output-format",
+ "stream-json",
+ "--verbose",
+ "--mcp-config",
+ "~/edith/bridge/mcp.json",
+ "--permission-prompt-tool",
+ "mcp__edith_perm__approve",
+ "--resume",
+ "s1",
+ "--fork-session"
+]

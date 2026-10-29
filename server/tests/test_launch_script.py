@@ -9,6 +9,8 @@ import subprocess
 import tempfile
 import unittest
 
+from tests.golden import assert_golden
+
 SERVER = pathlib.Path(__file__).resolve().parents[1]
 SCRIPTS = {"legacy": SERVER / "legacy/edith/bridge/edith-claude.sh",
            "new": SERVER.parent / "deploy/edith/bridge/edith-claude.sh"}
@@ -52,11 +54,14 @@ class LaunchScriptTest(unittest.TestCase):
     }
 
     def test_same_as_legacy_without_staging_variables(self):
+        recorded = {}
         for name, (setup, args) in self.CASES.items():
             with self.subTest(name):
                 outs = {w: run(s, home_with(**setup), *args) for w, s in SCRIPTS.items()}
                 self.assertEqual(outs["new"], outs["legacy"])
                 self.assertTrue(outs["new"].startswith("cwd=~/edith tmux=1 args="), outs["new"])
+                recorded[name] = outs["legacy"]
+        assert_golden(self, "launch/edith_claude.json", recorded)  # only legacy records golden files
 
     def test_staging_folders(self):
         home = home_with(sessions=["s9"], session_file={"session_id": "s9"}, work="edith-staging",
