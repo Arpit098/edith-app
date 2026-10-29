@@ -18,6 +18,7 @@ PORT="${PORT:-18178}"
 RUNS="${RUNS:-3}"
 THREADS="${THREADS:-2}"
 NICE="${NICE:-5}"  # the same priority as deploy/systemd/whisper-server.service
+CTX="${CTX:-auto}"  # auto: send audio_ctx sized to the clip, like the adapter; full: whisper's fixed 30 s window
 
 if (($#)); then models=("$@"); else
   models=()
@@ -47,14 +48,20 @@ wait_ready() {
 }
 
 request() {  # request <clip> <out json> -> prints seconds
-  curl -sS -o "$2" -w '%{time_total}' --max-time 300 \
+  local ctx=()
+  [[ "$CTX" == auto ]] && ctx=(-F "audio_ctx=$(audio_ctx "$1")")
+  curl -sS -o "$2" -w '%{time_total}' --max-time 300 "${ctx[@]}" \
     -F "file=@$1" -F response_format=verbose_json -F temperature=0.0 "http://127.0.0.1:$PORT/inference"
 }
+
+# The same rule as audio_ctx() in server/edith/adapters/stt/whisper_cpp.
+audio_ctx() { python3 -I -c 'import math,sys,wave; w=wave.open(sys.argv[1]); print(min(1500, math.ceil(w.getnframes()/w.getframerate()*50)+64))' "$1"; }
 
 duration() { python3 -I -c 'import sys,wave; w=wave.open(sys.argv[1]); print(round(w.getnframes()/w.getframerate(), 2))' "$1"; }
 
 median() { sort -n | awk '{a[NR]=$1} END {print (NR%2 ? a[(NR+1)/2] : (a[NR/2]+a[NR/2+1])/2)}'; }
 
+echo "audio_ctx: $CTX"
 echo "| model | clip | audio s | time s (median of $RUNS) | RTF | RAM MB | language |"
 echo "|---|---|---|---|---|---|---|"
 for m in "${models[@]}"; do

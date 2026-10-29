@@ -8,10 +8,15 @@ One upload is one request:
 
 whisper-server handles one request at a time (a mutex around the model), so at most `max_pending` uploads
 wait here; more get SttError("busy") instead of piling up threads.
+
+whisper's encoder always works on a 30 s window, so a 5 s clip costs as much as a 30 s one. Each request
+sends `audio_ctx` sized to the clip (whisper-server takes it per request): on edith's 2 OCPU that cut
+small-q8_0 from 17 s to 2.4 s for a 5 s clip, with the same text (deploy/whisper/bench.sh).
 """
 import io
 import json
 import logging
+import math
 import subprocess
 import tempfile
 import threading
@@ -27,6 +32,8 @@ log = logging.getLogger("edith.adapter.stt.whisper_cpp")
 
 RATE = 16000                 # whisper's sample rate
 BYTES_PER_SECOND = RATE * 2  # mono, 16-bit
+FULL_CTX = 1500              # encoder frames in whisper's 30 s window (50 per second)
+CTX_PAD = 64                 # ~1.3 s of slack so the last word isn't cut
 NON_SPEECH = {"[BLANK_AUDIO]", "[ Silence ]", "[silence]", "(silence)", "[MUSIC]", "[Music]"}
 
 
@@ -37,6 +44,11 @@ def ffmpeg_command(ffmpeg: str, source: str, max_seconds: float | None) -> list[
     if max_seconds:
         cmd += ["-t", f"{max_seconds + 1:g}"]
     return cmd + ["-vn", "-ac", "1", "-ar", str(RATE), "-acodec", "pcm_s16le", "-f", "s16le", "pipe:1"]
+
+
+def audio_ctx(duration: float) -> int:
+    """Encoder frames for a clip of `duration` seconds (deploy/whisper/bench.sh uses the same rule)."""
+    return min(FULL_CTX, math.ceil(duration * 50) + CTX_PAD)
 
 
 def wav_bytes(pcm: bytes) -> bytes:
@@ -83,10 +95,11 @@ def multipart(fields: dict[str, str], file: bytes, filename: str = "audio.wav") 
 class WhisperCpp:
     def __init__(self, url: str = "http://127.0.0.1:8178", *, timeout: float = 60.0, ffmpeg: str = "ffmpeg",
                  ffmpeg_timeout: float = 20.0, language: str | None = None, retries: int = 3,
-                 backoff: float = 0.5, max_pending: int = 2):
+                 backoff: float = 0.5, max_pending: int = 2, fit_ctx: bool = True):
         self.url = url.rstrip("/")
         self.timeout, self.ffmpeg, self.ffmpeg_timeout = timeout, ffmpeg, ffmpeg_timeout
         self.language, self.retries, self.backoff = language, retries, backoff
+        self.fit_ctx = fit_ctx  # False: whisper's full 30 s window (slower; only to compare)
         self._slots = threading.BoundedSemaphore(max_pending)
 
     # -- audio --------------------------------------------------------------------------------------
@@ -131,12 +144,14 @@ class WhisperCpp:
 
     # -- whisper-server -----------------------------------------------------------------------------
 
-    def _post(self, wav: bytes, language: str | None) -> dict:
+    def _post(self, wav: bytes, language: str | None, duration: float) -> dict:
         """POST /inference, retrying with backoff only while whisper-server is unreachable or loading its
         model (nothing was transcribed yet). A timeout is not retried: the server may still be working."""
         fields = {"response_format": "verbose_json", "temperature": "0.0"}
         if language:
             fields["language"] = language
+        if self.fit_ctx:
+            fields["audio_ctx"] = str(audio_ctx(duration))
         body, ctype = multipart(fields, wav)
         delay = self.backoff
         for attempt in range(self.retries + 1):
@@ -172,7 +187,7 @@ class WhisperCpp:
         try:
             wav, duration = self.to_wav(audio, max_seconds)
             started = time.monotonic()
-            result = self._post(wav, language or self.language)
+            result = self._post(wav, language or self.language, duration)
             text = " ".join(str(result.get("text", "")).split())
             return Transcript(text="" if text in NON_SPEECH else text, language=result.get("language"),
                               seconds=round(time.monotonic() - started, 3), duration=round(duration, 3))
@@ -181,7 +196,7 @@ class WhisperCpp:
 
 
 def create(config: dict) -> WhisperCpp:
-    """Config [adapter.whisper_cpp]: url, timeout, ffmpeg, ffmpeg_timeout, language, retries, max_pending.
+    """Config [adapter.whisper_cpp]: url, timeout, ffmpeg, ffmpeg_timeout, language, retries, max_pending, fit_ctx.
     Nothing connects here; the first transcription does."""
-    known = ("timeout", "ffmpeg", "ffmpeg_timeout", "language", "retries", "backoff", "max_pending")
+    known = ("timeout", "ffmpeg", "ffmpeg_timeout", "language", "retries", "backoff", "max_pending", "fit_ctx")
     return WhisperCpp(config.get("url", "http://127.0.0.1:8178"), **{k: config[k] for k in known if k in config})

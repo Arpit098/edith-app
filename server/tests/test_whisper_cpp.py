@@ -11,7 +11,7 @@ import unittest
 from unittest import mock
 
 from edith.adapters.stt import whisper_cpp
-from edith.adapters.stt.whisper_cpp import WhisperCpp, ffmpeg_command, ready_wav
+from edith.adapters.stt.whisper_cpp import WhisperCpp, audio_ctx, ffmpeg_command, ready_wav
 from edith.ports.stt import SttError
 from tests.fakes.whisper import FakeWhisper, wav
 
@@ -63,6 +63,9 @@ class CommandTest(unittest.TestCase):
         self.assertIsNone(ready_wav(b"RIFF\0\0\0\0WAVEjunk"))
         self.assertIsNone(ready_wav(MP4_HEAD))
 
+    def test_audio_ctx_fits_the_clip(self):
+        self.assertEqual([audio_ctx(d) for d in (0.5, 5, 10, 28.7, 29, 60)], [89, 314, 564, 1499, 1500, 1500])
+
     def test_create_reads_config(self):
         s = whisper_cpp.create({"url": "http://127.0.0.1:9/", "timeout": 5, "language": "hi", "unknown": 1})
         self.assertEqual((s.url, s.timeout, s.language), ("http://127.0.0.1:9", 5, "hi"))
@@ -76,7 +79,7 @@ class TranscribeTest(Base):
         self.assertEqual(self.ffmpeg_calls(), [])
         req, = self.whisper.requests
         self.assertEqual(req["path"], "/inference")
-        self.assertEqual(req["fields"], {"response_format": "verbose_json", "temperature": "0.0"})
+        self.assertEqual(req["fields"], {"response_format": "verbose_json", "temperature": "0.0", "audio_ctx": "214"})
         self.assertEqual(req["wav"], {"channels": 1, "rate": 16000, "width": 2, "seconds": 3.0})
 
     def test_other_audio_goes_through_one_ffmpeg_pipe(self):
@@ -101,6 +104,10 @@ class TranscribeTest(Base):
         self.assertTrue(source.endswith(".m4a"))
         self.assertEqual((call["stdin_bytes"], call["input_bytes"]), (0, len(audio)))
         self.assertFalse(os.path.exists(source))
+
+    def test_full_window_when_fit_ctx_is_off(self):
+        self.stt(fit_ctx=False).transcribe(wav(1))
+        self.assertNotIn("audio_ctx", self.whisper.requests[0]["fields"])
 
     def test_language_from_call_or_config(self):
         self.stt(language="hi").transcribe(wav(1))
