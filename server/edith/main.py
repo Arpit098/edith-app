@@ -4,11 +4,12 @@
 """
 import argparse
 import logging
+import signal
 import sys
 import threading
 import tomllib
 
-from .core import EventBus, Ports, Registry, load_adapter, load_features
+from .core import EventBus, JobRunner, Ports, Registry, load_adapter, load_features
 
 
 def build(config: dict):
@@ -47,7 +48,16 @@ def main(argv=None) -> int:
         return 1 if report.failed else 0
     for fe in frontends:
         fe.start(bus, registry, ports.agent)
-    threading.Event().wait()  # frontends run in their own threads
+    jobs = JobRunner(list(registry.jobs.values()))
+    jobs.start()
+
+    stopping = threading.Event()  # frontends and jobs run in their own threads
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(sig, lambda *_: stopping.set())
+    stopping.wait()
+    jobs.stop()
+    for fe in frontends:
+        fe.stop()
     return 0
 
 

@@ -37,12 +37,12 @@ def load_features(names: list[str], bus: EventBus, ports: Ports, registry: Regis
                   configs: dict[str, dict], package: str = "edith.features") -> LoadReport:
     """Import each edith.features.<name>, then run FEATURE.setup(ctx) in isolation.
 
-    If setup fails half-way, the commands, routes and actions it already registered are rolled back so
+    If setup fails half-way, the commands, routes, actions and jobs it already registered are rolled back so
     nothing half-loaded stays active."""
     report = LoadReport()
     for name in names:
         before_cmds, before_routes = set(registry.commands), set(registry.routes)
-        before_actions = set(registry.actions)
+        before_actions, before_jobs = set(registry.actions), set(registry.jobs)
         before_subs = len(bus._subs)
         try:
             module = importlib.import_module(f"{package}.{name}")
@@ -57,6 +57,8 @@ def load_features(names: list[str], bus: EventBus, ports: Ports, registry: Regis
                 del registry.routes[k]
             for k in set(registry.actions) - before_actions:
                 del registry.actions[k]
+            for k in set(registry.jobs) - before_jobs:
+                del registry.jobs[k]
             with bus._lock:
                 del bus._subs[before_subs:]
             report.failed[name] = f"{type(e).__name__}: {e}"

@@ -27,6 +27,11 @@ class Reply:
     text: str
     buttons: list[list[Button]] = field(default_factory=list)  # rows
 
+    def as_data(self) -> dict:
+        """The contract's JSON shape: {text, buttons: [[{label, action}]]}."""
+        return {"text": self.text,
+                "buttons": [[{"label": b.label, "action": b.action} for b in row] for row in self.buttons]}
+
 
 @dataclass
 class CommandCall:
@@ -73,6 +78,15 @@ class Action:
 
 
 @dataclass
+class Job:
+    """Background work, one thread per job (core/jobs.py). run() returns how many seconds to wait
+    before running again: the time until the next thing is due, not a fixed tick."""
+    name: str
+    run: Callable[[], float]
+    owner: str
+
+
+@dataclass
 class Route:
     method: str
     path: str  # e.g. "/v1/sessions"
@@ -97,6 +111,7 @@ class Registry:
         self.commands: dict[str, Command] = {}
         self.routes: dict[tuple[str, str], Route] = {}
         self.actions: dict[str, Action] = {}
+        self.jobs: dict[str, Job] = {}
 
     def add_command(self, cmd: Command) -> None:
         if cmd.name in self.commands:
@@ -115,6 +130,11 @@ class Registry:
         if action.prefix in self.actions:
             raise ValueError(f"action {action.prefix}: already registered by {self.actions[action.prefix].owner}")
         self.actions[action.prefix] = action
+
+    def add_job(self, job: Job) -> None:
+        if job.name in self.jobs:
+            raise ValueError(f"job {job.name} already registered by {self.jobs[job.name].owner}")
+        self.jobs[job.name] = job
 
     def press(self, action: str, origin: str, reply) -> ActionResult | None:
         """Route a button press to the feature that owns its prefix. Unknown prefixes return None."""
@@ -140,6 +160,10 @@ class Context:
     def add_action(self, prefix: str, handler) -> None:
         """Handle presses of buttons whose action starts with "<prefix>:"."""
         self._registry.add_action(Action(prefix, handler, self.feature))
+
+    def add_job(self, name: str, run) -> None:
+        """Run `run` in the background from startup; it returns seconds until its next run."""
+        self._registry.add_job(Job(f"{self.feature}.{name}", run, self.feature))
 
     def subscribe(self, pattern: str, handler) -> None:
         self.bus.subscribe(pattern, handler, owner=self.feature)
