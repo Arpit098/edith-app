@@ -19,6 +19,7 @@ Brute-force fixes from legacy:
   chatty stderr (over 64 KB) could block Claude for good.
 - The queue is bounded (MAX_QUEUE); decisions and tmux-run are written atomically.
 """
+import functools
 import json
 import logging
 import os
@@ -78,9 +79,7 @@ class ClaudeTmux:
         self.stop_grace = float(config.get("stop_grace", 15))
         self.tmux = tmux or Tmux(config.get("tmux_socket", "edith"), config.get("tmux_target", "edith"),
                                  config.get("tmux_service", "edith-claude"))
-        self.state = StateFile.at(p.bridge_state)
-        self.sessions = Sessions(p.transcripts, self.state)
-        self.key = str(config.get("chat_key") or self._default_chat() or "default")
+        self._chat_key = config.get("chat_key")
 
         self.bus = None
         self.main_busy = threading.Event()
@@ -94,6 +93,20 @@ class ClaudeTmux:
         self._stopping = threading.Event()
         self._perm_watch = None
         self._session_cache = (None, {})
+
+    # Read on first use, so building the adapter (e.g. `make check`) touches no file.
+    @functools.cached_property
+    def state(self):
+        return StateFile.at(self.paths.bridge_state)
+
+    @functools.cached_property
+    def sessions(self):
+        return Sessions(self.paths.transcripts, self.state)
+
+    @functools.cached_property
+    def key(self):
+        """The bridge-state "sessions" key: the Telegram chat (the first allowed id), as in legacy."""
+        return str(self._chat_key or self._default_chat() or "default")
 
     def _default_chat(self):
         try:

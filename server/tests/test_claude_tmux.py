@@ -282,6 +282,13 @@ class SideLaneTest(unittest.TestCase):
             self.assertIn(str(home), old[old.index("--mcp-config") + 1])
 
 
+class ConstructionTest(unittest.TestCase):
+    def test_building_the_adapter_reads_no_file(self):
+        with tempfile.TemporaryDirectory() as home, mock.patch.dict(os.environ, {"HOME": home}), \
+                mock.patch("builtins.open", side_effect=AssertionError("opened a file")):
+            ClaudeTmux({})
+
+
 class SessionsTest(unittest.TestCase):
     def write(self, h, sid, first, mtime):
         path = h.transcripts / f"{sid}.jsonl"
