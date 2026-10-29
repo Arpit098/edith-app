@@ -1,28 +1,68 @@
 """The coding agent that does the work (today: Claude Code in tmux, plus `claude -p` side lanes)."""
-from dataclasses import dataclass
-from typing import Protocol
+from dataclasses import dataclass, field
+from typing import Callable, Protocol
 
 
 @dataclass
 class TurnHandle:
     ref: str
-    lane: str  # "main" | "side"
+    lane: str  # "main" | "side" | "queued" (waits for the main lane; a turn.queued event says where)
+
+
+@dataclass
+class StopResult:
+    running: int  # turns that were told to stop
+    dropped: list[str] = field(default_factory=list)  # refs of queued messages that were dropped
+
+
+@dataclass
+class RunInfo:
+    ref: str
+    lane: str
+    started: float
+    step: str | None  # the latest tool summary, None while thinking
 
 
 class AgentBackend(Protocol):
-    def send(self, text: str, origin: str, ref: str) -> TurnHandle:
-        """Start a turn. Progress and the reply arrive as events on the bus (contracts/events.md)."""
+    def start(self, bus) -> None:
+        """Begin working (threads, watchers). Progress and replies arrive as events on `bus`."""
 
-    def stop(self) -> int:
-        """Interrupt running turns; returns how many were stopped."""
+    def send(self, text: str, origin: str, ref: str, force_queue: bool = False) -> TurnHandle:
+        """Start a turn: the main lane if free, else a side lane if one is free, else the queue
+        (always the queue when force_queue). Results arrive as events (contracts/events.md)."""
+
+    def stop(self) -> StopResult:
+        """Interrupt running turns and drop queued ones."""
+
+    def status(self) -> tuple[list[RunInfo], int]:
+        """Running turns (oldest first) and the number of queued messages."""
+
+    def busy(self) -> bool:
+        """True while the main lane is working or has messages queued."""
 
     def current_session(self) -> str | None: ...
 
     def list_sessions(self, limit: int = 8) -> list[dict]:
-        """[{session_id, title, updated}] newest first."""
+        """[{session_id, title, updated}] newest first, without side-lane forks. Remembered so
+        find_session("2") means the second one in this list."""
 
-    def resume(self, session_id: str) -> None: ...
+    def find_session(self, arg: str) -> str | None:
+        """A number from the last list, a name, or a unique id prefix -> session id."""
 
-    def new_session(self) -> None: ...
+    def session_title(self, session_id: str) -> str | None: ...
 
-    def resolve_permission(self, request_id: str, allow: bool) -> bool: ...
+    def name_session(self, title: str) -> str | None:
+        """Name the current conversation; returns its id, or None if there is none."""
+
+    def resume(self, session_id: str, before: Callable[[], None] | None = None) -> str:
+        """Switch the main lane to a conversation. Returns busy | missing | already | failed | ok;
+        `before` runs once the checks pass, just before the switch starts."""
+
+    def new_session(self) -> str:
+        """Start a fresh conversation (/clear). Returns busy | ok."""
+
+    def resolve_permission(self, request_id: str, allow: bool) -> bool:
+        """Answer a permission request; False if it has already gone (answered or timed out)."""
+
+    def shutdown(self) -> None:
+        """Stop side lanes and threads. The tmux Claude keeps running."""

@@ -48,6 +48,8 @@ def main(argv=None) -> int:
           f"actions: {sorted(registry.actions)}")
     if args.check:
         return 1 if report.failed else 0
+    if ports.agent:
+        ports.agent.start(bus)
     for fe in frontends:
         fe.start(bus, registry, ports.agent)
     jobs = JobRunner(list(registry.jobs.values()))
@@ -60,6 +62,8 @@ def main(argv=None) -> int:
     jobs.stop()
     for fe in frontends:
         fe.stop()
+    if ports.agent:
+        ports.agent.shutdown()
     return 0
 
 

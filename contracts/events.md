@@ -30,8 +30,16 @@ Every event on the bus, and on the app's `/v1/stream` WebSocket, has this shape:
 | `reminder.due` | `{id, text, every, due, late}` | A reminder fires. `due` is a unix time; `late` is true if it fired over 2 minutes late |
 | `message.system` | `{text, buttons}` | A feature has something for Arpit that isn't a reply to a turn (a reminder, the crash notice). Frontends show it; Telegram sends it to the first allowed chat |
 
-`turn.started`, `turn.progress`, `turn.done`, `turn.stopped` and `turn.failed` also carry `lane`
-(`main` or `side`) in `data` when they come from the agent.
+| `turn.retrying` | `{ref, lane, reason}` | A turn starts over (a side lane whose conversation is gone runs again fresh); frontends drop that turn's status message |
+
+Fields the agent adds (new fields only; existing meanings unchanged):
+- `turn.started`, `turn.progress`, `turn.done`, `turn.stopped` and `turn.failed` carry `lane` (`main`
+  or `side`). `turn.started` is sent once the turn is really running (for the main lane, after the
+  tmux Claude is ready), so a `not_ready` failure has no `turn.started` before it.
+- `turn.done` also carries `is_error` and `subtype` (Claude's result subtype, e.g. `success`).
+- `turn.failed` with `reason: error` carries `code` (the exit code) and `stderr` (its last 800 characters).
+- `permission.request` also carries `ref` and `lane` of the turn that asked (both `null` when unknown).
+- `permission.resolved.decision` is `allow`, `deny` or `gone` (answered elsewhere or timed out).
 
 ## Replies and buttons
 
