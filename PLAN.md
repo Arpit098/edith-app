@@ -5,7 +5,16 @@ the `edith` server. Talking to EDITH by voice ("Hey Edith"), like Siri but drivi
 Code session and showing it live, is the first and main tool. Reminders, mail, calendar and more
 tools are added over time, each as its own feature on the app and the server.
 
-_Created 2026-10-29, updated 2026-10-29 (battery-light triggers; modular codebase; existing tools migration; Phase 1 plan approved). Status: Phase 1 (server), step 0. See [docs/PHASE1_PLAN.md](docs/PHASE1_PLAN.md)._
+_Created 2026-10-29, updated 2026-10-29 (battery-light triggers; modular codebase; existing tools migration; Phase 1 plan approved; Phase 1 done). Status: **Phase 1 (server) done** in the repo and live (tag `p1-live-3`); next is Phase 2 (app v1). See [docs/PHASE1_PLAN.md](docs/PHASE1_PLAN.md)._
+
+**Phase 1 wrap-up**
+- Moved to Phase 3: the server side of voice (`voice.turn`/`voice.reply`, spoken summaries) is
+  built and live, but the `[voice]` output-style rule for `~/edith/.claude` is only proposed; it
+  waits for Arpit's review before it is applied.
+- Open items: Arpit's Telegram checklist on the live bot; live clean-up of the old setup (step 10
+  live: `edith.service`, `edith-check.service/.timer`, `~/.local/bin/edith-{start,check,notify}`,
+  the `edith-claude.sh` swap, the staging files), each item only after Arpit's "yes"; Hindi clips
+  for the whisper benchmark.
 
 ---
 
@@ -170,7 +179,8 @@ can resume.
 
 ### 4.9 Existing EDITH tools move into edith-app
 The tools EDITH already uses on the server move into this repo as features and adapters. Today they
-live untracked in `~/edith`; a verbatim copy is kept in `server/legacy/` until each one is migrated.
+lived untracked in `~/edith`; Phase 1 migrated all of them (the legacy copy is deleted; its recorded
+behaviour stays as golden files in `server/tests/golden/`).
 
 | Today (on edith) | Moves to | Notes |
 |---|---|---|
