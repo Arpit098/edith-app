@@ -1,0 +1,18 @@
+alpha (main): 13 file(s), +2008 -2002
+  M big.txt (+2000 -2000)
+  D gone.txt (+0 -1)
+  M mod.py (+1 -1)
+  A new.txt (+1 -0)
+  M old.txt => renamed.txt (+0 -0)
+  U dir/inner.txt (+0 -0)
+  U empty.txt (+0 -0)
+  U img.bin (+0 -0)
+  U my file.txt (+1 -0)
+  U "na\303\257ve.txt" (+0 -0)
+  U nonl.txt (+1 -0)
+  U notes.md (+4 -0)
+  U sub/ (+0 -0)
+gamma (main): 1 file(s), +1 -0
+  U first.txt (+1 -0)
+beta ((detached)): clean
+HTML: ~/.cache/edith/changes/changes-STAMP.html
