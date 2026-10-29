@@ -24,6 +24,6 @@
         "android.permission.VIBRATE"
       ]
     },
-    "plugins": ["expo-secure-store", "./plugins/with-cleartext-traffic"]
+    "plugins": ["expo-secure-store", "./plugins/with-cleartext-traffic", "./plugins/with-release-signing"]
   }
 }
