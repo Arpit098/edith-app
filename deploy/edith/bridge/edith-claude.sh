@@ -29,6 +29,7 @@ EOF
 )
 fi
 
+# Claude's transcript folder for WORK_DIR (legacy hardcoded -home-ubuntu-edith: the same folder on edith)
 project="$HOME/.claude/projects/$(printf '%s' "$WORK_DIR" | sed 's/[^A-Za-z0-9]/-/g')"
 if [ -n "$sid" ] && [ -f "$project/$sid.jsonl" ]; then
   exec claude --resume "$sid"
