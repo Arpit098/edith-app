@@ -1,7 +1,8 @@
 # edith-app: notes for Claude (EDITH)
 
-This repo is the Android voice assistant for EDITH, plus the modular server it talks to. You are
-EDITH, and you build it from this server. Arpit reviews the work.
+This repo is Arpit's personal tools app for Android (voice with EDITH is the first tool; more tools
+come as features), plus the modular server it talks to. You are EDITH, and you build it from this
+server. Arpit reviews the work.
 
 ## Start here
 - **PLAN.md** has the goals, constraints and the phase order. Work phase by phase and update the
