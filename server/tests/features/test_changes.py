@@ -107,13 +107,16 @@ class ChangesTest(unittest.TestCase):
         with projects_home() as home:
             index = (home / "Projects/alpha/.git/index").read_bytes()
             legacy = load("bin/changes.py")
-            for name, main in (("legacy", legacy.main), ("new", report.main)):
-                with self.subTest(name):
-                    text, page = run(main, [])
-                    assert_golden(self, "changes/all.txt", text)
-                    assert_golden(self, "changes/all.html", page)
-                    self.assertEqual(run(main, ["BET"]), (normalize("beta ((detached)): clean\nNo uncommitted changes.\n"), None))
-                    self.assertEqual(run(main, ["zzz"])[0], "No git repos found under ~/Projects matching 'zzz'.\n")
+            old_text, old_page = run(legacy.main, [])
+            # Only legacy records golden files; the new code is held to legacy directly, so
+            # re-recording (UPDATE_GOLDEN=1) can never hide a difference.
+            assert_golden(self, "changes/all.txt", old_text)
+            assert_golden(self, "changes/all.html", old_page)
+            self.maxDiff = None
+            self.assertEqual(run(report.main, []), (old_text, old_page))
+            for main in (legacy.main, report.main):
+                self.assertEqual(run(main, ["BET"]), (normalize("beta ((detached)): clean\nNo uncommitted changes.\n"), None))
+                self.assertEqual(run(main, ["zzz"])[0], "No git repos found under ~/Projects matching 'zzz'.\n")
             # Read-only: the repo's own index is untouched.
             self.assertEqual((home / "Projects/alpha/.git/index").read_bytes(), index)
 

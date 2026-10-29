@@ -173,9 +173,10 @@ class CliTest(unittest.TestCase):
     def test_legacy_and_new_match_golden(self):
         with legacy_home():
             legacy = load("bin/remind.py", extra_paths=[LEGACY / "bridge"])
-            assert_golden(self, "reminders/cli.txt", self.transcript(legacy.main))
+            old = self.transcript(legacy.main)
+            assert_golden(self, "reminders/cli.txt", old)  # only legacy records the golden file
         with legacy_home():
-            assert_golden(self, "reminders/cli.txt", self.transcript(cli.main))
+            self.assertEqual(self.transcript(cli.main), old)
 
     def test_clock_times_match_legacy(self):
         with legacy_home():
@@ -287,19 +288,20 @@ class WrapperTest(unittest.TestCase):
             b.handle_message(message("/reminders"))
             b.handle_callback(callback("rem:cancel:cc22dd"))
             b.handle_callback(callback("rem:cancel:cc22dd", cb_id="cb2"))
-            assert_golden(self, "bridge/reminders_list_cancel.json", b.tg.record())
+            # Compared with the legacy bridge's own recordings, never re-recorded from here.
+            self.assertEqual(b.tg.record(), golden("bridge/reminders_list_cancel.json"))
 
             path.write_text(json.dumps(REMINDERS))
             b = bridge()
             with mock.patch("time.time", return_value=NOW):
                 b.handle_callback(callback("rem:snooze:15:cc22dd", text="⏰ Renew the domain"))
                 b.handle_callback(callback("rem:snooze:60:aa11bb", text="⏰ Pay rent", cb_id="cb2"))
-            assert_golden(self, "bridge/reminder_snooze.json", b.tg.record())
+            self.assertEqual(b.tg.record(), golden("bridge/reminder_snooze.json"))
 
             path.write_text(json.dumps(FIRE))
             b = bridge()
             fire_once(b)
-            assert_golden(self, "bridge/reminder_fire.json", b.tg.record())
+            self.assertEqual(b.tg.record(), golden("bridge/reminder_fire.json"))
 
 
 if __name__ == "__main__":
