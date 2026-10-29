@@ -291,6 +291,13 @@ class RoutesTest(unittest.TestCase):
         self.assertEqual(self.a.call("POST", "/v1/messages", {"text": "  "}), (400, {"error": "text is required"}))
         self.assertEqual(self.a.call("POST", "/v1/messages", raw=b"{not json")[0], 400)
 
+    def test_voice_message_announces_its_ref_before_the_send(self):
+        seen = []
+        self.a.bus.subscribe("voice.turn", lambda ev: seen.append((ev.data, ev.origin, len(self.a.agent.sent))))
+        _, body = self.a.call("POST", "/v1/messages", {"text": "check the disk", "voice": True})
+        self.a.call("POST", "/v1/messages", {"text": "typed"})
+        self.assertEqual(seen, [({"ref": body["ref"]}, "app", 0)])  # 0: nothing was sent yet
+
     def test_actions_and_commands(self):
         status, body = self.a.call("POST", "/v1/actions", {"action": "quick:brief"})
         self.assertEqual((status, body["toast"]), (200, "On it"))
