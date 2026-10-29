@@ -9,16 +9,18 @@ import sys
 import threading
 import tomllib
 
-from .core import EventBus, JobRunner, Ports, Registry, load_adapter, load_features
+from .core import EventBus, JobRunner, Ports, Registry, load_adapter, load_features, load_port
 
 
 def build(config: dict):
     bus, registry = EventBus(), Registry()
     adapters = config.get("adapters", {})
     settings = config.get("adapter", {})  # [adapter.<name>] sections
+    shared = {}  # adapters that serve several ports (e.g. google: mail + calendar) are built once
+
     def port(name: str, folder: str):
         chosen = adapters.get(name)
-        return load_adapter(folder, chosen, settings.get(chosen, {})) if chosen else None
+        return load_port(name, folder, chosen, settings.get(chosen, {}), shared) if chosen else None
 
     ports = Ports(agent=port("agent", "agents"), stt=port("stt", "stt"),
                   mail=port("mail", "mail"), calendar=port("calendar", "calendar"))

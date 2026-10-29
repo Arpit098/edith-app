@@ -3,6 +3,8 @@
 [adapters]
 agent = "claude_tmux"
 stt = "whisper_cpp"
+mail = "google"        # adapters/google serves both mail and calendar, with one login
+calendar = "google"
 frontends = ["telegram", "app_api"]
 notifiers = ["telegram"]
 

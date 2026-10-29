@@ -45,6 +45,11 @@
 1. Create `server/edith/adapters/<port>/<name>/__init__.py` with a `create(config)` function that
    returns an object implementing the port in `server/edith/ports/<port>.py`.
 2. Select it in `config.toml`, e.g. `[adapters] stt = "my_engine"`.
+3. **One service, several ports** (e.g. Google for mail and calendar): make one package
+   `server/edith/adapters/<name>/` with `PORTS = ("mail", "calendar")` and a `create(config)` that
+   returns an object with one attribute per port (`.mail`, `.calendar`). With `mail = "google"` and
+   `calendar = "google"`, it is created once and both ports share it (one login). Build nothing
+   expensive in `create()`; connect on first use.
 
 ## App feature
 

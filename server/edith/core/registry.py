@@ -1,5 +1,6 @@
 """Loads the features and adapters named in config.toml. One broken module never stops the others."""
 import importlib
+import importlib.util
 import logging
 from dataclasses import dataclass, field
 from typing import Callable
@@ -30,6 +31,32 @@ def load_adapter(port: str, name: str, config: dict, package: str = "edith.adapt
         return module.create(config)
     except Exception:
         log.exception("adapter %s/%s failed to load; continuing without it", port, name)
+        return None
+
+
+def load_port(port: str, folder: str, name: str, config: dict, shared: dict | None = None,
+              package: str = "edith.adapters"):
+    """The adapter `name` for one port. Either a one-port adapter, edith.adapters.<folder>.<name>
+    (create(config) returns the port object), or an adapter package that serves several ports,
+    edith.adapters.<name> with PORTS = ("mail", "calendar", …): it is created once per `shared`
+    dict and each port gets its attribute (e.g. google.mail and google.calendar share one login).
+    Returns None on failure, like load_adapter."""
+    try:
+        one = importlib.util.find_spec(f"{package}.{folder}.{name}")
+    except ModuleNotFoundError:  # no edith.adapters.<folder> package at all
+        one = None
+    if one:
+        return load_adapter(folder, name, config, package)
+    shared = {} if shared is None else shared
+    try:
+        if name not in shared:
+            module = importlib.import_module(f"{package}.{name}")
+            if port not in getattr(module, "PORTS", ()):
+                raise LookupError(f"adapter {name} does not serve the {port} port")
+            shared[name] = module.create(config)
+        return getattr(shared[name], port)
+    except Exception:
+        log.exception("adapter %s for port %s failed to load; continuing without it", name, port)
         return None
 
 
