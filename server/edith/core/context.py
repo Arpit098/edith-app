@@ -1,5 +1,6 @@
 """What a feature gets: the bus, the ports, its own config, and ways to register commands and routes."""
 import logging
+import queue
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -89,11 +90,13 @@ class Action:
 
 @dataclass
 class Job:
-    """Background work, one thread per job (core/jobs.py). run() returns how many seconds to wait
-    before running again: the time until the next thing is due, not a fixed tick."""
+    """Background work, one thread per job (core/jobs.py). A timed job's run() returns how many
+    seconds to wait before running again: the time until the next thing is due, not a fixed tick.
+    A worker (queue set) gets run(item) for each item put on its queue."""
     name: str
-    run: Callable[[], float]
+    run: Callable
     owner: str
+    queue: Any = None  # queue.Queue for a worker, None for a timed job
 
 
 @dataclass
@@ -216,6 +219,18 @@ class Context:
     def add_job(self, name: str, run) -> None:
         """Run `run` in the background from startup; it returns seconds until its next run."""
         self._registry.add_job(Job(f"{self.feature}.{name}", run, self.feature))
+
+    def add_worker(self, name: str, handle, maxsize: int = 10):
+        """A background worker that runs handle(item) for each submitted item, one at a time, on its
+        own thread. Returns submit(item), which raises queue.Full when maxsize items are waiting."""
+        q = queue.Queue()  # unbounded, so stop()'s sentinel can always go in; submit() enforces maxsize
+
+        def submit(item):
+            if q.qsize() >= maxsize:
+                raise queue.Full
+            q.put(item)
+        self._registry.add_job(Job(f"{self.feature}.{name}", handle, self.feature, q))
+        return submit
 
     def subscribe(self, pattern: str, handler) -> None:
         self.bus.subscribe(pattern, handler, owner=self.feature)

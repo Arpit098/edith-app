@@ -52,7 +52,9 @@ def perm_dir():
 
 
 def timeout():
-    return int(os.environ.get("EDITH_PERM_TIMEOUT", "600"))
+    """Seconds to wait for Arpit (EDITH_PERM_TIMEOUT, default 600); may be fractional."""
+    value = float(os.environ.get("EDITH_PERM_TIMEOUT", "600"))
+    return int(value) if value.is_integer() else value
 
 
 __all__ = ["FILE_TOOLS", "PERM_DIR", "PROTECTED", "TIMEOUT", "TOOL", "ask", "auto_allow", "main", "perm_dir",
@@ -116,7 +118,7 @@ def ask(tool_name, tool_input):
     if decision == "allow":
         return {"behavior": "allow", "updatedInput": tool_input}
     reason = "Arpit denied this on Telegram." if decision == "deny" else \
-        f"No approval from Arpit within {limit // 60} minutes."
+        f"No approval from Arpit within {int(limit) // 60} minutes."
     return {"behavior": "deny", "message": reason}
 
 

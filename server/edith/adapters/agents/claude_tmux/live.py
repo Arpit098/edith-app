@@ -43,10 +43,13 @@ class LiveView:
         self._tools: dict[str, str] = {}
         self.watch = None
         self.ready = threading.Event()  # set once it is watching: nothing written after that is missed
+        self.following = None           # the transcript it reads now
+        self.switched = threading.Condition()  # notified when `following` changes
 
     def run(self, stopping):
         with Watch(self.paths.state_dir, self.paths.transcripts) as self.watch:
             tail = Tail(self.session().get("transcript_path"))  # from the current end: no replay
+            self._follow(tail.path)
             self.ready.set()
             while not stopping.is_set():
                 session = self.session()
@@ -55,12 +58,18 @@ class LiveView:
                     # A new conversation (/clear, a fresh start) is read from its start, so its first
                     # entries aren't missed; a resumed one from its end, so its history isn't replayed.
                     tail = Tail(current, offset=0 if session.get("source") in ("clear", "startup") else None)
+                    self._follow(current)
                 for entry, _ in tail.read():
                     try:
                         self.entry(entry)
                     except Exception:
                         log.exception("live view: could not read a transcript entry")
                 self.watch.wait(60)  # wakes on any change; the timeout is only a safety net
+
+    def _follow(self, path):
+        with self.switched:
+            self.following = path
+            self.switched.notify_all()
 
     def entry(self, e):
         if e.get("isSidechain") or e.get("isMeta"):

@@ -43,6 +43,7 @@ MAX_CLIENTS = 4
 CLIENT_BACKLOG = 1000     # frames waiting for one stream client; more and it is disconnected
 PING_EVERY = 25.0         # seconds; a client that misses two pings is dropped
 AUDIT_MAX = 5 * 1024 * 1024
+IDLE_POLL = 60.0          # serve_forever's idle wake-up; stop() wakes it at once anyway
 
 
 def tailscale_ip():
@@ -136,6 +137,8 @@ class AppApi:
         self._retry_wait = retry_wait
         self.server = None
         self.address = None
+        self.listening = threading.Event()  # set once it is bound and serving
+        self.changed = threading.Condition()  # notified when an audit line is written or a client joins/leaves
         self._stopping = threading.Event()
         self._clients: set[Client] = set()
         self._clients_lock = threading.Lock()
@@ -150,6 +153,7 @@ class AppApi:
             raise ValueError(f"refusing to bind {self.bind!r}: the App API listens on the Tailscale IP only")
         self.bus, self.registry, self.agent = bus, registry, agent
         self.token = read_token(self.token_file)
+        os.makedirs(os.path.dirname(self.audit_file), exist_ok=True)
         self.routes = self._routes(registry)
         bus.subscribe("*", self._broadcast, owner="app_api")
         self._thread = threading.Thread(target=self._serve, name="app_api:server", daemon=True)
@@ -157,13 +161,24 @@ class AppApi:
 
     def stop(self):
         self._stopping.set()
-        if self.server:
-            self.server.shutdown()
-            self.server.server_close()
-        with self._clients_lock:
-            clients = list(self._clients)
-        for c in clients:
-            c.push(ws.close_frame(ws.CLOSE_NORMAL, "server stopping"))
+        server = self.server
+        if server:
+            # serve_forever notices shutdown only when select() wakes; an empty local connection wakes
+            # it at once (so it can idle with a long poll interval instead of waking twice a second).
+            stopper = threading.Thread(target=server.shutdown, name="app_api:stop")
+            stopper.start()
+            while stopper.is_alive():
+                try:
+                    socket.create_connection(self.address, timeout=1).close()
+                except OSError:
+                    pass
+                stopper.join(0.05)
+            with self._clients_lock:
+                clients = list(self._clients)
+            for c in clients:  # stream clients get a proper close frame first
+                c.push(ws.close_frame(ws.CLOSE_NORMAL, "server stopping"))
+            server.close_connections()
+            server.server_close()
         if self._thread:
             self._thread.join(5)
 
@@ -187,7 +202,8 @@ class AppApi:
                 continue
             self.address = self.server.server_address
             log.info("App API listening on %s:%s", *self.address)
-            self.server.serve_forever(poll_interval=0.5)
+            self.listening.set()
+            self.server.serve_forever(poll_interval=IDLE_POLL)
             return
 
     # ---- routes ----
@@ -289,6 +305,7 @@ class AppApi:
                 client.close()
                 return
             self._clients.add(client)
+        self._notify()
         reader = ws.Reader(sock.recv, max_message=4096)
         missed = 0
         try:
@@ -332,6 +349,7 @@ class AppApi:
             with self._clients_lock:
                 self._clients.discard(client)
             client.close()
+            self._notify()
 
     # ---- audit ----
 
@@ -339,7 +357,6 @@ class AppApi:
         line = json.dumps(entry, ensure_ascii=False) + "\n"
         with self._audit_lock:
             try:
-                os.makedirs(os.path.dirname(self.audit_file), exist_ok=True)
                 if os.path.exists(self.audit_file) and os.path.getsize(self.audit_file) > AUDIT_MAX:
                     os.replace(self.audit_file, self.audit_file + ".1")
                 fd = os.open(self.audit_file, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
@@ -347,6 +364,11 @@ class AppApi:
                     f.write(line)
             except OSError:
                 log.exception("audit log write failed")
+        self._notify()
+
+    def _notify(self):
+        with self.changed:
+            self.changed.notify_all()
 
 
 class Server(http.server.ThreadingHTTPServer):
@@ -355,7 +377,20 @@ class Server(http.server.ThreadingHTTPServer):
 
     def __init__(self, address, handler, api):
         self.api = api
+        self.active: set = set()               # open connections, so stop() can end them
+        self.idle = threading.Condition()      # notified when a connection's thread is done
         super().__init__(address, handler)
+
+    def close_connections(self, timeout=5.0):
+        """End every open connection (idle keep-alive and stream ones included) and wait until their
+        threads are done, so nothing still runs (or writes the audit log) after stop()."""
+        with self.idle:
+            for sock in list(self.active):
+                try:
+                    sock.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+            self.idle.wait_for(lambda: not self.active, timeout)
 
     def process_request(self, request, client_address):
         if not self.api._slots.acquire(blocking=False):  # at most MAX_CONNECTIONS at once
@@ -367,10 +402,16 @@ class Server(http.server.ThreadingHTTPServer):
         super().process_request(request, client_address)
 
     def process_request_thread(self, request, client_address):
+        with self.idle:
+            self.active.add(request)
+        self.api._notify()
         try:
             super().process_request_thread(request, client_address)
         finally:
             self.api._slots.release()
+            with self.idle:
+                self.active.discard(request)
+                self.idle.notify_all()
 
     def handle_error(self, request, client_address):
         """A client that hangs up is normal (the phone loses signal); anything else is logged."""

@@ -1,8 +1,8 @@
 """Sessions: /sessions, /resume, /name, /new and the tap-to-switch buttons (sess:<id>).
 
 Conversations come from the agent port. Switching restarts the tmux Claude and can take a while,
-so switches run one at a time on this feature's own background job, never on the caller's thread
-(legacy started a thread per switch).
+so switches run one at a time on this feature's own worker (ctx.add_worker), never on the caller's
+thread (legacy started a thread per switch).
 """
 import queue
 import time
@@ -16,7 +16,6 @@ SWITCH_MESSAGES = {
     "failed": "❌ The session didn't come back up. Check: systemctl --user status edith-claude",
     "ok": "▶️ Switched. Carry on where we left off.",
 }
-IDLE_WAKE = 2.0  # seconds; the switch job blocks on its queue and only wakes this often to notice shutdown
 
 
 def ago(ts):
@@ -26,7 +25,6 @@ def ago(ts):
 
 def setup(ctx: Context) -> None:
     agent = ctx.ports.agent
-    switches: queue.Queue = queue.Queue(maxsize=10)
 
     def listing():
         items = agent.list_sessions()
@@ -40,19 +38,20 @@ def setup(ctx: Context) -> None:
             rows.append([Button(f"{i}. {s['title'][:40]}", f"sess:{s['session_id']}")])
         return Reply("\n".join(lines) + "\n\n/name <title> names the current one.", rows)
 
-    def switch(sid, reply):
+    def switch(item):
+        sid, reply = item
         result = agent.resume(sid, before=lambda: reply(f"🔄 Switching to: {agent.session_title(sid) or sid[:8]}…"))
         reply(SWITCH_MESSAGES[result])
 
-    idle_wake = float(ctx.config.get("idle_wake", IDLE_WAKE))
+    submit = ctx.add_worker("switch", switch)
 
-    def switch_job():
+    def queue_switch(sid, reply):
         try:
-            sid, reply = switches.get(timeout=idle_wake)
-        except queue.Empty:
-            return 0
-        switch(sid, reply)
-        return 0
+            submit((sid, reply))
+            return True
+        except queue.Full:  # ten switches already waiting
+            reply(SWITCH_MESSAGES["busy"])
+            return False
 
     def sessions(call: CommandCall):
         return listing()
@@ -62,7 +61,7 @@ def setup(ctx: Context) -> None:
         sid = agent.find_session(arg) if arg else None
         if not sid:
             return listing()
-        switches.put((sid, call.reply))
+        queue_switch(sid, call.reply)
 
     def name(call: CommandCall):
         title = call.args.strip()
@@ -76,7 +75,7 @@ def setup(ctx: Context) -> None:
         return "🆕 Fresh conversation started. The old one is still in /sessions."
 
     def press(call: ActionCall):
-        switches.put((call.action[len("sess:"):], call.reply))
+        queue_switch(call.action[len("sess:"):], call.reply)
         return ActionResult(toast="Switching…")
 
     ctx.add_command("new", "Start a fresh conversation", new, menu=True, order=50, help="start a fresh conversation")
@@ -101,7 +100,7 @@ def setup(ctx: Context) -> None:
             data = out.as_data() if isinstance(out, Reply) else {"text": out, "buttons": []}
             ctx.bus.publish(Event("command.reply", {"ref": ref, **data}, origin="app"))
         try:
-            switches.put_nowait((req["params"]["id"], reply))
+            submit((req["params"]["id"], reply))
         except queue.Full:
             raise ApiError(429, "Too many switches waiting")
         return {"status": "switching", "ref": ref}
@@ -118,7 +117,6 @@ def setup(ctx: Context) -> None:
         return {"session_id": req["params"]["id"], "title": title[:60]}
 
     ctx.add_action("sess", press)
-    ctx.add_job("switch", switch_job)
     ctx.add_route("GET", "/v1/sessions", api_list)
     ctx.add_route("POST", "/v1/sessions/{id}/resume", api_resume)
     ctx.add_route("POST", "/v1/sessions/new", api_new)
