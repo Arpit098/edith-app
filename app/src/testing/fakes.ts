@@ -42,6 +42,14 @@ export class FakeTransport implements Transport {
     this.reconnects++;
   }
 
+  uploads: { path: string; file: { uri: string; mime: string; name: string }; field: string }[] = [];
+  async upload<T>(path: string, file: { uri: string; mime: string; name: string }, opts: { field?: string } = {}): Promise<T> {
+    this.uploads.push({ path, file, field: opts.field ?? 'file' });
+    const handler = this.routes.get(`UPLOAD ${path}`);
+    if (!handler) throw new Error(`FakeTransport: no answer for UPLOAD ${path}`);
+    return handler(file) as T;
+  }
+
   authorized(path: string) {
     return this.config ? { url: this.config.baseUrl + path, headers: { Authorization: `Bearer ${this.config.token}` } } : null;
   }
