@@ -15,12 +15,12 @@ def build(config: dict):
     bus, registry = EventBus(), Registry()
     adapters = config.get("adapters", {})
     settings = config.get("adapter", {})  # [adapter.<name>] sections
-    ports = Ports(
-        agent=load_adapter("agents", adapters["agent"], settings.get(adapters["agent"], {}))
-        if adapters.get("agent") else None,
-        stt=load_adapter("stt", adapters["stt"], settings.get(adapters["stt"], {}))
-        if adapters.get("stt") else None,
-    )
+    def port(name: str, folder: str):
+        chosen = adapters.get(name)
+        return load_adapter(folder, chosen, settings.get(chosen, {})) if chosen else None
+
+    ports = Ports(agent=port("agent", "agents"), stt=port("stt", "stt"),
+                  mail=port("mail", "mail"), calendar=port("calendar", "calendar"))
     ports.notifiers = [n for n in (load_adapter("notifiers", name, settings.get(name, {}))
                                    for name in adapters.get("notifiers", [])) if n]
     features = config.get("features", {})
@@ -41,7 +41,8 @@ def main(argv=None) -> int:
 
     bus, registry, ports, frontends, report = build(config)
     print(f"features loaded: {report.loaded}  failed: {report.failed}")
-    print(f"commands: {sorted(registry.commands)}  routes: {sorted(registry.routes)}")
+    print(f"commands: {sorted(registry.commands)}  routes: {sorted(registry.routes)}  "
+          f"actions: {sorted(registry.actions)}")
     if args.check:
         return 1 if report.failed else 0
     for fe in frontends:
