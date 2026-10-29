@@ -103,12 +103,27 @@ class Job:
 class Route:
     """An App API route. `path` may hold {name} parts ("/v1/sessions/{id}/resume"). The handler gets
     {"body": parsed JSON or None, "raw": bytes, "content_type": str, "params": {name: value},
-     "query": {name: value}, "origin": "app"} and returns a JSON-able value (200), or raises ApiError."""
+     "query": {name: value}, "headers": {lower-case name: value}, "origin": "app"} and returns a
+    JSON-able value (200), a Response (anything else: other statuses, headers, files), or raises ApiError."""
     method: str
     path: str
     handler: Callable[[dict[str, Any]], Any]
     owner: str
     max_body: int = 64 * 1024  # bytes; larger requests get 413
+
+
+@dataclass
+class Response:
+    """A route answer that isn't plain JSON. The App API sends `status`, `headers` and either `body`
+    or, when `file` is set, `length` bytes of that file from `offset` (streamed from disk, never read
+    into memory; None means to its end). `audit` adds fields to the request's audit log line."""
+    status: int = 200
+    headers: dict[str, str] = field(default_factory=dict)
+    body: bytes = b""
+    file: str | None = None
+    offset: int = 0
+    length: int | None = None
+    audit: dict[str, Any] = field(default_factory=dict)
 
 
 class ApiError(Exception):

@@ -216,15 +216,15 @@ class ServerErrorTest(Base):
 
     def test_waiting_behind_another_upload_does_not_use_up_the_deadline(self):
         self.whisper.release.clear()
-        stt = self.stt(deadline_floor=1.0, deadline_factor=0)
+        stt = self.stt(deadline_floor=0.2, deadline_factor=0)
         first = threading.Thread(target=lambda: self.assertKind("timeout", lambda: stt.transcribe(wav(1))))
         first.start()
         self.assertTrue(self.whisper.arrived.wait(5))
         second = []
         t = threading.Thread(target=lambda: second.append(stt.transcribe(wav(1))))
         t.start()
-        first.join(5)               # the first times out after 1 s and frees the turn
-        self.whisper.release.set()  # the second is answered at once; it waited ~1 s but has its own deadline
+        first.join(5)               # the first times out after 0.2 s and frees the turn
+        self.whisper.release.set()  # the second is answered at once; it waited ~0.2 s but has its own deadline
         t.join(5)
         self.assertEqual(second[0].text, "hello edith")
 
