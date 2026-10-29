@@ -38,16 +38,18 @@ def legacy_home(**env):
                     os.environ[k] = v
 
 
-def load(relpath, extra_paths=()):
+def load(relpath, extra_paths=(), modules=None):
     """Import a legacy file as a fresh module: `relpath` under legacy/edith/, or any absolute path
     (e.g. a temp copy of the bridge next to a wrapper). Its sibling imports (the bridge's
     `import reminders`) are reloaded too, so they pick up the current HOME. `extra_paths` go on
-    sys.path while it loads (e.g. legacy/edith/bridge for bin/remind.py)."""
+    sys.path while it loads (e.g. legacy/edith/bridge for bin/remind.py). `modules` stand in for
+    imports while it loads (e.g. a fake `gauth` for google/gmail.py, so nothing reaches Google)."""
     path = pathlib.Path(relpath) if pathlib.Path(relpath).is_absolute() else LEGACY / relpath
     dirs = [path.parent, *map(pathlib.Path, extra_paths)]
-    siblings = {f.stem for d in dirs for f in d.glob("*.py")}
+    siblings = {f.stem for d in dirs for f in d.glob("*.py")} | set(modules or {})
     for name in siblings:
         sys.modules.pop(name, None)
+    sys.modules.update(modules or {})
     before = list(sys.path)
     sys.path[:0] = [str(d) for d in extra_paths]
     spec = importlib.util.spec_from_file_location(f"legacy_{path.stem}", path)

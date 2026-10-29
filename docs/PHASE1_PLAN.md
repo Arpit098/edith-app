@@ -102,7 +102,7 @@ the deploy clone. **No restart**, because EDITH runs it fresh each time.
 **Repo**
 - `server/edith/adapters/google/`:
   - `auth.py`: from `google/auth.py` + `gauth.py`, with tokens still in `~/.config/edith-google/`.
-  - `mail.py` and `calendar.py`: implement the new ports.
+  - `gmail.py` and `gcal.py`: implement the new ports. `api.py`: retries and batching. `login.py`: the `auth.py` login.
   - `requirements.txt`: the Google libraries (already installed in `~/edith/venv`, so nothing new is installed).
 - `features/mail/` and `features/calendar/`: `cli.py` with the same commands and output as
   `gmail.py` / `gcal.py`. They get the adapter through `ctx.ports` / `load_adapter`, never by

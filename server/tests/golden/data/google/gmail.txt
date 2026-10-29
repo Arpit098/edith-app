@@ -1,0 +1,87 @@
+$ gmail.py 
+EDITH Gmail helper (personal account arpitagrawal3048@gmail.com).
+
+  gmail.py unread [N]                 latest N unread in Inbox (default 10)
+  gmail.py search "<gmail query>" [N] e.g. "from:bank newer_than:7d"
+  gmail.py read <id>                  full message (plain text)
+  gmail.py thread <threadId>          whole conversation
+  gmail.py mark-read <id> [...]       remove UNREAD label
+  gmail.py archive <id> [...]         remove from Inbox (not deleted)
+  gmail.py draft --to A --subject S --body B [--reply-to <id>]
+  gmail.py send  --to A --subject S --body B [--reply-to <id>]   (needs Arpit's OK)
+
+Never deletes mail permanently (scope doesn't allow it).
+
+$ gmail.py bogus
+EDITH Gmail helper (personal account arpitagrawal3048@gmail.com).
+
+  gmail.py unread [N]                 latest N unread in Inbox (default 10)
+  gmail.py search "<gmail query>" [N] e.g. "from:bank newer_than:7d"
+  gmail.py read <id>                  full message (plain text)
+  gmail.py thread <threadId>          whole conversation
+  gmail.py mark-read <id> [...]       remove UNREAD label
+  gmail.py archive <id> [...]         remove from Inbox (not deleted)
+  gmail.py draft --to A --subject S --body B [--reply-to <id>]
+  gmail.py send  --to A --subject S --body B [--reply-to <id>]   (needs Arpit's OK)
+
+Never deletes mail permanently (scope doesn't allow it).
+
+$ gmail.py unread
+● [m1] Mon, 02 Nov 2026 09:15 | A Very Long Sender Name From Somewhere < | Your statement for October is ready, with a subject line much longer than eighty
+    ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss
+● [m3] Sun, 01 Nov 2026 20:00 | Mum <mum@example.com> | Dinner?
+    Are you coming
+$ gmail.py unread 2
+● [m1] Mon, 02 Nov 2026 09:15 | A Very Long Sender Name From Somewhere < | Your statement for October is ready, with a subject line much longer than eighty
+    ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss
+● [m3] Sun, 01 Nov 2026 20:00 | Mum <mum@example.com> | Dinner?
+    Are you coming
+$ gmail.py search from:bank newer_than:7d 5
+● [m1] Mon, 02 Nov 2026 09:15 | A Very Long Sender Name From Somewhere < | Your statement for October is ready, with a subject line much longer than eighty
+    ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss
+  [m2] Mon, 02 Nov 2026 10:00 | Bank <bank@example.com> | Re: statement
+    html only
+● [m3] Sun, 01 Nov 2026 20:00 | Mum <mum@example.com> | Dinner?
+    Are you coming
+● [m4] Sat, 31 Oct 2026 08:00 | Old <old@example.com> | Archived but unread
+    not in the inbox
+$ gmail.py read m2
+From: Bank <bank@example.com>
+To: arpit@example.com
+Date: Mon, 02 Nov 2026 10:00:00 +0530
+Subject: Re: statement
+Thread: t1
+
+Line & one
+
+Line twothree
+$ gmail.py read m3
+From: Mum <mum@example.com>
+To: arpit@example.com
+Date: Sun, 01 Nov 2026 20:00:00 +0530
+Subject: Dinner?
+Thread: t3
+
+Are you coming on Sunday?
+$ gmail.py thread t1
+--- Mon, 02 Nov 2026 09:15:00 +0530 (IST) | A Very Long Sender Name From Somewhere <notifications@example-bank.example.com>
+Hello Arpit,
+
+Your statement is ready.
+
+--- Mon, 02 Nov 2026 10:00:00 +0530 | Bank <bank@example.com>
+Line & one
+
+Line twothree
+
+$ gmail.py mark-read m1 m3
+Done: 2 message(s).
+$ gmail.py archive m2
+Done: 1 message(s).
+$ gmail.py draft --to mum@example.com --subject Re: Dinner? --body Yes! --reply-to m3
+Draft saved (id draft1). It's in Gmail → Drafts.
+$ gmail.py draft --to x@example.com --subject New --body Line 1
+Line 2
+Draft saved (id draft1). It's in Gmail → Drafts.
+$ gmail.py send --to y@example.com --subject Hello --body Hi there --reply-to m1
+Sent (id sent1).

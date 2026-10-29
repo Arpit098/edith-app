@@ -1,0 +1,66 @@
+[
+ {
+  "body": {
+   "attendees": [
+    {
+     "email": "a@example.com"
+    },
+    {
+     "email": "b@example.com"
+    }
+   ],
+   "conferenceData": {
+    "createRequest": {
+     "conferenceSolutionKey": {
+      "type": "hangoutsMeet"
+     },
+     "requestId": "00000000000000000000000000000001"
+    }
+   },
+   "description": "",
+   "end": {
+    "dateTime": "2026-11-04T13:45:00+05:30",
+    "timeZone": "Asia/Kolkata"
+   },
+   "location": "Cafe",
+   "start": {
+    "dateTime": "2026-11-04T13:00:00+05:30",
+    "timeZone": "Asia/Kolkata"
+   },
+   "summary": "Lunch"
+  },
+  "calendarId": "primary",
+  "conferenceDataVersion": 1,
+  "kind": "events.insert",
+  "sendUpdates": "all"
+ },
+ {
+  "body": {
+   "description": "Focus",
+   "end": {
+    "dateTime": "2026-11-04T19:30:00+05:30",
+    "timeZone": "Asia/Kolkata"
+   },
+   "location": "",
+   "start": {
+    "dateTime": "2026-11-04T18:00:00+05:30",
+    "timeZone": "Asia/Kolkata"
+   },
+   "summary": "Solo"
+  },
+  "calendarId": "work@x",
+  "conferenceDataVersion": 0,
+  "kind": "events.insert",
+  "sendUpdates": "none"
+ },
+ {
+  "calendarId": "primary",
+  "eventId": "e6",
+  "kind": "events.delete"
+ },
+ {
+  "calendarId": "work@x",
+  "eventId": "w1",
+  "kind": "events.delete"
+ }
+]

@@ -1,0 +1,7 @@
+# Google adapter libraries: already installed in ~/edith/venv (versions as of 2026-10-29).
+# Imported only on first use, so the rest of the server runs on the system python3 without them.
+google-api-python-client==2.201.0
+google-auth==2.62.0
+google-auth-httplib2==0.4.4
+google-auth-oauthlib==1.5.0
+httplib2==0.32.0
