@@ -17,6 +17,27 @@ REMINDERS = [
     {"id": "aa11bb", "due": 1793586600.0, "text": "Pay rent", "every": "monthly", "chat_id": None, "created": 0},
     {"id": "cc22dd", "due": 1793966400.0, "text": "Renew the domain", "every": None, "chat_id": None, "created": 0},
 ]
+NOW = 1793500000.0  # Sun 01 Nov 2026, 07:56 IST
+# For firing at NOW: one 10 minutes late (repeating), one just due, one not yet due.
+FIRE = [
+    {"id": "a1b2c3", "due": NOW - 600, "text": "Stand up", "every": "daily", "chat_id": None, "created": 0},
+    {"id": "d4e5f6", "due": NOW - 30, "text": "Call mum", "every": None, "chat_id": None, "created": 0},
+    {"id": "0a0b0c", "due": NOW + 3600, "text": "Later", "every": None, "chat_id": None, "created": 0},
+]
+
+
+class StopLoop(Exception):
+    pass
+
+
+def fire_once(bridge):
+    """One pass of the legacy bridge's reminder_loop (its sleep is turned into an exit)."""
+    with mock.patch.object(time, "time", return_value=NOW), \
+            mock.patch.object(time, "sleep", side_effect=StopLoop):
+        try:
+            bridge.reminder_loop()
+        except StopLoop:
+            pass
 
 
 class LegacyBridgeGolden(unittest.TestCase):
@@ -62,10 +83,16 @@ class LegacyBridgeGolden(unittest.TestCase):
     def test_reminder_snooze_buttons(self):
         with open(self.home / ".cache/edith/reminders.json", "w") as f:
             json.dump(REMINDERS, f)
-        with mock.patch.object(time, "time", return_value=1793500000.0):
+        with mock.patch.object(time, "time", return_value=NOW):
             self.bridge.handle_callback(callback("rem:snooze:15:cc22dd", text="⏰ Renew the domain"))
             self.bridge.handle_callback(callback("rem:snooze:60:aa11bb", text="⏰ Pay rent", cb_id="cb2"))
         assert_golden(self, "bridge/reminder_snooze.json", self.tg.record())
+
+    def test_reminder_fire(self):
+        with open(self.home / ".cache/edith/reminders.json", "w") as f:
+            json.dump(FIRE, f)
+        fire_once(self.bridge)
+        assert_golden(self, "bridge/reminder_fire.json", self.tg.record())
 
     def test_strangers_are_ignored(self):
         self.bridge.handle_message(message("/help", chat_id=999, user_id=999))
