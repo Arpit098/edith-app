@@ -7,9 +7,12 @@ One folder per feature, each exposing `FEATURE = Feature(name, setup)`. Turn a f
 | `sessions` | `/sessions`, `/resume`, `/name`, `/new`; `GET/POST /v1/sessions…` | 1 |
 | `approvals` | Allow/Deny for permission prompts on every frontend | 1 |
 | `control` | `/stop`, `/status`, `/queue`, `/restart` | 1 |
-| `reminders` | `/reminders` + firing due reminders (moved from the bridge) | 1 |
+| `reminders` | `/reminders`, `remind.py` CLI, firing due reminders (from `legacy/edith/bridge/reminders.py`, `bin/remind.py`) | 1 |
+| `mail` | Gmail: unread-that-matters, `/mail` (from `legacy/edith/google/gmail.py`, via `adapters/google`) | 1 |
+| `calendar` | Google Calendar: `/today`, events, free slots (from `legacy/edith/google/gcal.py`, via `adapters/google`) | 1 |
+| `changes` | `/changes` (from `legacy/edith/bin/changes.py`) | 1 |
 | `quick_actions` | `/menu`, `/brief`, `/mail`, `/today`, `/servers`, `/changes` | 1 |
 | `voice` | `POST /v1/stt`, the `[voice]` tag, spoken summaries | 3 |
 | `notifications` | "Task done" / "approval needed" pushes through the notifier ports | 5 |
 
-Each one is migrated out of today's `edith_bridge.py` in Phase 1, one at a time, so Telegram behaves the same at every step.
+Each one is migrated out of `server/legacy/` (today's live code) in Phase 1, one at a time, so Telegram behaves the same at every step.

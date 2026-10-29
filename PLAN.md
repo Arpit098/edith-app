@@ -3,7 +3,7 @@
 An Android voice assistant ("Hey Edith") for E.D.I.T.H, the Claude Code agent running on the
 `edith` server. Like Siri, but it drives Arpit's own Claude Code session, and shows that session live.
 
-_Created 2026-10-29, updated 2026-10-29 (battery-light triggers; modular codebase). Status: Phase 0 (planning)._
+_Created 2026-10-29, updated 2026-10-29 (battery-light triggers; modular codebase; existing tools migration). Status: Phase 0 (planning)._
 
 ---
 
@@ -140,6 +140,11 @@ All of them run in the same `edith-bridge` service, and the existing behaviour m
 - **Phase 5:** self-hosted **ntfy** (open source) on edith, reachable only over Tailscale. It pushes "task
   done" and "approval needed" even when the app is closed.
 
+### 4.7 Voice mode for EDITH
+- Messages from voice are tagged `[voice]`.
+- An EDITH output-style rule: start with a 1–2 sentence speakable summary, then the details. The
+  app speaks only the summary and shows everything.
+
 ### 4.8 Triggers and battery
 Light by default. **Nothing listens in the background unless Arpit turns it on.**
 
@@ -155,10 +160,20 @@ silence. This reduces the cost without changing how it behaves. The toggle's sta
 remembered, but after a phone reboot Android requires the app to be opened once before listening
 can resume.
 
-### 4.7 Voice mode for EDITH
-- Messages from voice are tagged `[voice]`.
-- An EDITH output-style rule: start with a 1–2 sentence speakable summary, then the details. The
-  app speaks only the summary and shows everything.
+### 4.9 Existing EDITH tools move into edith-app
+The tools EDITH already uses on the server move into this repo as features and adapters. Today they
+live untracked in `~/edith`; a verbatim copy is kept in `server/legacy/` until each one is migrated.
+
+| Today (on edith) | Moves to | Notes |
+|---|---|---|
+| `bridge/reminders.py`, `bin/remind.py` | `features/reminders/` | Same `reminders.json` data in `~/.cache/edith/`. `remind.py add/list/cancel` keeps working for EDITH (CLAUDE.md) via a thin wrapper. Snooze/Done buttons and `/reminders` unchanged |
+| `google/gmail.py` | `adapters/google/` (mail port) + `features/mail/` | `/mail`, unread-that-matters summaries. Read-only unless Arpit asks otherwise |
+| `google/gcal.py` | `adapters/google/` (calendar port) + `features/calendar/` | `/today`, events, free slots |
+| `google/auth.py`, `gauth.py` | `adapters/google/auth.py` | OAuth tokens stay in `~/.config/edith-google/` and never go in git |
+| `bin/changes.py` | `features/changes/` | `/changes` |
+| Quick actions (`/brief`, `/menu`, …) | `features/quick_actions/` | Use the mail/calendar/reminders features through events and ports, not imports |
+
+Later (optional), the app gets **Reminders, Calendar and Mail screens** that use the same features through the App API.
 
 ## 5. Repository layout (`Arpit098/edith-app`, private)
 
@@ -201,7 +216,7 @@ on edith's ARM64.
 | Phase | Deliverable | Done when |
 |---|---|---|
 | **0. Plan** | This plan; private repo created | Arpit approves the plan |
-| **1. Server** | Tailscale on edith; bridge split into edith-core + Telegram + App API (same service); whisper.cpp built and benchmarked; whisper-server on localhost | `curl` over Tailscale can send a message, stream the live session, list/switch sessions, approve a permission and transcribe a WAV. **Telegram works exactly as before** |
+| **1. Server** | Tailscale on edith; bridge split into edith-core + Telegram + App API (same service); **reminders, Gmail and Calendar code moved into edith-app (§4.9)**; whisper.cpp built and benchmarked; whisper-server on localhost | `curl` over Tailscale can send a message, stream the live session, list/switch sessions, approve a permission and transcribe a WAV. `/reminders`, `/mail`, `/today`, `/brief` run from the repo code. **Telegram works exactly as before**; `server/legacy/` is empty |
 | **2. App v1** | RN app: connect (address + token), live session view, text send, stop, sessions, approvals; Actions builds a signed APK | Arpit installs the APK and runs a full task from the phone while watching it live |
 | **3. Voice & triggers** | Push-to-talk → whisper → send; TTS of voice summaries; `[voice]` output-style rule; listening overlay with VAD end-of-speech; **default-assistant role (power button + earbud button)**; **home-screen widget** | Long-press power → "check the server disk space" → spoken answer, under ~10 s plus task time. Same from the widget and the earbuds |
 | **4. Wake word (optional toggle)** | Trained `hey_edith` model; WakeWordService behind the Settings toggle (off by default) with sound gate | Triggers reliably across the room; under 1 false wake per hour; battery cost measured while on |

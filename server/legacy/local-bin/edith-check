@@ -1,0 +1,26 @@
+#!/bin/bash
+# Restart E.D.I.T.H if it has died; alert on Telegram if it restarts or looks stuck.
+export PATH="$HOME/.local/bin:$HOME/.bun/bin:/usr/local/bin:/usr/bin:/bin"
+STATE="$HOME/.cache/edith"; mkdir -p "$STATE"
+
+if ! tmux has-session -t edith 2>/dev/null || ! pgrep -u "$USER" -f "bun server[.]ts" >/dev/null; then
+  echo "edith-check: bot not healthy, restarting"
+  edith-notify "⚠️ E.D.I.T.H was down and is restarting. If this keeps happening, check: journalctl --user -u edith-check"
+  rm -f "$STATE"/stuck-*
+  exec systemctl --user restart edith.service
+fi
+
+# Stuck detection: a blocking dialog on screen that hasn't changed for 10+ minutes.
+PANE=$(tmux capture-pane -pt edith)
+if echo "$PANE" | grep -qiE "Do you want to|Enter to confirm|/login|Invalid API key|OAuth token|rate limit|blocked by org policy"; then
+  HASH=$(echo "$PANE" | md5sum | cut -c1-12)
+  F="$STATE/stuck-$HASH"
+  if [ ! -f "$F" ]; then
+    rm -f "$STATE"/stuck-*; date +%s > "$F"
+  elif [ $(( $(date +%s) - $(head -1 "$F") )) -ge 600 ] && ! grep -q notified "$F"; then
+    edith-notify "⚠️ E.D.I.T.H seems stuck on a prompt for 10+ min. On the server run: tmux attach -t edith"
+    echo notified >> "$F"
+  fi
+else
+  rm -f "$STATE"/stuck-*
+fi

@@ -20,11 +20,14 @@ bind = "tailscale"          # the Tailscale IP only, never 0.0.0.0
 port = 8787
 token_file = "~/.config/edith/app-token"
 
+[adapter.google]
+credentials_dir = "~/.config/edith-google"   # OAuth client + token; never in git
+
 [adapter.telegram]
 state_dir = "~/.claude/channels/telegram"
 
 [features]
-enabled = ["sessions", "approvals", "control", "reminders", "quick_actions"]
+enabled = ["sessions", "approvals", "control", "reminders", "mail", "calendar", "changes", "quick_actions"]
 
 # Per-feature settings go in [features.<name>], e.g.:
 # [features.reminders]
