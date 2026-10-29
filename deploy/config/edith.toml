@@ -23,5 +23,11 @@ credentials_dir = "~/.config/edith-google"
 [adapter.telegram]
 telegram_dir = "~/.claude/channels/telegram"
 
+# Step 8, once Tailscale is up: add "app_api" to frontends above and uncomment.
+# [adapter.app_api]
+# bind = "tailscale"                       # the Tailscale IP only; 0.0.0.0 and others are refused
+# port = 8787
+# token_file = "~/.config/edith/app-token" # 0600, 32+ random characters
+
 [features]
 enabled = ["sessions", "approvals", "control", "reminders", "mail", "calendar", "changes", "quick_actions"]
