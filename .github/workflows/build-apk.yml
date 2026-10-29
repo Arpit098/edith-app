@@ -1,0 +1,80 @@
+# Builds the EDITH Android APK on GitHub's x86 runners (never on edith: ARM64, PLAN.md §5).
+# Expo prebuild + Gradle, no EAS or other paid service. The APK is a workflow artifact.
+#
+# Signing: for now the release build is signed with the debug keystore that prebuild generates
+# (installable, not for distribution). Release signing comes later from a keystore Arpit creates
+# and stores in GitHub Secrets; no keystore is ever generated or committed here.
+name: build-apk
+
+on:
+  push:
+    branches: [main, phase-2]
+    paths: ['app/**', '.github/workflows/build-apk.yml']
+  pull_request:
+    paths: ['app/**', '.github/workflows/build-apk.yml']
+  workflow_dispatch:
+
+concurrency:
+  group: build-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: app
+
+jobs:
+  check:
+    name: Typecheck and tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npx jest --ci
+
+  apk:
+    name: Build APK
+    needs: check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4 # caches Gradle downloads and build outputs between runs
+      - run: npm ci --no-audit --no-fund
+      - name: Expo prebuild (generates android/)
+        run: npx expo prebuild --platform android --no-install
+        env:
+          CI: 1
+      - name: Gradle assembleRelease (arm64 only: every current Android phone; halves the build)
+        working-directory: app/android
+        run: ./gradlew assembleRelease --no-daemon -PreactNativeArchitectures=arm64-v8a
+      - name: Name the APK
+        id: apk
+        run: |
+          name="edith-$(node -p "require('./app.json').expo.version")-${GITHUB_SHA::7}.apk"
+          mv android/app/build/outputs/apk/release/app-release.apk "$name"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.apk.outputs.name }}
+          path: app/${{ steps.apk.outputs.name }}
+          if-no-files-found: error
+          retention-days: 30

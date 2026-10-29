@@ -55,10 +55,16 @@
 
 1. Copy `app/src/features/_template` to `app/src/features/my-feature`.
 2. Fill in the exported `FeatureModule`: its screens, settings, event handlers and, for a tool, its
-   `tool` tile for the Tools grid (see "Adding a new tool" below).
+   `tool` tile for the Tools grid (see "Adding a new tool" below). A feature that must show above
+   every screen (like approvals) adds a `panels: [{ slot: 'banner', component }]`.
+   - Put the logic in `model.ts`: a `createXModel(bus, api)` with a small store (`core/store.ts`),
+     subscribed to bus events in `setup(ctx)`. Resync from the API on `app.connected`; never poll.
+     Screens read it with `useStore(model.store, selector)`, using module-level selectors.
+   - Add `__tests__/model.test.ts` using the fakes in `app/src/testing/fakes.ts`.
 3. Add it to `app/src/features/index.ts` (one line).
 4. If it needs a device capability, add or use a **port** in `app/src/core/ports.ts` and an
    adapter in `app/src/adapters/`. Don't call native modules from the feature directly.
+5. `cd app && npm run check` (typecheck + jest, including the import-rule test).
 
 ## New event or API shape
 
@@ -75,7 +81,7 @@ A "tool" is a feature Arpit opens from the app's **Tools** grid (and usually als
 3. **Server tests:** `server/tests/features/test_<tool>.py`; `make test` must stay green.
 4. **App:** a feature folder (see "App feature" above) with its screen, plus a tile:
    ```ts
-   tool: { title: 'Reminders', icon: 'alarm', screen: 'reminders' },  // screen: one of its own screens
+   tool: { title: 'Reminders', icon: 'alarm', screen: 'reminders' },  // icon: a MaterialCommunityIcons name
    ```
    Give it `tab: true` on a screen only if it really deserves one of the ~5 bottom tabs.
 5. **Enable it:** one line in `server/config.toml` (`[features] enabled`) and one in `app/src/features/index.ts`.
