@@ -94,7 +94,14 @@ Base `http://<edith's Tailscale IP>:8787`, reachable over Tailscale only. Every 
 | POST | `/v1/actions` | `{action}` | `{ref, toast, note, replies: [{text, buttons}]}` (a button from any reply) |
 | GET | `/v1/commands` | | `{commands: [{name, description, usage, help}]}` |
 | POST | `/v1/commands/{name}` | `{args?}` | `{ref, replies: [{text, buttons}]}`; later replies come as `command.reply` |
-| POST | `/v1/stt` | audio body (step 9) | `{text, language, seconds}` |
+| POST | `/v1/stt?language=` | audio body, or multipart with a `file` part | `{text, language, seconds, duration}` |
+
+`/v1/stt`: the audio is any format ffmpeg reads; 16 kHz mono 16-bit WAV is fastest (no conversion), and
+M4A/AAC from Android's recorder works. `language` (optional, e.g. `hi`) skips language detection.
+`text` is `""` when there was no speech; `language` is the detected or given code; `seconds` is the
+transcription time and `duration` the audio length. Limits: 8 MB (413) and 60 s of audio (413).
+More errors: 400 (unreadable audio), 429 (transcriptions already waiting), 503 (whisper is down or
+loading its model, or stt is not configured) and 502 (whisper failed).
 
 App messages reach Claude as `[App message from Arpit, <time>]` (plus ` [voice]` for speech) and
 the text on the next line.
