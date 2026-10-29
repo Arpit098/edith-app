@@ -74,12 +74,20 @@ The app uses the same idea, in TypeScript:
 
 | Path | Purpose |
 |---|---|
-| `core/` | API client, event stream, feature registry, shared types |
-| `core/ports.ts` | Interfaces: `Transport`, `SpeechToText`, `TextToSpeech`, `Recorder`, `WakeWord`, `SecureStorage` |
+| `core/events.ts` | `EventBus` and the contract's event types (`EventDataMap`) |
+| `core/api.ts` | Typed App API client over the `Transport` port; `ApiError` |
+| `core/connection.ts` | The one connection: saved server, stream → bus, link state; publishes `app.connected` on every (re)connect |
+| `core/store.ts` | Tiny external store + `useStore(store, selector)` with memoized selectors |
+| `core/feature.ts` | `FeatureModule` (screens, settings, `tool` tile, `panels`) and `loadFeatures` (isolates failures) |
+| `core/ports.ts` | Interfaces: `Transport`, `SecureStorage` (Phase 2); `SpeechToText`, `TextToSpeech`, `Recorder`, `WakeWord` (later) |
 | `common/` | Shared helpers (e.g. `format.ts`: `timeAgo`, `voiceSummary`) |
-| `adapters/<port>/<name>/` | e.g. `stt/server-whisper`, `tts/android`, `wakeword/openwakeword` |
-| `features/<name>/` | e.g. `live-session`, `sessions`, `approvals`, `voice`, `settings`; each exports a `FeatureModule` |
+| `adapters/<port>/<name>/` | `transport/edith-api`, `storage/secure-store`; later `stt/server-whisper`, `tts/android`, `wakeword/openwakeword` |
+| `features/<name>/` | `live-session`, `sessions`, `approvals`, `commands`; each exports a `FeatureModule`, logic in a testable `model.ts` |
+| `shell/` | Composition root UI: connect gate, header, tabs, banner slot, Tools grid, Settings, navigation |
 | `ui/` | Shared components only, with no feature logic |
 | `../android-modules/` | Native Kotlin modules (wake-word service, assistant role, widget) behind the ports above |
+
+The app's import rules are enforced by `app/src/__tests__/isolation.test.ts`. `shell/`, `App.tsx` and
+`features/index.ts` form the composition root and may import anything. See [app/README.md](../app/README.md).
 
 See [ADDING_A_FEATURE.md](ADDING_A_FEATURE.md) for the step-by-step guide.

@@ -3,11 +3,81 @@
 
 import type { EdithEvent } from './events';
 
+/** Where the App API is and how to sign in (contracts/events.md, "App API"). */
+export interface ServerConfig {
+  baseUrl: string; // e.g. "http://100.101.102.103:8787", no trailing slash
+  token: string;
+}
+
+export type StreamState = 'idle' | 'connecting' | 'open' | 'closed';
+
+export interface StreamStatus {
+  state: StreamState;
+  /** For "closed": ms until the next automatic attempt, or null if it won't retry (e.g. a bad token). */
+  retryInMs: number | null;
+  error: string | null; // "unauthorized" for a rejected token, else a short reason
+}
+
+export interface RequestOptions {
+  timeoutMs?: number;
+}
+
 /** Connection to the EDITH App API on edith (over Tailscale). */
 export interface Transport {
-  request<T>(method: 'GET' | 'POST' | 'PATCH', path: string, body?: unknown): Promise<T>;
-  /** Live /v1/stream; returns an unsubscribe function. */
-  stream(onEvent: (event: EdithEvent) => void, onState?: (state: 'connecting' | 'open' | 'closed') => void): () => void;
+  /** Set or clear the server. The stream (if anyone listens) reconnects to the new one. */
+  configure(server: ServerConfig | null): void;
+  request<T>(method: 'GET' | 'POST' | 'PATCH', path: string, body?: unknown, opts?: RequestOptions): Promise<T>;
+  /**
+   * Live /v1/stream over one shared WebSocket (reconnects with backoff on its own).
+   * Returns an unsubscribe function; the socket closes when nobody listens.
+   */
+  stream(onEvent: (event: EdithEvent) => void, onStatus?: (status: StreamStatus) => void): () => void;
+  /** Reconnect the stream now (skips the backoff wait), e.g. when Arpit taps "retry". */
+  reconnect(): void;
+  /** Absolute URL and auth headers for a request made outside this transport (a native download). */
+  authorized(path: string): { url: string; headers: Record<string, string> } | null;
+}
+
+export type InstallStatus = 'pending' | 'success' | 'cancelled' | 'incompatible' | 'failed';
+
+/** Downloads and installs a new EDITH APK (contracts/app-updates.md §5). Android shows its own confirmation. */
+export interface AppInstaller {
+  readonly versionName: string;
+  readonly versionCode: number;
+  /** Streams to the app's cache, checking SHA-256 as it goes; rejects on a mismatch. Resumes a partial file. */
+  download(
+    request: { url: string; headers: Record<string, string> },
+    sha256: string,
+    size: number,
+    onProgress: (received: number, total: number) => void,
+  ): Promise<{ path: string }>;
+  /** Whether Android lets EDITH install apps ("Install unknown apps"). */
+  canInstall(): Promise<boolean>;
+  openInstallSettings(): Promise<void>;
+  /** Hands the APK to Android's installer; the outcome arrives through onStatus. */
+  install(path: string): Promise<void>;
+  onStatus(handler: (status: InstallStatus, message: string) => void): () => void;
+  clearDownloads(): Promise<void>;
+}
+
+export interface OtaInfo {
+  enabled: boolean; // false when the APK was built without the OTA signing key
+  updateId: string | null;
+  createdAt: number | null; // unix seconds
+  embedded: boolean; // running the APK's own bundle
+  rolledBack: boolean; // a newer bundle crashed at launch and expo-updates fell back
+  runtimeVersion: string | null;
+}
+
+/** Over-the-air JS bundles (expo-updates against the App API). */
+export interface OtaUpdates {
+  info(): OtaInfo;
+  /** Send Arpit's token on update requests (only header names embedded at build time can be set). */
+  setRequestHeaders(headers: Record<string, string>): void;
+  /** Check and, if there's a newer bundle, download it. True when one is ready for the next start. */
+  fetchUpdate(): Promise<boolean>;
+  /** Restart the JS app now on the downloaded bundle. */
+  reload(): Promise<void>;
 }
 
 export interface SpeechToText {
@@ -34,6 +104,7 @@ export interface WakeWord {
   onDetected(handler: () => void): () => void;
 }
 
+/** Android Keystore-backed storage for the token and server address. */
 export interface SecureStorage {
   get(key: string): Promise<string | null>;
   set(key: string, value: string): Promise<void>;
@@ -42,9 +113,12 @@ export interface SecureStorage {
 
 export interface Ports {
   transport: Transport;
-  stt: SpeechToText;
-  tts: TextToSpeech;
-  recorder: Recorder;
-  wakeWord: WakeWord;
   storage: SecureStorage;
+  installer?: AppInstaller; // absent where the native module isn't (tests, web)
+  ota?: OtaUpdates;
+  // Built in later phases (PLAN.md §6); absent until then.
+  stt?: SpeechToText; // Phase 3
+  tts?: TextToSpeech; // Phase 3
+  recorder?: Recorder; // Phase 3
+  wakeWord?: WakeWord; // Phase 4
 }

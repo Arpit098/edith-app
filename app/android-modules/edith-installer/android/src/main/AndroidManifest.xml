@@ -1,0 +1,8 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <!-- Hand a downloaded EDITH APK to Android's installer (Android still asks Arpit to confirm). -->
+  <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
+  <application>
+    <receiver android:name="com.arpit.edith.installer.InstallResultReceiver" android:exported="false" />
+  </application>
+</manifest>
