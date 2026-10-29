@@ -1,0 +1,23 @@
+$ remind.py list
+No reminders.
+$ remind.py add 2026-11-02 08:00 Pay rent --every monthly
+Added 000001: Mon 02 Nov, 08:00 IST (monthly) - Pay rent
+$ remind.py add 2026-11-06 Renew the domain
+Added 000002: Fri 06 Nov, 09:00 IST - Renew the domain
+$ remind.py add +30m Stretch
+Added 000003: Sun 01 Nov, 08:26 IST - Stretch
+$ remind.py add 2020-01-01 10:00 Too late
+[exit] That time is in the past: Wed 01 Jan, 10:00
+$ remind.py add next friday x
+[exit] Can't parse time: 'next friday'
+$ remind.py list
+000003  Sun 01 Nov, 08:26 IST  Stretch
+000001  Mon 02 Nov, 08:00 IST  [monthly]  Pay rent
+000002  Fri 06 Nov, 09:00 IST  Renew the domain
+$ remind.py cancel 000002
+Cancelled: Renew the domain
+$ remind.py cancel nope
+No reminder with id nope
+$ remind.py list
+000003  Sun 01 Nov, 08:26 IST  Stretch
+000001  Mon 02 Nov, 08:00 IST  [monthly]  Pay rent
