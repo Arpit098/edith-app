@@ -1,6 +1,6 @@
 # Wake word: "Hey Edith"
 
-openWakeWord (Apache-2.0) custom model, trained on free Google Colab (PLAN.md §4.5).
+openWakeWord (Apache-2.0) custom model, trained on Arpit's MacBook from clips recorded in the app (PLAN.md §4.5).
 
 ```
 wakeword/

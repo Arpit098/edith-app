@@ -143,7 +143,30 @@ All of them run in the same `edith-bridge` service, and the existing behaviour m
     long press on power opens the listening overlay.
 
 ### 4.5 Wake-word model: "Hey Edith"
-- Train with **openWakeWord's training notebook** on free Google Colab:
+**Workflow (decided 2026-10-29):**
+1. **Record in the app.** A guided "Train wake word" screen asks for "Hey Edith" near, across the
+   room and whispered, plus a few minutes of home and TV noise. It checks each clip (length, level,
+   clipping) and lets Arpit redo bad ones.
+2. **Clips go to edith** through the App API (token, Tailscale only), into
+   `~/.cache/edith/wakeword/recordings/<session>/` (mode 0600) with a `manifest.json`. They never go in git.
+3. **Training runs on Arpit's MacBook (M5)**, started by Arpit through the Claude agent on the Mac,
+   which works from a clone of this repo.
+   - It fetches the clips from edith over Tailscale, using an App API download route with the
+     token, so no SSH access to the Mac is needed and the server never connects to the Mac.
+   - It runs `wakeword/training/` (openWakeWord pipeline, PyTorch on MPS) and writes
+     `wakeword/models/hey_edith.onnx` and `metrics.md`.
+4. **Results:** the model (a few hundred KB) and `metrics.md` are pushed to `main`. The app bundles
+   the model, so it reaches the phone as an OTA update. The app then asks Arpit to say "Hey Edith"
+   a few times to confirm.
+- **App status:** the screen shows the clips recorded and uploaded, then "waiting for training",
+  then the installed model's version and metrics. There's no live progress during training,
+  because training runs by hand on the Mac.
+- **Mac safety:** Mac on Tailscale with nothing listening (Remote Login off). Optional Tailscale ACL:
+  Mac → edith:8787 allowed, edith → Mac denied. Arpit applies it in the admin console, then the
+  phone ↔ edith connection is re-checked.
+- **Fallback:** the same scripts run on edith's CPU (slow, at low priority) if the Mac isn't available.
+
+**Training details:** openWakeWord's training pipeline, scripted in `wakeword/training/`:
   - Positives:
     - Synthetic: "hey edith" in many Piper TTS voices, with augmentation (noise, reverb, speed).
     - Real: 30–50 recordings of Arpit, in different rooms and distances, plus some at a whisper.
@@ -315,7 +338,10 @@ on edith's ARM64.
   - Checks that the 13R is on OxygenOS 16 (Settings → About device).
   - Approves the theme screenshots.
   - Turns on "Show Live Updates on Live Alerts" for EDITH.
-- **Phase 4:** records about 30–50 "Hey Edith" samples and a few minutes of normal home noise. The app will have a recorder screen for this.
+- **Phase 4:**
+  - Records about 30–50 "Hey Edith" samples and a few minutes of normal home noise on the app's training screen.
+  - Puts the MacBook on Tailscale.
+  - Asks the Claude agent on the Mac to run the training (§4.5).
 
 ## 8. Risks and open questions
 
@@ -348,6 +374,6 @@ on edith's ARM64.
 | openWakeWord, whisper.cpp, ONNX Runtime, Silero VAD, React Native, ntfy | Free (open source) |
 | Tailscale personal plan | Free |
 | GitHub private repo + Actions (2,000 min/month) | Free |
-| Google Colab for wake-word training | Free tier |
+| Wake-word training (Arpit's MacBook; edith CPU as fallback) | Free |
 | APK distribution (sideload) | Free |
 | Edith server | Always Free (OCI) |
