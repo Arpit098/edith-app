@@ -8,14 +8,16 @@ name: build-apk
 
 on:
   push:
-    branches: [main, phase-2]
+    branches: [main] # phase branches build through their PR, not twice
     paths: ['app/**', '.github/workflows/build-apk.yml']
   pull_request:
     paths: ['app/**', '.github/workflows/build-apk.yml']
   workflow_dispatch:
 
 concurrency:
-  group: build-apk-${{ github.ref }}
+  # The branch name for a PR (head_ref) and for a push or manual run (ref_name): a newer run on
+  # the same branch cancels the older one, whatever started it.
+  group: build-apk-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 permissions:
