@@ -14,7 +14,8 @@ class Transcript:
 class SttError(Exception):
     """A transcription that failed. `kind` says why, so callers can answer without knowing the engine:
     bad_audio (unreadable or empty), too_long (over max_seconds), busy (too many waiting),
-    unavailable (the engine is down or still loading) or error (anything else)."""
+    unavailable (the engine is down or still loading), timeout (no transcript within the deadline, e.g. a
+    runaway decode) or error (anything else)."""
 
     def __init__(self, kind: str, message: str):
         super().__init__(message)

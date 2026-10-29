@@ -7,11 +7,12 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
 import unittest
 from unittest import mock
 
 from edith.adapters.stt import whisper_cpp
-from edith.adapters.stt.whisper_cpp import WhisperCpp, ffmpeg_command, ready_wav
+from edith.adapters.stt.whisper_cpp import WhisperCpp, audio_ctx, ffmpeg_command, max_tokens, ready_wav
 from edith.ports.stt import SttError
 from tests.fakes.whisper import FakeWhisper, wav
 
@@ -63,9 +64,20 @@ class CommandTest(unittest.TestCase):
         self.assertIsNone(ready_wav(b"RIFF\0\0\0\0WAVEjunk"))
         self.assertIsNone(ready_wav(MP4_HEAD))
 
+    def test_audio_ctx_fits_the_clip(self):
+        self.assertEqual([audio_ctx(d) for d in (0.5, 5, 10, 28.7, 29, 60)], [89, 314, 564, 1499, 1500, 1500])
+
+    def test_max_tokens_scales_with_duration(self):
+        self.assertEqual([max_tokens(d) for d in (0.5, 5, 10, 60)], [42, 132, 232, 1232])
+
+    def test_deadline_is_relative_to_duration(self):
+        s = WhisperCpp()
+        self.assertEqual([s.deadline(d) for d in (1, 3, 4, 10, 60)], [5.0, 5.0, 6.0, 15.0, 90.0])
+
     def test_create_reads_config(self):
-        s = whisper_cpp.create({"url": "http://127.0.0.1:9/", "timeout": 5, "language": "hi", "unknown": 1})
-        self.assertEqual((s.url, s.timeout, s.language), ("http://127.0.0.1:9", 5, "hi"))
+        s = whisper_cpp.create({"url": "http://127.0.0.1:9/", "deadline_floor": 2, "deadline_factor": 3,
+                                "language": "hi", "unknown": 1})
+        self.assertEqual((s.url, s.deadline(1), s.deadline(2), s.language), ("http://127.0.0.1:9", 3, 6, "hi"))
 
 
 class TranscribeTest(Base):
@@ -76,7 +88,12 @@ class TranscribeTest(Base):
         self.assertEqual(self.ffmpeg_calls(), [])
         req, = self.whisper.requests
         self.assertEqual(req["path"], "/inference")
-        self.assertEqual(req["fields"], {"response_format": "verbose_json", "temperature": "0.0"})
+        self.assertEqual(req["fields"], {
+            "response_format": "verbose_json", "no_language_probabilities": "true", "token_timestamps": "false",
+            "no_timestamps": "true", "audio_ctx": "214",
+            "max_tokens": "92",                                    # the token cap: 32 + 20/s × 3 s
+            "entropy_thold": "2.4", "logprob_thold": "-1.0",       # whisper's loop checks, sent explicitly
+            "temperature": "0.0", "temperature_inc": "0.2"})
         self.assertEqual(req["wav"], {"channels": 1, "rate": 16000, "width": 2, "seconds": 3.0})
 
     def test_other_audio_goes_through_one_ffmpeg_pipe(self):
@@ -101,6 +118,10 @@ class TranscribeTest(Base):
         self.assertTrue(source.endswith(".m4a"))
         self.assertEqual((call["stdin_bytes"], call["input_bytes"]), (0, len(audio)))
         self.assertFalse(os.path.exists(source))
+
+    def test_full_window_when_fit_ctx_is_off(self):
+        self.stt(fit_ctx=False).transcribe(wav(1))
+        self.assertNotIn("audio_ctx", self.whisper.requests[0]["fields"])
 
     def test_language_from_call_or_config(self):
         self.stt(language="hi").transcribe(wav(1))
@@ -180,14 +201,32 @@ class ServerErrorTest(Base):
         self.assertKind("error", lambda: stt.transcribe(wav(1)))
         self.assertEqual(len(self.whisper.requests), 2)
 
-    def test_timeout_is_not_retried(self):
-        self.whisper.release.clear()
+    def test_slow_server_times_out_at_the_deadline_without_retry(self):
+        self.whisper.release.clear()  # a runaway decode: the server never answers
+        stt = self.stt(deadline_floor=0.2, deadline_factor=0.1, retries=3)
+        started = time.monotonic()
         try:
-            e = self.assertKind("error", lambda: self.stt(timeout=0.3, retries=3).transcribe(wav(1)))
+            e = self.assertKind("timeout", lambda: stt.transcribe(wav(4)))  # deadline max(0.2, 0.1 × 4) = 0.4 s
         finally:
             self.whisper.release.set()
-        self.assertIn("took over", e.message)
+        self.assertLess(time.monotonic() - started, 3)
+        self.assertIn("0.4 s", e.message)
         self.assertEqual(len(self.whisper.requests), 1)
+        self.assertEqual(self.whisper.requests[0]["fields"]["max_tokens"], "112")
+
+    def test_waiting_behind_another_upload_does_not_use_up_the_deadline(self):
+        self.whisper.release.clear()
+        stt = self.stt(deadline_floor=1.0, deadline_factor=0)
+        first = threading.Thread(target=lambda: self.assertKind("timeout", lambda: stt.transcribe(wav(1))))
+        first.start()
+        self.assertTrue(self.whisper.arrived.wait(5))
+        second = []
+        t = threading.Thread(target=lambda: second.append(stt.transcribe(wav(1))))
+        t.start()
+        first.join(5)               # the first times out after 1 s and frees the turn
+        self.whisper.release.set()  # the second is answered at once; it waited ~1 s but has its own deadline
+        t.join(5)
+        self.assertEqual(second[0].text, "hello edith")
 
 
 @unittest.skipUnless(shutil.which("ffmpeg"), "ffmpeg is not installed")

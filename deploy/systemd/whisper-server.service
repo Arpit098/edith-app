@@ -1,15 +1,18 @@
 # whisper.cpp speech-to-text for EDITH (docs/PHASE1_PLAN.md, step 9). Built by deploy/whisper/build.sh.
 # Listens on 127.0.0.1 only: the App API (edith-bridge) is its one client. Never bind it elsewhere.
-# The model is picked from deploy/whisper/bench.sh results; change WHISPER_MODEL to switch.
+# Model: small-q8_0 (exact English in ~2.4 s for 5 s / ~5 s for 10 s on 2 OCPU). base-q8_0 is the fast
+# option (~1-2 s, drops words): set WHISPER_MODEL to ggml-base-q8_0.bin. q5_1 is slower on this CPU.
+# --no-flash-attn is required: with flash attention, v1.9.5 reads stale encoder frames when audio_ctx
+# changes between requests, and decodes turn to garbage or loop (server/edith/adapters/stt/whisper_cpp).
 [Unit]
 Description=E.D.I.T.H - whisper.cpp speech-to-text (localhost only)
 After=network.target
 
 [Service]
 Type=simple
-Environment=WHISPER_MODEL=%h/.local/share/whisper/ggml-small-q5_1.bin
+Environment=WHISPER_MODEL=%h/.local/share/whisper/ggml-small-q8_0.bin
 # 2 threads = edith's 2 OCPU. Nice keeps the Telegram bridge and tmux Claude responsive during a transcription.
-ExecStart=%h/opt/whisper.cpp/bin/whisper-server --host 127.0.0.1 --port 8178 --model ${WHISPER_MODEL} --threads 2 --language auto
+ExecStart=%h/opt/whisper.cpp/bin/whisper-server --host 127.0.0.1 --port 8178 --model ${WHISPER_MODEL} --threads 2 --language auto --no-flash-attn
 Nice=5
 MemoryMax=2G
 Restart=on-failure

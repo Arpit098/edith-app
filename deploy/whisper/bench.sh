@@ -8,7 +8,13 @@
 # one warm-up request, then RUNS timed requests per clip, and prints a markdown table:
 #   time = median request time (s), RTF = time / clip length, RAM = the server's peak RSS (VmHWM).
 # Transcripts go to <clips dir>/out/<model>/<clip>.txt so accuracy can be checked by eye.
+#
+# Requests are what the adapter sends: the form fields come from inference_fields() and the deadline from
+# WhisperCpp.deadline() in server/edith/adapters/stt/whisper_cpp, and the server runs with the unit's flags.
+# A request past its deadline is cut off (as in EDITH) and shows as "timeout"; the median then counts it as
+# the deadline.
 set -euo pipefail
+SERVER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../server" && pwd)"
 
 CLIPS="${1:?usage: $0 <clips dir> [model…]}"
 shift
@@ -17,7 +23,10 @@ MODELS_DIR="${WHISPER_MODELS:-$HOME/.local/share/whisper}"
 PORT="${PORT:-18178}"
 RUNS="${RUNS:-3}"
 THREADS="${THREADS:-2}"
-NICE="${NICE:-5}"  # the same priority as deploy/systemd/whisper-server.service
+NICE="${NICE:-5}"  # the same priority and flags as deploy/systemd/whisper-server.service
+SERVER_FLAGS=(--threads "$THREADS" --language auto --no-flash-attn)
+LANGUAGE="${LANGUAGE:-}"  # e.g. hi: skip detection, as /v1/stt?language=hi does
+CTX="${CTX:-auto}"  # auto: audio_ctx sized to the clip, like the adapter; full: whisper's fixed 30 s window
 
 if (($#)); then models=("$@"); else
   models=()
@@ -46,23 +55,47 @@ wait_ready() {
   done
 }
 
-request() {  # request <clip> <out json> -> prints seconds
-  curl -sS -o "$2" -w '%{time_total}' --max-time 300 \
-    -F "file=@$1" -F response_format=verbose_json -F temperature=0.0 "http://127.0.0.1:$PORT/inference"
+# The adapter's request for a clip: line 1 is the deadline, then one form field per line.
+adapter_request() {
+  python3 -I - "$SERVER_DIR" "$1" "$LANGUAGE" "$CTX" <<'PY'
+import sys, wave
+sys.path.insert(0, sys.argv[1])
+from edith.adapters.stt.whisper_cpp import WhisperCpp, inference_fields
+with wave.open(sys.argv[2]) as w:
+    duration = w.getnframes() / w.getframerate()
+print(WhisperCpp().deadline(duration))
+for k, v in inference_fields(duration, sys.argv[3] or None, sys.argv[4] == "auto").items():
+    print(f"{k}={v}")
+PY
+}
+
+request() {  # request <clip> <out json> -> prints seconds, or "timeout"
+  local spec deadline args=() t
+  mapfile -t spec < <(adapter_request "$1")
+  deadline="${spec[0]}"
+  for f in "${spec[@]:1}"; do args+=(-F "$f"); done
+  if t="$(curl -sS -o "$2" -w '%{time_total}' --max-time "$deadline" "${args[@]}" -F "file=@$1" \
+          "http://127.0.0.1:$PORT/inference" 2>/dev/null)"; then
+    echo "$t"
+  else
+    echo "{\"text\": \"(timeout after $deadline s)\"}" >"$2"
+    echo "timeout:$deadline"
+  fi
 }
 
 duration() { python3 -I -c 'import sys,wave; w=wave.open(sys.argv[1]); print(round(w.getnframes()/w.getframerate(), 2))' "$1"; }
 
 median() { sort -n | awk '{a[NR]=$1} END {print (NR%2 ? a[(NR+1)/2] : (a[NR/2]+a[NR/2+1])/2)}'; }
 
-echo "| model | clip | audio s | time s (median of $RUNS) | RTF | RAM MB | language |"
-echo "|---|---|---|---|---|---|---|"
+echo "audio_ctx: $CTX, language: ${LANGUAGE:-auto}"
+echo "| model | clip | audio s | time s (median of $RUNS) | RTF | timeouts | RAM MB | language |"
+echo "|---|---|---|---|---|---|---|---|"
 for m in "${models[@]}"; do
   model="$MODELS_DIR/ggml-$m.bin"
   [[ -f "$model" ]] || { echo "missing $model" >&2; continue; }
   out="$CLIPS/out/$m"
   mkdir -p "$out"
-  nice -n "$NICE" "$BIN" --host 127.0.0.1 --port "$PORT" --model "$model" --threads "$THREADS" --language auto \
+  nice -n "$NICE" "$BIN" --host 127.0.0.1 --port "$PORT" --model "$model" "${SERVER_FLAGS[@]}" \
     >"$out/server.log" 2>&1 &
   server_pid=$!
   wait_ready "$out/server.log"
@@ -71,12 +104,14 @@ for m in "${models[@]}"; do
     name="$(basename "$c" .wav)"
     times=()
     for ((i = 0; i < RUNS; i++)); do times+=("$(request "$c" "$out/$name.json")"); done
-    t="$(printf '%s\n' "${times[@]}" | median)"
+    timeouts="$(printf '%s\n' "${times[@]}" | grep -c '^timeout' || true)"
+    t="$(printf '%s\n' "${times[@]#timeout:}" | median)"
     d="$(duration "$c")"
     ram="$(awk '/VmHWM/ {printf "%d", $2/1024}' "/proc/$server_pid/status")"
     lang="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("language",""))' "$out/$name.json")"
     python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["text"].strip())' "$out/$name.json" >"$out/$name.txt"
-    printf '| %s | %s | %s | %.2f | %.2f | %s | %s |\n' "$m" "$name" "$d" "$t" "$(awk -v t="$t" -v d="$d" 'BEGIN {print t / d}')" "$ram" "$lang"
+    printf '| %s | %s | %s | %.2f | %.2f | %s/%s | %s | %s |\n' "$m" "$name" "$d" "$t" \
+      "$(awk -v t="$t" -v d="$d" 'BEGIN {print t / d}')" "$timeouts" "$RUNS" "$ram" "$lang"
   done
   stop_server
 done

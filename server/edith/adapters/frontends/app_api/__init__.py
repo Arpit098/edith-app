@@ -253,6 +253,8 @@ class AppApi:
         if not text:
             raise ApiError(400, "text is required")
         ref = f"app:{secrets.token_hex(6)}"
+        if body.get("voice"):  # before send, so the voice feature knows the ref before any of its turn events
+            self.bus.publish(self._event("voice.turn", {"ref": ref}))
         handle = self.agent.send(self._prompt(text, bool(body.get("voice"))), "app", ref, force_queue=bool(body.get("queue")))
         return {"ref": ref, "lane": handle.lane}
 
