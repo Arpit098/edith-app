@@ -1,40 +1,52 @@
-import { localEvent } from '../../../core/events';
+import type { HistoryPage } from '../../../core/api';
+import { localEvent, type EdithEvent } from '../../../core/events';
 import { ev, fakeContext, flush } from '../../../testing/fakes';
-import { applyStatus, createLiveModel, initialLive, MAX_ITEMS, reduce, summarize, type LiveState } from '../model';
+import { applyStatus, createLiveModel, fromHistory, initialLive, MAX_ITEMS, reduce, summarize, withOlder, type LiveState } from '../model';
 
-function run(events: Parameters<typeof reduce>[1][], from: LiveState = initialLive): LiveState {
+function run(events: EdithEvent[], from: LiveState = initialLive): LiveState {
   return events.reduce(reduce, from);
 }
 
+const texts = (s: LiveState) => s.items.map((x) => ('text' in x ? x.text : 'summary' in x ? x.summary : x.kind)).reverse();
+
+/** A user message at transcript offset n of session s1. */
+const say = (n: number, text = `m${n}`) => ev('message.user', { text, cursor: `s1:${n}` });
+
+function page(events: EdithEvent[], extra: Partial<HistoryPage> = {}): Record<string, unknown> {
+  const last = events.at(-1)?.data.cursor ?? 's1:0';
+  return { session_id: 's1', events, start: events[0]?.data.cursor ?? 's1:0', cursor: last, more: false, reset: false, ...extra };
+}
+
+const STATUS = { main: 'idle', queued: 0, runs: [], tmux: 'running', conversation: true, session: null };
+
 describe('reduce', () => {
-  it('builds the transcript newest first', () => {
+  it('builds the transcript newest first and remembers the cursor', () => {
     const s = run([
-      ev('message.user', { text: 'check disk', voice: true }, { origin: 'app' }),
-      ev('message.assistant', { text: 'On it.' }),
-      ev('file.diff', { path: '/a.ts', diff: '-a\n+b' }),
+      ev('message.user', { text: 'check disk', voice: true, cursor: 's1:10' }, { origin: 'app' }),
+      ev('message.assistant', { text: 'On it.', cursor: 's1:20' }),
+      ev('file.diff', { id: 't1', path: '/a.ts', diff: '-a\n+b', cursor: 's1:30' }),
+      ev('turn.started', { ref: 'r' }), // not a transcript event: cursor unchanged
     ]);
     expect(s.items.map((x) => x.kind)).toEqual(['diff', 'assistant', 'user']);
     expect(s.items[2]).toMatchObject({ kind: 'user', origin: 'app', voice: true, text: 'check disk' });
-    expect(new Set(s.items.map((x) => x.id)).size).toBe(3);
+    expect(s.cursor).toBe('s1:30');
   });
 
-  it('pairs tool results with the oldest open call of that tool', () => {
+  it('pairs tool results with their call by id', () => {
     const s = run([
-      ev('tool.call', { name: 'Bash', summary: '$ ls' }),
-      ev('tool.call', { name: 'Read', summary: 'a.ts' }),
-      ev('tool.call', { name: 'Bash', summary: '$ df' }),
-      ev('tool.result', { name: 'Bash', ok: true, summary: 'a b c' }),
-      ev('tool.result', { name: 'Bash', ok: false, summary: 'df: denied' }),
-      ev('tool.result', { name: 'Grep', ok: true, summary: 'orphan' }),
+      ev('tool.call', { id: 'a', name: 'Bash', summary: '$ ls' }),
+      ev('tool.call', { id: 'b', name: 'Bash', summary: '$ df' }),
+      ev('tool.result', { id: 'b', name: 'Bash', ok: false, summary: 'df: denied' }), // out of order
+      ev('tool.result', { id: 'a', name: '', ok: true, summary: 'a b c' }), // name can be "" in history
+      ev('tool.result', { id: 'zz', name: 'Grep', ok: true, summary: 'orphan' }),
     ]);
     const tools = s.items.filter((x) => x.kind === 'tool').reverse();
     expect(tools.map((t) => (t.kind === 'tool' ? [t.summary, t.status, t.result] : null))).toEqual([
       ['$ ls', 'ok', 'a b c'],
-      ['a.ts', 'running', null],
       ['$ df', 'error', 'df: denied'],
       ['', 'ok', 'orphan'],
     ]);
-    expect(s.openCalls).toEqual({ Bash: [], Read: [2] });
+    expect(s.calls).toEqual({});
   });
 
   it('keeps the same state for events it does not show', () => {
@@ -62,22 +74,15 @@ describe('reduce', () => {
       ev('turn.stopped', { ref: 'r', lane: 'main' }),
       ev('turn.done', { ref: 'r3', is_error: true, subtype: 'error_max_turns' }),
     ]);
-    expect(s.items.map((x) => (x.kind === 'system' ? x.text : x.kind)).reverse()).toEqual([
-      '⏳ Queued (#2)',
-      '⏹ A queued message was dropped',
-      '⏹ Stopped',
-      '⚠️ The turn ended with an error (error_max_turns)',
-    ]);
+    expect(texts(s)).toEqual(['⏳ Queued (#2)', '⏹ A queued message was dropped', '⏹ Stopped', '⚠️ The turn ended with an error (error_max_turns)']);
   });
 
   it('marks session changes and clears buttons by key', () => {
     let s = run([
-      ev('tool.call', { name: 'Bash', summary: 'x' }),
       ev('message.system', { text: '🔐 Approve?', key: 'perm:ab', buttons: [[{ label: 'Allow', action: 'perm:allow:ab' }]] }),
       ev('session.changed', { session_id: 's2', title: 'youtube', source: 'resume' }),
     ]);
     expect(s.session).toEqual({ id: 's2', title: 'youtube' });
-    expect(s.openCalls).toEqual({});
     expect(s.items[0]).toMatchObject({ kind: 'divider', text: 'youtube' });
     s = reduce(s, ev('message.buttons_cleared', { key: 'perm:ab' }));
     expect(s.items[1]).toMatchObject({ kind: 'system', buttons: [] });
@@ -104,19 +109,117 @@ describe('reduce', () => {
   });
 });
 
+describe('history pages', () => {
+  const hp = (events: EdithEvent[], extra: Partial<HistoryPage> = {}) => page(events, extra) as unknown as HistoryPage;
+
+  it('rebuilds the transcript from the newest page, keeping turn state', () => {
+    const before = run([say(1, 'old'), ev('turn.started', { ref: 'r', lane: 'main' })]);
+    const s = fromHistory(before, hp([say(5), say(6)], { start: 's1:4', more: true }));
+    expect(texts(s)).toEqual(['m5', 'm6']);
+    expect(s.cursor).toBe('s1:6');
+    expect(s.older).toBe('s1:4');
+    expect(summarize(s).busy).toBe(true);
+  });
+
+  it('adds older pages below, within MAX_ITEMS', () => {
+    const s = fromHistory(initialLive, hp([say(5)], { start: 's1:5', more: true }));
+    const t = withOlder(s, hp([say(3), say(4)], { start: 's1:3', more: true }));
+    expect(texts(t)).toEqual(['m3', 'm4', 'm5']);
+    expect(t.older).toBe('s1:3');
+    expect(new Set(t.items.map((x) => x.id)).size).toBe(3);
+    expect(t.cursor).toBe('s1:5'); // older pages never move the catch-up cursor
+    expect(withOlder(t, hp([say(2)]))).toMatchObject({ older: null });
+  });
+});
+
 describe('createLiveModel', () => {
-  it('reduces bus events and resyncs status on connect', async () => {
+  it('fills from history on open, without repeating events that came in meanwhile', async () => {
     const ctx = fakeContext();
-    ctx.transport.on('GET /v1/status', { main: 'busy', queued: 0, runs: [], tmux: 'running', conversation: true, session: null });
+    let answer: (v: unknown) => void = () => {};
+    ctx.transport.on('GET /v1/status', STATUS).on('GET /v1/sessions/current/history?limit=100', () => new Promise((r) => (answer = r)));
     const m = createLiveModel(ctx.bus, ctx.api);
-    ctx.bus.publish(ev('message.user', { text: 'hi' }));
+    ctx.bus.publish(localEvent('app.connected', { first: true }));
+    ctx.bus.publish(say(2)); // arrives during the request, and is in the page too
+    ctx.bus.publish(say(3)); // arrives during the request, newer than the page
+    ctx.bus.publish(ev('turn.started', { ref: 'r', lane: 'main' })); // not a transcript event: applied at once
+    expect(summarize(m.store.get()).busy).toBe(true);
+    answer(page([say(1), say(2)]));
+    await flush();
+    expect(texts(m.store.get())).toEqual(['m1', 'm2', 'm3']);
+    expect(m.store.get().cursor).toBe('s1:3');
+    m.dispose();
+  });
+
+  it('catches up after a reconnect with after= until there is no more', async () => {
+    const ctx = fakeContext();
+    ctx.transport
+      .on('GET /v1/status', STATUS)
+      .on('GET /v1/sessions/current/history?limit=100', page([say(1)]))
+      .on('GET /v1/sessions/current/history?after=s1%3A1&limit=100', page([say(2)], { more: true }))
+      .on('GET /v1/sessions/current/history?after=s1%3A2&limit=100', page([say(3)]));
+    const m = createLiveModel(ctx.bus, ctx.api);
     ctx.bus.publish(localEvent('app.connected', { first: true }));
     await flush();
-    expect(m.store.get().items).toHaveLength(1);
-    expect(m.store.get().main).toBe('busy');
+    ctx.bus.publish(localEvent('app.connected', { first: false }));
+    await flush();
+    await flush();
+    expect(texts(m.store.get())).toEqual(['m1', 'm2', 'm3']);
+    expect(ctx.transport.calls.filter((c) => c.path.includes('/history')).map((c) => c.path.split('?')[1])).toEqual([
+      'limit=100',
+      'after=s1%3A1&limit=100',
+      'after=s1%3A2&limit=100',
+    ]);
     m.dispose();
-    ctx.bus.publish(ev('message.user', { text: 'ignored' }));
-    expect(m.store.get().items).toHaveLength(1);
+  });
+
+  it('starts over from the newest page when the cursor belongs to another conversation', async () => {
+    const ctx = fakeContext();
+    ctx.transport
+      .on('GET /v1/status', STATUS)
+      .on('GET /v1/sessions/current/history?limit=100', page([say(1)]))
+      .on('GET /v1/sessions/current/history?after=s1%3A1&limit=100', {
+        ...page([ev('message.user', { text: 'other', cursor: 's2:9' })]),
+        reset: true,
+      });
+    const m = createLiveModel(ctx.bus, ctx.api);
+    ctx.bus.publish(localEvent('app.connected', { first: true }));
+    await flush();
+    ctx.bus.publish(localEvent('app.connected', { first: false }));
+    await flush();
+    expect(texts(m.store.get())).toEqual(['other']);
+    expect(m.store.get().cursor).toBe('s2:9');
+    m.dispose();
+  });
+
+  it('shows the new conversation after a session change, and loads older pages', async () => {
+    const ctx = fakeContext();
+    let current = page([say(1)]);
+    ctx.transport
+      .on('GET /v1/status', STATUS)
+      .on('GET /v1/sessions/current/history?limit=100', () => current)
+      .on('GET /v1/sessions/current/history?before=s2%3A5&limit=100', page([ev('message.user', { text: 'older', cursor: 's2:4' })]));
+    const m = createLiveModel(ctx.bus, ctx.api);
+    ctx.bus.publish(localEvent('app.connected', { first: true }));
+    await flush();
+    current = page([ev('message.user', { text: 'in s2', cursor: 's2:5' })], { start: 's2:5', more: true });
+    ctx.bus.publish(ev('session.changed', { session_id: 's2', title: 'other', source: 'resume' }));
+    await flush();
+    expect(texts(m.store.get())).toEqual(['in s2']);
+    await m.loadOlder();
+    expect(texts(m.store.get())).toEqual(['older', 'in s2']);
+    expect(m.store.get()).toMatchObject({ older: null, loadingOlder: false });
+    m.dispose();
+  });
+
+  it('keeps the stream events when history fails', async () => {
+    const ctx = fakeContext();
+    ctx.transport.on('GET /v1/status', STATUS).on('GET /v1/sessions/current/history?limit=100', () => Promise.reject(new Error('timed out')));
+    const m = createLiveModel(ctx.bus, ctx.api);
+    ctx.bus.publish(localEvent('app.connected', { first: true }));
+    ctx.bus.publish(say(7));
+    await flush();
+    expect(texts(m.store.get())).toEqual(['m7']);
+    m.dispose();
   });
 
   it('sends, stops and presses buttons', async () => {
@@ -139,5 +242,6 @@ describe('createLiveModel', () => {
     ctx.bus.publish(ev('command.reply', { ref: 'someone-else', text: 'not mine' }));
     expect(m.store.get().items[0]).toMatchObject({ kind: 'system', text: 'later reply' });
     expect(m.store.get().items).toHaveLength(2);
+    m.dispose();
   });
 });

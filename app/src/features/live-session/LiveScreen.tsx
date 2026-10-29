@@ -21,6 +21,7 @@ export function LiveScreen({ model }: { model: LiveModel }) {
     [model],
   );
   const renderItem = useCallback(({ item }: { item: Item }) => <ItemView item={item} onPress={onPress} />, [onPress]);
+  const loadOlder = useCallback(() => void model.loadOlder(), [model]);
   return (
     <View style={styles.screen}>
       <TurnBar model={model} />
@@ -36,6 +37,9 @@ export function LiveScreen({ model }: { model: LiveModel }) {
           windowSize={9}
           removeClippedSubviews
           keyboardShouldPersistTaps="handled"
+          onEndReached={loadOlder} // the "end" of an inverted list is the top: older history
+          onEndReachedThreshold={0.5}
+          ListFooterComponent={<OlderSpinner model={model} />}
         />
       ) : (
         // Outside the list: an inverted list would draw its empty component upside down.
@@ -45,6 +49,13 @@ export function LiveScreen({ model }: { model: LiveModel }) {
     </View>
   );
 }
+
+const selectLoadingOlder = (s: LiveState) => s.loadingOlder;
+
+const OlderSpinner = memo(function OlderSpinner({ model }: { model: LiveModel }) {
+  const loading = useStore(model.store, selectLoadingOlder);
+  return loading ? <ActivityIndicator style={styles.older} color={colors.textDim} /> : null;
+});
 
 /** "Working · $ npm test · 42s" or "Idle", plus the conversation title. */
 const TurnBar = memo(function TurnBar({ model }: { model: LiveModel }) {
@@ -110,6 +121,7 @@ const Composer = memo(function Composer({ model }: { model: LiveModel }) {
 const styles = StyleSheet.create({
   screen: { flex: 1 },
   list: { paddingHorizontal: space.m, paddingVertical: space.s, flexGrow: 1 },
+  older: { padding: space.m },
   bar: { flexDirection: 'row', alignItems: 'center', gap: space.s, paddingHorizontal: space.m, paddingVertical: space.s, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
   idleDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: colors.ok, marginHorizontal: 5 },
   barText: { color: colors.text, fontSize: 13, flex: 1 },

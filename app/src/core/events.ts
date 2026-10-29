@@ -17,13 +17,17 @@ export interface ReplyButton {
 }
 export type ButtonRows = ReplyButton[][];
 
-/** `data` of each event type in the contract. Wire data is untrusted: read it through core/guards. */
+/**
+ * `data` of each event type in the contract. Wire data is untrusted: read it through core/guards.
+ * Live-view events (message.*, tool.*, file.diff) also carry `cursor`: "<session_id>:<offset>",
+ * opaque, compared only by equality or passed back to the history API.
+ */
 export interface EventDataMap {
-  'message.user': { text: string; voice: boolean };
-  'message.assistant': { text: string };
-  'tool.call': { name: string; summary: string };
-  'tool.result': { name: string; ok: boolean; summary: string };
-  'file.diff': { path: string; diff: string };
+  'message.user': { text: string; voice: boolean; cursor: string };
+  'message.assistant': { text: string; cursor: string };
+  'tool.call': { id: string; name: string; summary: string; cursor: string };
+  'tool.result': { id: string; name: string; ok: boolean; summary: string; cursor: string };
+  'file.diff': { id: string; path: string; diff: string; cursor: string };
   'turn.started': { ref: string; lane?: Lane };
   'turn.done': { ref: string; text: string; steps: number; elapsed: number; lane?: Lane; is_error?: boolean; subtype?: string };
   'turn.stopped': { ref: string; lane?: Lane | 'queued' };
@@ -34,6 +38,7 @@ export interface EventDataMap {
   'permission.request': { id: string; tool: string; detail: string; ref: string | null; lane: Lane | null };
   'permission.resolved': { id: string; decision: 'allow' | 'deny' | 'gone'; ref: string | null; lane: Lane | null };
   'session.changed': { session_id: string; title: string | null; source: string };
+  'session.switched': { ref: string; result: 'ok' | 'already' | 'busy' | 'missing' | 'failed'; session_id: string | null };
   'lane.status': { main: 'idle' | 'busy'; side: number; queued: number };
   'reminder.due': { id: string; text: string; every: string | null; due: number; late: boolean };
   'message.system': { text: string; buttons?: ButtonRows; key?: string; ref?: string };
@@ -75,6 +80,28 @@ export class EventBus {
       }
     }
   }
+}
+
+const ORIGINS = new Set<Origin>(['telegram', 'app', 'terminal', 'system']);
+
+/** A wire object (stream frame or history entry) -> an event, or null if it isn't one. */
+export function toEvent(obj: unknown): EdithEvent | null {
+  if (typeof obj !== 'object' || obj === null) return null;
+  const o = obj as Record<string, unknown>;
+  if (typeof o.type !== 'string' || !o.type) return null;
+  return {
+    type: o.type,
+    ts: typeof o.ts === 'number' ? o.ts : Date.now() / 1000,
+    session_id: typeof o.session_id === 'string' ? o.session_id : null,
+    origin: ORIGINS.has(o.origin as Origin) ? (o.origin as Origin) : 'system',
+    data: typeof o.data === 'object' && o.data !== null && !Array.isArray(o.data) ? (o.data as Record<string, unknown>) : {},
+  };
+}
+
+/** The transcript cursor of a live-view event, or null for other events. */
+export function cursorOf(event: EdithEvent): string | null {
+  const c = event.data.cursor;
+  return typeof c === 'string' && c ? c : null;
 }
 
 /** An app-local event (origin "system"), e.g. app.connected. */

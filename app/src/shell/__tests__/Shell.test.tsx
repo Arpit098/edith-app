@@ -28,6 +28,14 @@ async function mount() {
   ctx.transport
     .on('GET /v1/status', { main: 'idle', queued: 0, runs: [], tmux: 'running', conversation: true, session: { id: 's1', title: 'disk check' } })
     .on('GET /v1/permissions', { pending: [] })
+    .on('GET /v1/sessions/current/history?limit=100', {
+      session_id: 's1',
+      events: [{ type: 'message.assistant', ts: 1, session_id: 's1', origin: 'system', data: { text: 'from history', cursor: 's1:5' } }],
+      start: 's1:0',
+      cursor: 's1:5',
+      more: false,
+      reset: false,
+    })
     .on('GET /v1/sessions', { sessions: [{ session_id: 's1', title: 'disk check', updated: 1_800_000_000, current: true }] })
     .on('GET /v1/commands', { commands: [{ name: 'today', description: 'Today', usage: '', help: 'x' }] });
   const loaded = loadFeatures(features, ctx);
@@ -57,13 +65,14 @@ describe('Shell', () => {
     const t = texts(r);
     expect(t).toContain('Live');
     expect(t).toContain('Idle');
+    expect(t).toContain('from history');
     expect(t).toContain('Sessions');
     expect(t).toContain('Tools');
     expect(t).toContain('Settings');
 
     await act(async () => {
       ctx.transport.emit(ev('message.user', { text: 'check the disk' }, { origin: 'telegram' }));
-      ctx.transport.emit(ev('tool.call', { name: 'Bash', summary: '$ df -h' }));
+      ctx.transport.emit(ev('tool.call', { id: 'toolu_1', name: 'Bash', summary: '$ df -h' }));
       ctx.transport.emit(ev('permission.request', { id: 'ab', tool: 'Bash', detail: 'rm -rf /tmp/x', ref: null, lane: 'main' }));
     });
     expect(texts(r)).toContain('check the disk');

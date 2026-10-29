@@ -45,6 +45,11 @@ are the composition root. See [../docs/ADDING_A_FEATURE.md](../docs/ADDING_A_FEA
   (battery) and reconnects as soon as the app is back in front.
 - **Resync, not polling.** Every (re)connect publishes the app-local `app.connected` event; features
   then fetch `/v1/status`, `/v1/permissions` and `/v1/sessions` once. Everything else comes from the stream.
+- **Live history** (contracts/events.md, "History"): on open, Live shows the newest 100 events of the
+  current conversation. After a reconnect it catches up with `after=<last cursor>`, and after a session
+  change it shows the new conversation. Scrolling up loads older pages. Stream events that arrive during
+  a request are held and applied after it, skipping those whose `cursor` the page already had.
+- **Tool calls and results** pair by `id`. A session switch ends on `session.switched`.
 - **HTTP**: 10 s timeout per attempt. GET and PATCH retry twice with backoff on network errors and
   502/503/504. POSTs are sent once, because a repeated POST could run a task twice.
 - **Rendering**: small stores with memoized selectors (`core/store.ts`); the transcript is bounded

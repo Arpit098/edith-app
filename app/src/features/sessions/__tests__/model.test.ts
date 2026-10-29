@@ -42,7 +42,7 @@ describe('sessions model', () => {
     expect(m.store.get().error).toBe('timed out');
   });
 
-  it('switches: progress, outcome and session.changed', async () => {
+  it('switches: shows its messages and ends on session.switched', async () => {
     const { ctx, m, notes } = setup();
     ctx.transport.on('POST /v1/sessions/s2/resume', { status: 'switching', ref: 'app:switch:s2:1' });
     expect(await m.resume('s2')).toBeNull();
@@ -51,14 +51,27 @@ describe('sessions model', () => {
 
     ctx.bus.publish(ev('command.reply', { ref: 'other', text: 'not ours' }));
     ctx.bus.publish(ev('command.reply', { ref: 'app:switch:s2:1', text: '🔄 Switching to: s2…' }));
-    expect(m.store.get().switching).not.toBeNull();
     ctx.bus.publish(ev('command.reply', { ref: 'app:switch:s2:1', text: '▶️ Switched. Carry on where we left off.' }));
+    ctx.bus.publish(ev('session.changed', { session_id: 's2', title: null, source: 'resume' }));
+    expect(m.store.get().switching).not.toBeNull(); // only session.switched ends it
+    ctx.bus.publish(ev('session.switched', { ref: 'app:switch:other', result: 'ok' }));
+    expect(m.store.get().switching).not.toBeNull();
+    ctx.bus.publish(ev('session.switched', { ref: 'app:switch:s2:1', result: 'ok', session_id: 's2' }));
     expect(m.store.get().switching).toBeNull();
     expect(notes).toEqual(['🔄 Switching to: s2…', '▶️ Switched. Carry on where we left off.']);
+  });
 
-    await m.resume('s2');
-    ctx.bus.publish(ev('session.changed', { session_id: 's2', title: null, source: 'resume' }));
+  it('handles a switch that ends before its POST answers', async () => {
+    const { ctx, m, notes } = setup();
+    ctx.transport.on('POST /v1/sessions/s2/resume', () => {
+      // the worker answers "busy" at once: its events reach the app first
+      ctx.bus.publish(ev('command.reply', { ref: 'app:switch:s2:2', text: "⚠️ I'm in the middle of a task." }));
+      ctx.bus.publish(ev('session.switched', { ref: 'app:switch:s2:2', result: 'busy', session_id: null }));
+      return { status: 'switching', ref: 'app:switch:s2:2' };
+    });
+    expect(await m.resume('s2')).toBeNull();
     expect(m.store.get().switching).toBeNull();
+    expect(notes).toEqual(["⚠️ I'm in the middle of a task."]);
   });
 
   it('starts new conversations, or says why not', async () => {

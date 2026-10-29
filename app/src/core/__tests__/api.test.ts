@@ -44,6 +44,30 @@ describe('createApi', () => {
     expect(await api.newSession()).toBe('busy');
   });
 
+  it('reads history pages with an encoded cursor query', async () => {
+    const t = new FakeTransport()
+      .on('GET /v1/sessions/current/history?limit=100', {
+        session_id: 's1',
+        events: [{ type: 'message.user', ts: 1, origin: 'app', session_id: 's1', data: { text: 'hi', cursor: 's1:10' } }, 'junk', { data: {} }],
+        start: 's1:0',
+        cursor: 's1:10',
+        more: true,
+        reset: false,
+      })
+      .on('GET /v1/sessions/current/history?after=s1%3A10', { session_id: 's1', events: [], cursor: 's1:10' });
+    const api = createApi(t);
+    const page = await api.history('current', { limit: 100 });
+    expect(page).toEqual({
+      session_id: 's1',
+      events: [{ type: 'message.user', ts: 1, origin: 'app', session_id: 's1', data: { text: 'hi', cursor: 's1:10' } }],
+      start: 's1:0',
+      cursor: 's1:10',
+      more: true,
+      reset: false,
+    });
+    expect(await api.history('current', { after: 's1:10', before: undefined })).toMatchObject({ events: [], more: false, reset: false });
+  });
+
   it('handles permissions, actions and commands', async () => {
     const t = new FakeTransport()
       .on('GET /v1/permissions', { pending: [{ id: 'ab', tool: 'Bash', detail: 'rm', ref: null, lane: 'main' }] })

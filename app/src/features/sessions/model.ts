@@ -52,25 +52,43 @@ export function createSessionsModel(bus: EventBus, api: Api, notify: (text: stri
     return inFlight;
   }
 
+  // A switch's events can beat the answer to its POST (a quick "busy"): keep the last few by ref,
+  // so resume() can replay them once it knows its ref.
+  const early = new Map<string, { texts: string[]; done: boolean }>();
+  function note(ref: string): { texts: string[]; done: boolean } {
+    let n = early.get(ref);
+    if (!n) {
+      n = { texts: [], done: false };
+      early.set(ref, n);
+      if (early.size > 20) early.delete(early.keys().next().value!);
+    }
+    return n;
+  }
+
   const offs = [
     bus.on('app.connected', () => void refresh(), 'sessions'),
+    bus.on('session.changed', () => void refresh(), 'sessions'),
     bus.on(
-      'session.changed',
-      () => {
-        store.set((s) => (s.switching ? { ...s, switching: null } : s));
-        void refresh();
+      'command.reply',
+      (e) => {
+        // The switch's own messages ("🔄 Switching to…", "Already in that conversation", …).
+        const ref = str(e.data.ref);
+        const text = str(e.data.text);
+        if (store.get().switching?.ref === ref) {
+          if (text) notify(text);
+        } else if (ref.startsWith('app:switch:')) {
+          note(ref).texts.push(text);
+        }
       },
       'sessions',
     ),
     bus.on(
-      'command.reply',
+      'session.switched',
       (e) => {
-        // The switch's own messages ("Switching…", "already there", "busy"): the last one ends it.
-        const sw = store.get().switching;
-        if (!sw || str(e.data.ref) !== sw.ref) return;
-        const text = str(e.data.text);
-        if (text) notify(text);
-        if (!/switching/i.test(text)) store.set((s) => ({ ...s, switching: null }));
+        // Always the last event of a switch, whatever its result.
+        const ref = str(e.data.ref);
+        if (store.get().switching?.ref === ref) store.set((s) => ({ ...s, switching: null }));
+        else if (ref.startsWith('app:switch:')) note(ref).done = true;
       },
       'sessions',
     ),
@@ -83,7 +101,10 @@ export function createSessionsModel(bus: EventBus, api: Api, notify: (text: stri
       if (store.get().switching) return 'Already switching…';
       try {
         const { ref } = await api.resume(id);
-        store.set((s) => ({ ...s, switching: { ref, id } }));
+        const seen = early.get(ref);
+        early.delete(ref);
+        seen?.texts.filter(Boolean).forEach(notify);
+        if (!seen?.done) store.set((s) => ({ ...s, switching: { ref, id } }));
         return null;
       } catch (e) {
         return `Couldn't switch: ${message(e)}`;

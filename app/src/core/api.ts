@@ -1,6 +1,6 @@
 // Typed App API client over the Transport port. Mirrors contracts/events.md, "App API (v1)".
 
-import type { ButtonRows, Lane } from './events';
+import { toEvent, type ButtonRows, type EdithEvent, type Lane } from './events';
 import { bool, buttonRows, num, str } from './guards';
 import type { RequestOptions, Transport } from './ports';
 
@@ -49,6 +49,15 @@ export interface PendingPermission {
   detail: string;
   ref: string | null;
   lane: Lane | null;
+}
+
+export interface HistoryPage {
+  session_id: string;
+  events: EdithEvent[]; // oldest first; live-view events, each with data.cursor
+  start: string; // cursor of the page's first entry: ask `before` it for older events
+  cursor: string; // cursor after the page's last entry: ask `after` it for newer ones
+  more: boolean;
+  reset: boolean; // the cursor given was another conversation's: this is the newest page instead
 }
 
 export interface Command {
@@ -126,6 +135,26 @@ export function createApi(t: Transport) {
     async resume(sessionId: string): Promise<{ ref: string }> {
       const r = await t.request<Obj>('POST', `/v1/sessions/${seg(sessionId)}/resume`);
       return { ref: str(r.ref) };
+    },
+
+    /**
+     * A page of the conversation's live-view events, oldest first (contracts/events.md, "History").
+     * No cursor: the newest page. `after`: what followed it. `before`: what came before it.
+     */
+    async history(sessionId: string, q: { after?: string; before?: string; limit?: number } = {}): Promise<HistoryPage> {
+      const query = Object.entries(q)
+        .filter(([, v]) => v !== undefined && v !== '')
+        .map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`)
+        .join('&');
+      const r = await t.request<Obj>('GET', `/v1/sessions/${seg(sessionId)}/history${query ? `?${query}` : ''}`);
+      return {
+        session_id: str(r.session_id),
+        events: (Array.isArray(r.events) ? r.events : []).map(toEvent).filter((e): e is EdithEvent => e !== null),
+        start: str(r.start),
+        cursor: str(r.cursor),
+        more: bool(r.more),
+        reset: bool(r.reset),
+      };
     },
 
     async newSession(): Promise<'ok' | 'busy'> {

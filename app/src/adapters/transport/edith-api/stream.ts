@@ -1,14 +1,15 @@
 // The live /v1/stream: exactly one WebSocket, shared by every listener.
 //
 // - Reconnects on its own with exponential backoff + jitter; a rejected token (401) stops retrying.
-// - Heartbeat: every `heartbeatMs` it sends {"type":"ping"}. The server answers protocol pings
-//   itself, but JS never sees those, and OkHttp (Android) runs with no read timeout or ping
-//   interval, so a dead link would otherwise go unnoticed. Once the server is seen answering with
-//   {"type":"pong"}, silence for 2.5 heartbeats counts as a dead link and forces a reconnect.
+// - Heartbeat: every `heartbeatMs` it sends {"type":"ping"} and the server answers {"type":"pong"}
+//   (contracts/events.md). JS never sees WebSocket protocol pings, and OkHttp (Android) runs with no
+//   read timeout or ping interval, so this is how a dead link gets noticed: once a pong has been
+//   seen, 2.5 heartbeats with nothing inbound force a reconnect. (Before the first pong the watchdog
+//   stays off, so an older server that ignores pings isn't mistaken for a dead one.)
 // - Battery: after `backgroundGraceMs` in the background the socket closes; coming back to the
 //   foreground reconnects at once (and listeners resync on the "open" status).
 
-import type { EdithEvent, Origin } from '../../../core/events';
+import { toEvent, type EdithEvent } from '../../../core/events';
 import type { ServerConfig, StreamStatus } from '../../../core/ports';
 import { backoffDelay, type Backoff } from './backoff';
 
@@ -45,14 +46,13 @@ interface Listener {
 }
 
 const OPEN = 1;
-const ORIGINS = new Set<Origin>(['telegram', 'app', 'terminal', 'system']);
 const PING = JSON.stringify({ type: 'ping' });
 
 export function streamUrl(baseUrl: string): string {
   return baseUrl.replace(/^http/i, 'ws') + '/v1/stream';
 }
 
-/** One wire message -> an event, or null for anything malformed (or a pong). */
+/** One wire message -> an event, 'pong' for the server's answer to our ping, or null if malformed. */
 export function parseFrame(data: unknown): EdithEvent | 'pong' | null {
   if (typeof data !== 'string') return null;
   let obj: unknown;
@@ -61,17 +61,8 @@ export function parseFrame(data: unknown): EdithEvent | 'pong' | null {
   } catch {
     return null;
   }
-  if (typeof obj !== 'object' || obj === null) return null;
-  const o = obj as Record<string, unknown>;
-  if (typeof o.type !== 'string' || !o.type) return null;
-  if (o.type === 'pong') return 'pong';
-  return {
-    type: o.type,
-    ts: typeof o.ts === 'number' ? o.ts : Date.now() / 1000,
-    session_id: typeof o.session_id === 'string' ? o.session_id : null,
-    origin: ORIGINS.has(o.origin as Origin) ? (o.origin as Origin) : 'system',
-    data: typeof o.data === 'object' && o.data !== null && !Array.isArray(o.data) ? (o.data as Record<string, unknown>) : {},
-  };
+  const event = toEvent(obj);
+  return event?.type === 'pong' ? 'pong' : event;
 }
 
 export class EventStream {
