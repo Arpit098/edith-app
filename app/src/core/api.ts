@@ -1,0 +1,176 @@
+// Typed App API client over the Transport port. Mirrors contracts/events.md, "App API (v1)".
+
+import type { ButtonRows, Lane } from './events';
+import { bool, buttonRows, num, str } from './guards';
+import type { RequestOptions, Transport } from './ports';
+
+/** A failed request. `status` is the HTTP status, or 0 when the server wasn't reached (or timed out). */
+export class ApiError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
+export interface Reply {
+  text: string;
+  buttons: ButtonRows;
+}
+
+export interface Session {
+  session_id: string;
+  title: string | null;
+  updated: number; // unix seconds
+  current: boolean;
+}
+
+export interface Run {
+  ref: string;
+  lane: Lane;
+  seconds: number;
+  step: string | null;
+}
+
+export interface Status {
+  main: 'busy' | 'idle';
+  queued: number;
+  runs: Run[];
+  tmux: 'running' | 'down';
+  conversation: boolean;
+  session: { id: string; title: string | null } | null;
+}
+
+export interface PendingPermission {
+  id: string;
+  tool: string;
+  detail: string;
+  ref: string | null;
+  lane: Lane | null;
+}
+
+export interface Command {
+  name: string;
+  description: string;
+  usage: string;
+  help: string;
+}
+
+export interface ActionResult {
+  ref: string;
+  toast: string | null;
+  note: string | null;
+  replies: Reply[];
+}
+
+const seg = encodeURIComponent;
+
+function replies(v: unknown): Reply[] {
+  return Array.isArray(v) ? v.map((r: Record<string, unknown>) => ({ text: str(r?.text), buttons: buttonRows(r?.buttons) })) : [];
+}
+
+function lane(v: unknown): Lane | null {
+  return v === 'main' || v === 'side' ? v : null;
+}
+
+export function permissionFrom(p: Record<string, unknown>): PendingPermission {
+  return { id: str(p.id), tool: str(p.tool), detail: str(p.detail), ref: p.ref == null ? null : str(p.ref), lane: lane(p.lane) };
+}
+
+type Obj = Record<string, unknown>;
+
+export function createApi(t: Transport) {
+  return {
+    /** Send text to the main lane (or a side lane when busy). The turn's events arrive with `ref`. */
+    async send(text: string, opts: { voice?: boolean; queue?: boolean } = {}): Promise<{ ref: string; lane: string }> {
+      const r = await t.request<Obj>('POST', '/v1/messages', { text, ...opts });
+      return { ref: str(r.ref), lane: str(r.lane) };
+    },
+
+    async stop(): Promise<{ running: number; dropped: string[] }> {
+      const r = await t.request<Obj>('POST', '/v1/stop');
+      return { running: num(r.running), dropped: Array.isArray(r.dropped) ? r.dropped.map((d) => str(d)) : [] };
+    },
+
+    async status(opts?: RequestOptions): Promise<Status> {
+      const r = await t.request<Obj>('GET', '/v1/status', undefined, opts);
+      const session = r.session as Obj | null | undefined;
+      return {
+        main: r.main === 'busy' ? 'busy' : 'idle',
+        queued: num(r.queued),
+        runs: (Array.isArray(r.runs) ? r.runs : []).map((x: Obj) => ({
+          ref: str(x.ref),
+          lane: lane(x.lane) ?? 'main',
+          seconds: num(x.seconds),
+          step: x.step == null ? null : str(x.step),
+        })),
+        tmux: r.tmux === 'running' ? 'running' : 'down',
+        conversation: bool(r.conversation),
+        session: session ? { id: str(session.id), title: session.title == null ? null : str(session.title) } : null,
+      };
+    },
+
+    async sessions(): Promise<Session[]> {
+      const r = await t.request<Obj>('GET', '/v1/sessions');
+      return (Array.isArray(r.sessions) ? r.sessions : []).map((s: Obj) => ({
+        session_id: str(s.session_id),
+        title: s.title == null ? null : str(s.title),
+        updated: num(s.updated),
+        current: bool(s.current),
+      }));
+    },
+
+    /** Starts a switch; the outcome arrives as command.reply with this `ref` (plus session.changed). */
+    async resume(sessionId: string): Promise<{ ref: string }> {
+      const r = await t.request<Obj>('POST', `/v1/sessions/${seg(sessionId)}/resume`);
+      return { ref: str(r.ref) };
+    },
+
+    async newSession(): Promise<'ok' | 'busy'> {
+      const r = await t.request<Obj>('POST', '/v1/sessions/new');
+      return r.result === 'busy' ? 'busy' : 'ok';
+    },
+
+    async rename(sessionId: string, title: string): Promise<{ session_id: string; title: string }> {
+      const r = await t.request<Obj>('PATCH', `/v1/sessions/${seg(sessionId)}`, { title });
+      return { session_id: str(r.session_id), title: str(r.title) };
+    },
+
+    async permissions(): Promise<PendingPermission[]> {
+      const r = await t.request<Obj>('GET', '/v1/permissions');
+      return (Array.isArray(r.pending) ? r.pending : []).map(permissionFrom);
+    },
+
+    /** Allow or deny. Throws ApiError 404 when the request has already expired. */
+    async answer(id: string, allow: boolean): Promise<{ id: string; decision: string }> {
+      const r = await t.request<Obj>('POST', `/v1/permissions/${seg(id)}`, { allow });
+      return { id: str(r.id), decision: str(r.decision) };
+    },
+
+    /** Press a reply button. */
+    async press(action: string): Promise<ActionResult> {
+      const r = await t.request<Obj>('POST', '/v1/actions', { action });
+      return { ref: str(r.ref), toast: r.toast ? str(r.toast) : null, note: r.note ? str(r.note) : null, replies: replies(r.replies) };
+    },
+
+    async commands(): Promise<Command[]> {
+      const r = await t.request<Obj>('GET', '/v1/commands');
+      return (Array.isArray(r.commands) ? r.commands : []).map((c: Obj) => ({
+        name: str(c.name),
+        description: str(c.description),
+        usage: str(c.usage),
+        help: str(c.help),
+      }));
+    },
+
+    /** Run a command; later replies arrive as command.reply with the returned `ref`. */
+    async run(name: string, args = ''): Promise<{ ref: string; replies: Reply[] }> {
+      const r = await t.request<Obj>('POST', `/v1/commands/${seg(name)}`, args ? { args } : {});
+      return { ref: str(r.ref), replies: replies(r.replies) };
+    },
+  };
+}
+
+export type Api = ReturnType<typeof createApi>;

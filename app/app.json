@@ -1,0 +1,26 @@
+{
+  "expo": {
+    "name": "EDITH",
+    "slug": "edith",
+    "version": "0.2.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#0E1116",
+    "platforms": ["android"],
+    "android": {
+      "package": "com.arpit.edith",
+      "versionCode": 2,
+      "adaptiveIcon": {
+        "backgroundColor": "#0E1116",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "softwareKeyboardLayoutMode": "resize",
+      "predictiveBackGestureEnabled": false,
+      "permissions": []
+    },
+    "plugins": ["expo-secure-store", "./plugins/with-cleartext-traffic"]
+  }
+}

@@ -11,5 +11,5 @@ export function timeAgo(ts: number, now: number = Date.now() / 1000): string {
 
 /** The first paragraph of a reply: what is spoken aloud in voice mode (same rule as the server). */
 export function voiceSummary(text: string): string {
-  return (text ?? '').trim().split('\n\n', 1)[0].trim();
+  return ((text ?? '').trim().split('\n\n', 1)[0] ?? '').trim();
 }
