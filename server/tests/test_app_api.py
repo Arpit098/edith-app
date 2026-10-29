@@ -9,7 +9,6 @@ import shutil
 import socket
 import struct
 import tempfile
-import threading
 import time
 import unittest
 import urllib.error
@@ -364,10 +363,10 @@ class StreamTest(unittest.TestCase):
             while not self.a.api._clients and time.monotonic() < deadline:
                 time.sleep(0.01)
             client = next(iter(self.a.api._clients))
-            with client.lock:  # hold its thread back while events pile up
-                for i in range(5):
-                    threading.Thread(target=self.a.bus.publish, args=(Event("tick", {"i": i}),)).start()
-                time.sleep(0.2)
+            frame = ws.encode(ws.OP_TEXT, b'{"type": "tick"}')
+            with client.lock:  # fill its backlog without waking its thread (no pipe write)…
+                client.frames = [frame] * app_api.CLIENT_BACKLOG
+            self.a.bus.publish(Event("tick", {}))  # …so this one overflows it, deterministically
             frames = []
             while True:
                 op, payload = read_frame(s)

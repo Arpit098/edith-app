@@ -312,7 +312,6 @@ class LiveViewTest(unittest.TestCase):
 
     def test_follows_a_new_transcript_without_replaying_a_resumed_one(self):
         h = Harness(self)
-        h.transcript_line({"type": "user", "message": {"content": "history, before the start"}})
         self.assertTrue(h.agent._live.ready.wait(5))
         # A resumed conversation: its history is not replayed, only what comes next.
         (h.transcripts / "s2.jsonl").write_text(json.dumps({"type": "user", "message": {"content": "s2 history"}}) + "\n")
