@@ -1,4 +1,0 @@
-#!/bin/bash
-# Watch or join the live E.D.I.T.H Claude session. Detach with Ctrl+b then d (it keeps running).
-export LANG="${LANG:-C.UTF-8}"
-exec tmux -L edith attach -t edith

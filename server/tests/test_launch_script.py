@@ -2,18 +2,16 @@
 variables are set, and follow EDITH_WORK_DIR / EDITH_STATE_DIR when they are. A fake `claude`
 in ~/.local/bin prints what it was started with and where."""
 import json
-import os
 import pathlib
 import re
 import subprocess
 import tempfile
 import unittest
 
-from tests.golden import assert_golden
+from tests.golden import assert_matches
 
 SERVER = pathlib.Path(__file__).resolve().parents[1]
-SCRIPTS = {"legacy": SERVER / "legacy/edith/bridge/edith-claude.sh",
-           "new": SERVER.parent / "deploy/edith/bridge/edith-claude.sh"}
+SCRIPT = SERVER.parent / "deploy/edith/bridge/edith-claude.sh"
 
 
 def home_with(sessions=(), session_file=None, state=None, work="edith", cache=".cache/edith"):
@@ -57,16 +55,15 @@ class LaunchScriptTest(unittest.TestCase):
         recorded = {}
         for name, (setup, args) in self.CASES.items():
             with self.subTest(name):
-                outs = {w: run(s, home_with(**setup), *args) for w, s in SCRIPTS.items()}
-                self.assertEqual(outs["new"], outs["legacy"])
-                self.assertTrue(outs["new"].startswith("cwd=~/edith tmux=1 args="), outs["new"])
-                recorded[name] = outs["legacy"]
-        assert_golden(self, "launch/edith_claude.json", recorded)  # only legacy records golden files
+                out = run(SCRIPT, home_with(**setup), *args)
+                self.assertTrue(out.startswith("cwd=~/edith tmux=1 args="), out)
+                recorded[name] = out
+        assert_matches(self, "launch/edith_claude.json", recorded)  # what legacy's script printed
 
     def test_staging_folders(self):
         home = home_with(sessions=["s9"], session_file={"session_id": "s9"}, work="edith-staging",
                          cache=".cache/edith-staging")
-        out = run(SCRIPTS["new"], home, env={"EDITH_WORK_DIR": str(home / "edith-staging"),
+        out = run(SCRIPT, home, env={"EDITH_WORK_DIR": str(home / "edith-staging"),
                                              "EDITH_STATE_DIR": str(home / ".cache/edith-staging")})
         self.assertEqual(out, "cwd=~/edith-staging tmux=1 args=--resume s9\n")
 

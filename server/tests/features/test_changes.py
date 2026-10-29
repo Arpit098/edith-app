@@ -1,20 +1,18 @@
-"""Changes (docs/PHASE1_PLAN.md, step 2): the repo's report must print and render exactly what
-legacy/edith/bin/changes.py does, with a fixed number of git calls per repo."""
+"""Changes (docs/PHASE1_PLAN.md, step 2): the repo's report must print and render exactly what the
+legacy changes.py did (tests/golden/data/changes/), with a fixed number of git calls per repo."""
 import contextlib
 import io
 import os
 import pathlib
 import re
-import shutil
 import subprocess
 import sys
-import tempfile
 import unittest
 from unittest import mock
 
 from edith.features.changes import report
-from tests.golden import assert_golden
-from tests.legacy import legacy_home, load
+from tests.golden import assert_matches
+from tests.home import temp_home
 
 SERVER = pathlib.Path(__file__).resolve().parents[2]
 SHIM = SERVER.parent / "deploy" / "shims" / "edith" / "bin" / "changes.py"
@@ -85,7 +83,7 @@ def normalize(text):
 
 @contextlib.contextmanager
 def projects_home():
-    with legacy_home(EDITH_CHANGES_ROOTS="", **GIT_ENV) as home:
+    with temp_home(EDITH_CHANGES_ROOTS="", **GIT_ENV) as home:
         projects = home / "Projects"
         build_projects(projects)
         os.environ["EDITH_CHANGES_ROOTS"] = str(projects)
@@ -103,20 +101,14 @@ def run(main, argv):
 
 
 class ChangesTest(unittest.TestCase):
-    def test_legacy_and_new_match_golden(self):
+    def test_same_report_as_legacy(self):
         with projects_home() as home:
             index = (home / "Projects/alpha/.git/index").read_bytes()
-            legacy = load("bin/changes.py")
-            old_text, old_page = run(legacy.main, [])
-            # Only legacy records golden files; the new code is held to legacy directly, so
-            # re-recording (UPDATE_GOLDEN=1) can never hide a difference.
-            assert_golden(self, "changes/all.txt", old_text)
-            assert_golden(self, "changes/all.html", old_page)
-            self.maxDiff = None
-            self.assertEqual(run(report.main, []), (old_text, old_page))
-            for main in (legacy.main, report.main):
-                self.assertEqual(run(main, ["BET"]), (normalize("beta ((detached)): clean\nNo uncommitted changes.\n"), None))
-                self.assertEqual(run(main, ["zzz"])[0], "No git repos found under ~/Projects matching 'zzz'.\n")
+            text, page = run(report.main, [])  # legacy's output for this tree is in the golden files
+            assert_matches(self, "changes/all.txt", text)
+            assert_matches(self, "changes/all.html", page)
+            self.assertEqual(run(report.main, ["BET"]), (normalize("beta ((detached)): clean\nNo uncommitted changes.\n"), None))
+            self.assertEqual(run(report.main, ["zzz"])[0], "No git repos found under ~/Projects matching 'zzz'.\n")
             # Read-only: the repo's own index is untouched.
             self.assertEqual((home / "Projects/alpha/.git/index").read_bytes(), index)
 

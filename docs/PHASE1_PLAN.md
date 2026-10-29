@@ -274,7 +274,8 @@ streams it live, plus list/switch sessions and approve a permission. A request w
 ## Step 10: clean-up and Phase 1 sign-off
 
 **Repo**
-- `server/legacy/` is now empty, so delete it.
+- `server/legacy/` is now empty, so delete it. ✅ Done: deleted with `tests/legacy.py`; the tests
+  compare against the recorded golden files only.
 - `deploy/edith/` gets tracked copies of `~/edith/CLAUDE.md` (the **live** version, which now has
   a "Projects" section the snapshot lacks), `.claude/settings.json`, the output style,
   `edith-claude.sh` and `edith-attach`.

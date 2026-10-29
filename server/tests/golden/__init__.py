@@ -1,12 +1,12 @@
-"""Golden files: what the legacy code did for fixed inputs, recorded so the new code can be held to it.
+"""Golden files: what the legacy code did for fixed inputs, recorded from it while it was still in
+this repo (server/legacy/, deleted at the end of Phase 1). The new code is held to them:
 
-    assert_golden(self, "bridge/help.json", fake_telegram.record())
+    assert_matches(self, "commands/help_and_start.json", world.calls())
 
-Record or re-record with `UPDATE_GOLDEN=1 make test`, then review the diff in the PR. The files in
-tests/golden/data/ stay after server/legacy/ is deleted; the new code's tests compare against them.
+They are never re-recorded from the new code: there is no longer a reference to record them from.
+A golden file changes only by a reviewed edit, when the intended behaviour changes.
 """
 import json
-import os
 import pathlib
 
 DATA = pathlib.Path(__file__).parent / "data"
@@ -18,13 +18,15 @@ def render(value) -> str:
     return json.dumps(value, indent=1, ensure_ascii=False, sort_keys=True) + "\n"
 
 
-def assert_golden(test, name: str, value) -> None:
-    path, text = DATA / name, render(value)
-    if os.environ.get("UPDATE_GOLDEN") == "1":
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text)
-        return
+def load(name: str):
+    """A JSON golden file's value."""
+    return json.loads((DATA / name).read_text())
+
+
+def assert_matches(test, name: str, value) -> None:
+    """`value` must be exactly what the golden file `name` recorded (rendered the same way)."""
+    path = DATA / name
     if not path.exists():
-        test.fail(f"no golden file {name}; record it with UPDATE_GOLDEN=1 make test")
+        test.fail(f"no golden file {name}")
     test.maxDiff = None
-    test.assertEqual(text, path.read_text(), f"differs from golden file {name}")
+    test.assertEqual(render(value), path.read_text(), f"differs from golden file {name}")

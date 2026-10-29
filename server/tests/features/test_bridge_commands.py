@@ -1,21 +1,18 @@
 """Step 5 (docs/PHASE1_PLAN.md): sessions, approvals, control and quick actions must answer every
 command and button exactly like the legacy bridge.
 
-One scenario script runs in two worlds built from the same fixture (a temp HOME with three
-conversations, a side-lane fork and a current tmux session):
-- LegacyWorld: the legacy bridge with FakeTelegram and FakeTmux; its Telegram calls are recorded.
-- NewWorld: the new features on the real claude_tmux adapter (FakeTmux), with their replies,
-  buttons and button results turned into the Telegram calls the step 6 frontend makes.
-Reactions and "typing…" are the frontend's (step 6) and are left out on both sides here.
+Each scenario runs in a world built from one fixture (a temp HOME with three conversations, a
+side-lane fork and a current tmux session): the new features on the real claude_tmux adapter
+(FakeTmux), with their replies, buttons and button results turned into the Telegram calls the
+step 6 frontend makes. The legacy bridge's Telegram calls for the same scenario are the golden
+files in tests/golden/data/commands/. Reactions and "typing…" are the frontend's (step 6) and
+were left out of those.
 """
-import ast
 import json
 import os
 import pathlib
 import re
-import threading
 import time
-import types
 import unittest
 from unittest import mock
 
@@ -23,9 +20,9 @@ from edith.adapters.agents.claude_tmux.backend import ClaudeTmux
 from edith.adapters.agents.claude_tmux.tmux import Tmux
 from edith.core import CommandCall, EventBus, Ports, Registry, load_features
 from edith.ports.agent import RunInfo, StopResult
-from tests.fakes import FakeTelegram, FakeTmux, callback, message, run_workers
-from tests.golden import assert_golden
-from tests.legacy import LEGACY, FastClock, legacy_home, load
+from tests.fakes import FakeTmux, run_workers
+from tests.golden import assert_matches, load as golden
+from tests.home import temp_home
 
 NOW = 1793600000.0
 STAMP = "2026-11-02 10:43 IST"
@@ -75,86 +72,6 @@ class SwitchingTmux(FakeTmux):
         if args[0] == "respawn-pane":
             write_session_file(self.home, args[-1].split()[-1], time.time() + 1)
         return result
-
-
-class LegacyWorld:
-    def __init__(self, home):
-        self.home = home
-        build_fixture(home)
-        self.bridge = load("bridge/edith_bridge.py")
-        self.bridge.time = FastClock()  # its sleeps (e.g. 0.5 s before /clear's Enter) go fast
-        self.tg = self.bridge.tg = FakeTelegram()
-        self.tmux = self.bridge.tmux = SwitchingTmux(home)
-        self.threads = []
-        outer = self
-
-        class Thread(threading.Thread):  # so settle() can wait for the bridge's background switches
-            def start(self):
-                outer.threads.append(self)
-                super().start()
-        self.bridge.threading = types.SimpleNamespace(Thread=Thread, Event=threading.Event, Lock=threading.Lock)
-        # Which lane a turn takes is the agent's business (tested in test_claude_tmux); here we only
-        # compare what the commands hand over to it.
-        self.sent = []
-        self.bridge.dispatch = lambda chat, prompt, msg_id, force_queue=False: self.sent.append([prompt, force_queue])
-
-    def send(self, text, prompt=None):
-        self.bridge.handle_message(message(text, message_id=7))
-
-    def press(self, data, text=""):
-        self.bridge.handle_callback(callback(data, text=text))
-
-    def settle(self):
-        for t in self.threads:
-            t.join(10)
-
-    def busy(self):
-        self.bridge.main_busy.set()
-
-    def forget_conversation(self):
-        self.bridge.state["sessions"] = {}
-
-    def no_tmux_session(self):
-        (self.home / ".cache/edith/tmux-session.json").unlink()
-
-    def running(self, runs, queued=0):
-        for i, (lane, started, step) in enumerate(runs):
-            self.bridge.runs[f"r{i}"] = {"proc": None, "tmux": lane == "main", "chat_id": 111, "msg_id": None,
-                                         "started": started, "step": step, "side": lane == "side"}
-        for i in range(queued):
-            self.bridge.jobs.put((111, f"queued {i}", 100 + i))
-
-    def permission(self, rid, tool, inp, lane=None):
-        perms = self.home / ".cache/edith/perms"
-        perms.mkdir(parents=True, exist_ok=True)
-        run = None
-        if lane:
-            run = "run1"
-            self.bridge.runs[run] = {"proc": None, "chat_id": 111, "msg_id": 9, "started": NOW, "step": None,
-                                     "side": lane == "side", "tmux": lane == "main"}
-        (perms / f"{rid}.req.json").write_text(json.dumps({"id": rid, "tool_name": tool, "input": inp, "ts": NOW,
-                                                           "run": run}))
-        self.watch_perms_once()
-
-    def permission_gone(self, rid):
-        (self.home / ".cache/edith/perms" / f"{rid}.req.json").unlink()
-        self.watch_perms_once()
-
-    def watch_perms_once(self):
-        class Done(Exception):
-            pass
-        with mock.patch.object(time, "sleep", side_effect=Done):
-            try:
-                self.bridge.perm_watcher()
-            except Done:
-                pass
-
-    def dispatched(self):
-        out, self.sent = self.sent, []
-        return out
-
-    def calls(self):
-        return [c for c in self.tg.record() if c["method"] not in ("setMessageReaction", "sendChatAction")]
 
 
 class NewWorld:
@@ -408,10 +325,10 @@ SCENARIOS = [help_and_start, menu, sessions, resume_lists, resume_switch, resume
              queue_command, approvals]
 
 
-def run(world_class, scenario):
-    with legacy_home() as home, mock.patch("time.time", return_value=NOW), \
+def run(scenario):
+    with temp_home() as home, mock.patch("time.time", return_value=NOW), \
             mock.patch("time.strftime", return_value=STAMP):
-        world = world_class(home)
+        world = NewWorld(home)
         extra = scenario(world) or {}
         return {"calls": world.calls(), **extra}
 
@@ -422,18 +339,11 @@ class BridgeCommandsTest(unittest.TestCase):
     def test_every_command_and_button_matches_legacy(self):
         for scenario in SCENARIOS:
             with self.subTest(scenario.__name__):
-                old = run(LegacyWorld, scenario)
-                assert_golden(self, f"commands/{scenario.__name__}.json", old)  # only legacy records golden files
-                self.assertEqual(run(NewWorld, scenario), old)
+                assert_matches(self, f"commands/{scenario.__name__}.json", run(scenario))  # what legacy sent
 
     def test_command_menu_comes_from_the_registry_in_legacy_order(self):
-        tree = ast.parse((LEGACY / "bridge/edith_bridge.py").read_text())
-        legacy_menu = next(ast.literal_eval(kw.value) for node in ast.walk(tree) if isinstance(node, ast.Call)
-                           and node.args and isinstance(node.args[0], ast.Constant)
-                           and node.args[0].value == "setMyCommands" for kw in node.keywords if kw.arg == "commands")
-        assert_golden(self, "commands/set_my_commands.json", legacy_menu)
-        with legacy_home() as home:
-            self.assertEqual(NewWorld(home).registry.menu(), legacy_menu)
+        with temp_home() as home:  # the menu is legacy's setMyCommands list, in its order
+            self.assertEqual(NewWorld(home).registry.menu(), golden("commands/set_my_commands.json"))
 
     def test_features_only_use_ports_and_core(self):
         root = pathlib.Path(__file__).resolve().parents[2] / "edith" / "features"

@@ -1,8 +1,8 @@
-"""Step 6 end to end: the same Telegram conversation through the legacy bridge and through the new
-stack (Telegram frontend + features + claude_tmux adapter) must make the same Telegram API calls
-and hand Claude the same prompts.
+"""Step 6 end to end: a Telegram conversation through the new stack (Telegram frontend + features
++ claude_tmux adapter) must make the same Telegram API calls and hand Claude the same prompts as
+the legacy bridge did for it (tests/golden/data/e2e/conversation.json).
 
-Both run in a temp HOME with FakeTelegram, a simulated tmux Claude (SimTmux plays its hooks and
+It runs in a temp HOME with FakeTelegram, a simulated tmux Claude (SimTmux plays its hooks and
 transcript) and the fake `claude -p`. Compared: every Telegram call except "typing…" and the timed
 "Working… Ns" edits (their count depends on the clock; checked separately), with elapsed seconds
 and file timestamps normalized.
@@ -11,7 +11,6 @@ import json
 import os
 import pathlib
 import re
-import threading
 import time
 import unittest
 from unittest import mock
@@ -22,8 +21,8 @@ from edith.adapters.frontends.telegram import TelegramFrontend
 from edith.core import EventBus, Ports, Registry, load_features
 from tests.fakes import FAKE_CLAUDE, FakeTelegram, FakeTmux, callback, message
 from tests.fakes.claude import plan
-from tests.golden import assert_golden
-from tests.legacy import LEGACY, FastClock, legacy_home, load
+from tests.golden import assert_matches, load as golden
+from tests.home import temp_home
 
 STAMP = "2026-11-02 10:43 IST"
 REF = re.compile(r"\[tg-ref ([0-9a-f]+)\]")
@@ -82,26 +81,6 @@ def fixture(home):
     plan_file = home / "plan.json"
     plan_file.write_text(json.dumps(plan(session_id="fork-1", reply="Side answer.")))
     return plan_file
-
-
-class Legacy:
-    def __init__(self, home):
-        self.home = home
-        self.tg = FakeTelegram()
-        self.bridge = load("bridge/edith_bridge.py")
-        self.bridge.time = FastClock()
-        self.bridge.tg, self.bridge.tg_send_file = self.tg, self.tg.send_file
-        self.tmux = self.bridge.tmux = SimTmux(home, self.tg.changed)
-        threading.Thread(target=self.bridge.worker, daemon=True).start()
-
-    def message(self, m):
-        self.bridge.handle_message(m)
-
-    def press(self, cb):
-        self.bridge.handle_callback(cb)
-
-    def close(self):
-        pass
 
 
 class New:
@@ -198,17 +177,16 @@ def prompts(w):
     return {"main": main, "side": side}
 
 
-def run(world):
-    with legacy_home(CLAUDE_BIN=FAKE_CLAUDE) as home, mock.patch("time.strftime", return_value=STAMP):
+def run():
+    with temp_home(CLAUDE_BIN=FAKE_CLAUDE) as home, mock.patch("time.strftime", return_value=STAMP):
         plan_file = fixture(home)
         with mock.patch.dict(os.environ, {"FAKE_CLAUDE_PLAN": str(plan_file), "FAKE_CLAUDE_LOG": str(home / "argv.jsonl")}), \
                 mock.patch("urllib.request.urlretrieve", side_effect=lambda url, dest: pathlib.Path(dest).write_bytes(b"x")):
-            w = world(home)
+            w = New(home)
             try:
                 conversation(w)
                 working = [p for m, p in w.tg.calls if m == "editMessageText" and "⏳ Working" in p["text"]]
-                return {"calls": normalize(w), "prompts": prompts(w), "working_edits": bool(working),
-                        "startup": getattr(w, "startup", None)}
+                return {"calls": normalize(w), "prompts": prompts(w), "working_edits": bool(working)}
             finally:
                 w.close()
 
@@ -217,29 +195,23 @@ class TelegramEndToEndTest(unittest.TestCase):
     maxDiff = None
 
     def test_same_telegram_calls_and_prompts_as_legacy(self):
-        old = run(Legacy)
-        assert_golden(self, "e2e/conversation.json", {"calls": old["calls"], "prompts": old["prompts"]})
-        new = run(New)
-        self.assertEqual(new["calls"], old["calls"])
-        self.assertEqual(new["prompts"], old["prompts"])
-        self.assertTrue(old["working_edits"] and new["working_edits"])
+        new = run()
+        assert_matches(self, "e2e/conversation.json", {"calls": new["calls"], "prompts": new["prompts"]})
+        self.assertTrue(new["working_edits"])
 
     def test_startup_calls_match_legacy(self):
-        """deleteWebhook, then setMyCommands with legacy's list (read from the legacy source)."""
-        source = (LEGACY / "bridge/edith_bridge.py").read_text()
-        self.assertLess(source.index('tg("deleteWebhook")'), source.index('tg("setMyCommands"'))
-        with legacy_home() as home:
+        """deleteWebhook, then setMyCommands with legacy's list, in legacy's order."""
+        with temp_home() as home:
             fixture(home)
             w = New(home)
             try:
                 self.assertEqual([c["method"] for c in w.startup], ["deleteWebhook", "setMyCommands"])
-                self.assertEqual(w.startup[1]["commands"], json.loads(
-                    pathlib.Path(__file__).parent.joinpath("golden/data/commands/set_my_commands.json").read_text()))
+                self.assertEqual(w.startup[1]["commands"], golden("commands/set_my_commands.json"))
             finally:
                 w.close()
 
     def test_crash_notice_and_clean_exit(self):
-        with legacy_home() as home:
+        with temp_home() as home:
             fixture(home)
             state = home / ".cache/edith/bridge-state.json"
             state.write_text(json.dumps({"clean_exit": False}))

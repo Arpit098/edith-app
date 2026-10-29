@@ -1,5 +1,5 @@
-"""Calendar (docs/PHASE1_PLAN.md, step 3): the repo's gcal.py must print exactly what
-legacy/edith/google/gcal.py prints and send Calendar the same changes, with fewer round trips.
+"""Calendar (docs/PHASE1_PLAN.md, step 3): the repo's gcal.py must print exactly what the legacy
+gcal.py printed and send Calendar the same changes (tests/golden/data/google/), with fewer round trips.
 Everything runs against tests/fakes/google.py; nothing reads ~/.config/edith-google or calls Google."""
 import contextlib
 import datetime as dt
@@ -8,7 +8,6 @@ import pathlib
 import subprocess
 import sys
 import tempfile
-import types
 import unittest
 import uuid
 from unittest import mock
@@ -17,8 +16,7 @@ from edith.adapters.google.auth import Session
 from edith.adapters.google.gcal import GoogleCalendar
 from edith.features.calendar import cli
 from tests.fakes.google import IST, FakeCalendar
-from tests.golden import assert_golden
-from tests.legacy import legacy_home, load
+from tests.golden import assert_matches
 
 SERVER = pathlib.Path(__file__).resolve().parents[2]
 SHIMS = SERVER.parent / "deploy" / "shims" / "edith" / "google"
@@ -74,11 +72,6 @@ SCRIPT = [
 ]
 
 
-class Frozen(dt.datetime):
-    @classmethod
-    def now(cls, tz=None):
-        return NOW.astimezone(tz)
-
 
 class Creds:
     valid, scopes = True, []
@@ -98,37 +91,20 @@ def transcript(main):
     return out.getvalue()
 
 
-def legacy_gcal(api):
-    gauth = types.ModuleType("gauth")
-    gauth.service = lambda name, version: api
-    with legacy_home():
-        legacy = load("google/gcal.py", modules={"gauth": gauth})
-    legacy.dt = types.SimpleNamespace(datetime=Frozen, timedelta=dt.timedelta)  # legacy's clock, frozen
-    return legacy
-
-
 class CalendarParityTest(unittest.TestCase):
-    def test_legacy_and_new_match_golden(self):
-        old_api, new_api = FakeCalendar(calendars(), events()), FakeCalendar(calendars(), events())
-        legacy = legacy_gcal(old_api)
-        old = transcript(lambda argv: legacy.main())
+    def test_same_output_and_changes_as_legacy(self):
+        api = FakeCalendar(calendars(), events())
         with mock.patch.object(cli, "now", return_value=NOW):
-            new = transcript(lambda argv: cli.main(argv, cal=new_calendar(new_api)))
-        # Only legacy records golden files; the new code is held to legacy directly.
-        assert_golden(self, "google/gcal.txt", old)
-        assert_golden(self, "google/gcal_writes.json", old_api.writes())
-        self.maxDiff = None
-        self.assertEqual(new, old)
-        self.assertEqual(new_api.writes(), old_api.writes())
+            text = transcript(lambda argv: cli.main(argv, cal=new_calendar(api)))
+        # legacy gcal.py's output (its clock frozen at NOW) and the changes it sent are golden files
+        assert_matches(self, "google/gcal.txt", text)
+        assert_matches(self, "google/gcal_writes.json", api.writes())
 
     def test_one_batch_for_all_calendars(self):
-        old_api, new_api = FakeCalendar(calendars(), events()), FakeCalendar(calendars(), events())
-        legacy = legacy_gcal(old_api)
+        api = FakeCalendar(calendars(), events())
         start = NOW.replace(hour=0)
-        with contextlib.redirect_stdout(io.StringIO()):
-            legacy.agenda(1, start)
-        new_calendar(new_api).events(start, start + dt.timedelta(days=1))
-        self.assertEqual((old_api.round_trips, new_api.round_trips), (4, 2))  # 1 list + 3 calendars vs 1 + 1 batch
+        new_calendar(api).events(start, start + dt.timedelta(days=1))
+        self.assertEqual(api.round_trips, 2)  # 1 list + 1 batch; legacy made 4 (1 list + one per calendar)
 
 
 class WrapperTest(unittest.TestCase):

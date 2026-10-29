@@ -1,4 +1,4 @@
-"""Stand-ins for the outside world, shared by legacy golden recordings and tests of the new code."""
+"""Stand-ins for the outside world, used by the tests (and once to record the legacy golden files)."""
 from .claude import FAKE_CLAUDE, write_plan
 from .telegram import FakeTelegram, callback, message
 from .tmux import FakeTmux

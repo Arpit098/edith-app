@@ -1,8 +1,8 @@
 """The hook and the permission relay (docs/PHASE1_PLAN.md, step 4). They run on every tool call of
-the live tmux Claude, so the new code (through its wrappers) must behave byte for byte like
-legacy/edith/bridge/hooks/edith_hook.py and perm_mcp.py, including when it fails.
+the live tmux Claude, so the new code (through its wrappers) must behave byte for byte like the
+legacy edith_hook.py and perm_mcp.py did (tests/golden/data/hook/), including when it fails.
 
-Both run as real subprocesses in a temporary HOME; a responder thread plays the bridge's part."""
+They run as real subprocesses in a temporary HOME; a responder thread plays the bridge's part."""
 import concurrent.futures
 import json
 import os
@@ -15,39 +15,20 @@ import time
 import unittest
 
 from edith.adapters.agents.claude_tmux.watch import IN_CLOSE_WRITE, IN_MOVED_TO, Watch
-from tests.golden import assert_golden
+from tests.golden import assert_matches
 
 SERVER = pathlib.Path(__file__).resolve().parents[1]
-LEGACY = SERVER / "legacy" / "edith" / "bridge"
 SHIMS = SERVER.parent / "deploy" / "shims" / "edith" / "bridge"
-HOOKS = {"legacy": LEGACY / "hooks" / "edith_hook.py", "new": SHIMS / "hooks" / "edith_hook.py"}
-MCPS = {"legacy": LEGACY / "perm_mcp.py", "new": SHIMS / "perm_mcp.py"}
-
-
-# Legacy runs under a virtual clock: each sleep takes at most 50 ms of real time but moves time.time()
-# on by the full amount, so its 0.5 s polls and its timeout go by fast and nothing else changes.
-FAST_CLOCK = """
-import runpy, sys, time
-_sleep, _time, _ahead = time.sleep, time.time, [0.0]
-def sleep(seconds):
-    _sleep(min(seconds, 0.05))
-    _ahead[0] += seconds
-time.sleep, time.time = sleep, lambda: _time() + _ahead[0]
-script = sys.argv[1]
-sys.argv = sys.argv[1:]
-runpy.run_path(script, run_name="__main__")
-"""
+HOOK = SHIMS / "hooks" / "edith_hook.py"
+MCP = SHIMS / "perm_mcp.py"
 
 
 def run(script, stdin, home, env=None, timeout=20):
-    """Run a hook or MCP script like Claude Code does: python3 -I <script>, JSON on stdin
-    (legacy scripts under FAST_CLOCK)."""
+    """Run a hook or MCP script like Claude Code does: python3 -I <script>, JSON on stdin."""
     base = {"HOME": str(home), "PATH": "/usr/bin:/bin", "EDITH_APP_SERVER": str(SERVER)}
-    argv = [sys.executable, "-I", "-c", FAST_CLOCK, str(script)] if LEGACY in pathlib.Path(script).parents \
-        else [sys.executable, "-I", str(script)]
     started = time.monotonic()
-    r = subprocess.run(argv, input=stdin, capture_output=True, text=True, env={**base, **(env or {})}, cwd=home,
-                       timeout=timeout)
+    r = subprocess.run([sys.executable, "-I", str(script)], input=stdin, capture_output=True, text=True,
+                       env={**base, **(env or {})}, cwd=home, timeout=timeout)
     return r, time.monotonic() - started
 
 
@@ -130,7 +111,7 @@ CASES = {
     "perm_deny": ({"hook_event_name": "PermissionRequest", "session_id": "s1", "tool_name": "Bash",
                    "tool_input": {"command": "rm -rf /tmp/x"}}, {"EDITH_TMUX": "1"}, "deny", "abc123"),
     "perm_timeout": ({"hook_event_name": "PermissionRequest", "session_id": "s1", "tool_name": "Bash",
-                      "tool_input": {"command": "sudo reboot"}}, {"EDITH_TMUX": "1", "EDITH_PERM_TIMEOUT": "1"},
+                      "tool_input": {"command": "sudo reboot"}}, {"EDITH_TMUX": "1", "EDITH_PERM_TIMEOUT": "0.2"},
                      None, None),
     "perm_auto_allow_edit": ({"hook_event_name": "PermissionRequest", "session_id": "s1", "tool_name": "Edit",
                               "tool_input": {"file_path": "/home/x/project/a.py"}}, {"EDITH_TMUX": "1"}, None, None),
@@ -143,18 +124,14 @@ CASES = {
 }
 
 
-def run_case(which, name, atomic=False):
+def run_case(name, atomic=False):
     stdin, env, decision, run_id = CASES[name]
-    if which == "new" and "EDITH_PERM_TIMEOUT" in env:
-        # Legacy only takes whole seconds (it runs under FAST_CLOCK); the new relay takes 0.2 s and
-        # must still answer "within 0 minutes", byte for byte.
-        env = {**env, "EDITH_PERM_TIMEOUT": "0.2"}
     with tempfile.TemporaryDirectory() as home:
         if run_id:
             pathlib.Path(home, ".cache/edith").mkdir(parents=True)
             pathlib.Path(home, ".cache/edith/tmux-run").write_text(run_id)
         with Responder(home, decision, atomic) as responder:
-            r, _ = run(HOOKS[which], json.dumps(stdin), home, env)
+            r, _ = run(HOOK, json.dumps(stdin), home, env)
         return {"exit": r.returncode, "stdout": r.stdout, "request": normalized(responder.request),
                 "files": state_files(home)}
 
@@ -163,29 +140,27 @@ class HookParityTest(unittest.TestCase):
     maxDiff = None
 
     def test_every_event_matches_legacy(self):
-        # Every case runs in its own temp HOME, so legacy and new, all cases, run side by side.
+        # Every case runs in its own temp HOME, so they all run side by side.
         with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
-            runs = {(which, name): pool.submit(run_case, which, name) for name in CASES for which in ("legacy", "new")}
+            runs = {name: pool.submit(run_case, name) for name in CASES}
         for name in CASES:
             with self.subTest(name):
-                old = runs["legacy", name].result()
-                assert_golden(self, f"hook/{name}.json", old)  # only legacy records golden files
-                self.assertEqual(runs["new", name].result(), old)
+                assert_matches(self, f"hook/{name}.json", runs[name].result())  # what legacy did
 
     def test_atomic_decision_write_is_also_seen(self):
-        self.assertEqual(run_case("new", "perm_allow", atomic=True), run_case("legacy", "perm_allow"))
+        assert_matches(self, "hook/perm_allow.json", run_case("perm_allow", atomic=True))
 
     def test_bad_input_fails_the_same_way(self):
         with tempfile.TemporaryDirectory() as home:
-            results = {w: run(HOOKS[w], "not json", home, {"EDITH_TMUX": "1"})[0] for w in HOOKS}
-        self.assertEqual([(r.returncode, r.stdout) for r in results.values()], [(1, ""), (1, "")])
+            r, _ = run(HOOK, "not json", home, {"EDITH_TMUX": "1"})
+        self.assertEqual((r.returncode, r.stdout), (1, ""))  # as the legacy hook: exit 1, no decision
 
     def test_missing_repo_fails_like_legacy_and_never_hangs(self):
         """~/edith-app-live missing: exit 1, nothing on stdout (no decision), the same as the legacy
         hook crashing, for every event including PermissionRequest."""
         names = ("session_start", "prompt_with_ref", "stop_text", "perm_allow")
         with tempfile.TemporaryDirectory() as home, concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
-            runs = {name: pool.submit(run, HOOKS["new"], json.dumps(CASES[name][0]), home,
+            runs = {name: pool.submit(run, HOOK, json.dumps(CASES[name][0]), home,
                                       {**CASES[name][1], "EDITH_APP_SERVER": ""}, 10) for name in names}
             for name in names:
                 r, seconds = runs[name].result()
@@ -211,13 +186,10 @@ MCP_INPUT = [
 
 class McpParityTest(unittest.TestCase):
     def test_protocol_matches_legacy(self):
-        out = {}
-        for which, script in MCPS.items():
-            with tempfile.TemporaryDirectory() as home, Responder(home, "deny") as responder:
-                r, _ = run(script, "\n".join(json.dumps(m) for m in MCP_INPUT) + "\n", home, {"EDITH_RUN_ID": "run7"})
-                out[which] = {"exit": r.returncode, "stdout": r.stdout, "request": normalized(responder.request)}
-        assert_golden(self, "hook/mcp.json", out["legacy"])
-        self.assertEqual(out["new"], out["legacy"])
+        with tempfile.TemporaryDirectory() as home, Responder(home, "deny") as responder:
+            r, _ = run(MCP, "\n".join(json.dumps(m) for m in MCP_INPUT) + "\n", home, {"EDITH_RUN_ID": "run7"})
+            out = {"exit": r.returncode, "stdout": r.stdout, "request": normalized(responder.request)}
+        assert_matches(self, "hook/mcp.json", out)  # what legacy perm_mcp.py did
 
     def test_wrapper_still_importable_as_perm_mcp(self):
         code = ("import perm_mcp; print(perm_mcp.TIMEOUT, perm_mcp.PERM_DIR, "

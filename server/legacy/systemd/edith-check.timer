@@ -1,9 +1,0 @@
-[Unit]
-Description=Check E.D.I.T.H every 2 minutes
-
-[Timer]
-OnBootSec=3min
-OnUnitActiveSec=2min
-
-[Install]
-WantedBy=timers.target

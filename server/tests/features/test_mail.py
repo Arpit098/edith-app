@@ -1,5 +1,5 @@
-"""Mail (docs/PHASE1_PLAN.md, step 3): the repo's gmail.py must print exactly what
-legacy/edith/google/gmail.py prints and send Gmail the same changes, with fewer round trips.
+"""Mail (docs/PHASE1_PLAN.md, step 3): the repo's gmail.py must print exactly what the legacy
+gmail.py printed and send Gmail the same changes (tests/golden/data/google/), with fewer round trips.
 Everything runs against tests/fakes/google.py; nothing reads ~/.config/edith-google or calls Google."""
 import contextlib
 import io
@@ -7,7 +7,6 @@ import pathlib
 import subprocess
 import sys
 import tempfile
-import types
 import unittest
 from unittest import mock
 
@@ -15,8 +14,7 @@ from edith.adapters.google.auth import Session
 from edith.adapters.google.gmail import GmailBox
 from edith.features.mail import cli
 from tests.fakes.google import FakeGmail, HttpError, mail
-from tests.golden import assert_golden
-from tests.legacy import legacy_home, load
+from tests.golden import assert_matches
 
 SERVER = pathlib.Path(__file__).resolve().parents[2]
 SHIMS = SERVER.parent / "deploy" / "shims" / "edith" / "google"
@@ -67,34 +65,19 @@ def transcript(main):
 
 
 class MailParityTest(unittest.TestCase):
-    def test_legacy_and_new_match_golden(self):
-        old_api, new_api = FakeGmail(messages()), FakeGmail(messages())
-        gauth = types.ModuleType("gauth")
-        gauth.service = lambda name, version: old_api
-        with legacy_home():
-            legacy = load("google/gmail.py", modules={"gauth": gauth})
-            old = transcript(lambda argv: legacy.main())
-        new = transcript(lambda argv: cli.main(argv, box=new_box(new_api)))
-        # Only legacy records golden files; the new code is held to legacy directly, so re-recording
-        # (UPDATE_GOLDEN=1) can never hide a difference.
-        assert_golden(self, "google/gmail.txt", old)
-        assert_golden(self, "google/gmail_writes.json", old_api.writes())
-        self.maxDiff = None
-        self.assertEqual(new, old)
-        self.assertEqual(new_api.writes(), old_api.writes())
+    def test_same_output_and_changes_as_legacy(self):
+        api = FakeGmail(messages())
+        # legacy gmail.py's output and the changes it sent Gmail, for the same script, are golden files
+        assert_matches(self, "google/gmail.txt", transcript(lambda argv: cli.main(argv, box=new_box(api))))
+        assert_matches(self, "google/gmail_writes.json", api.writes())
 
     def test_listing_is_one_batch_not_one_call_per_message(self):
         many = [mail(f"u{i}", f"t{i}", "a@x", f"s{i}", "d", ["UNREAD", "INBOX"]) for i in range(30)]
-        old_api, new_api = FakeGmail(many), FakeGmail(many)
-        gauth = types.ModuleType("gauth")
-        gauth.service = lambda name, version: old_api
-        with legacy_home(), contextlib.redirect_stdout(io.StringIO()):
-            legacy = load("google/gmail.py", modules={"gauth": gauth})
-            legacy.list_q("is:unread in:inbox", 30)
-            items = new_box(new_api).search("is:unread in:inbox", 30)
+        api = FakeGmail(many)
+        items = new_box(api).search("is:unread in:inbox", 30)
         self.assertEqual(len(items), 30)
-        self.assertEqual((old_api.round_trips, new_api.round_trips), (31, 2))
-        self.assertTrue(all(n == 3 for n in new_api.retries_asked))  # every plain request retries
+        self.assertEqual(api.round_trips, 2)  # one list + one batch; legacy made 31 (one get per message)
+        self.assertTrue(all(n == 3 for n in api.retries_asked))  # every plain request retries
 
 
 class BatchRetryTest(unittest.TestCase):

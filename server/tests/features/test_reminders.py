@@ -1,5 +1,5 @@
 """Reminders (docs/PHASE1_PLAN.md, step 1): the repo code must behave exactly like the legacy
-reminders.py, remind.py and the bridge's reminder parts, which are run side by side here."""
+reminders.py, remind.py and the bridge's reminder parts, as recorded from them in tests/golden/data/."""
 import contextlib
 import io
 import itertools
@@ -15,17 +15,29 @@ import unittest
 from datetime import datetime
 from unittest import mock
 
-from edith.core import Event, EventBus, Ports, Registry, load_features
+from edith.core import EventBus, Ports, Registry, load_features
 from edith.features.reminders import cli, store
 from edith.features.reminders.store import Store, next_due
-from tests.fakes import FakeTelegram, FakeTmux, callback, message
-from tests.golden import DATA, assert_golden
-from tests.legacy import LEGACY, legacy_home, load
-from tests.test_legacy_bridge_golden import FIRE, NOW, REMINDERS, fire_once
+from tests.golden import DATA, assert_matches
+from tests.home import temp_home
 
 SERVER = pathlib.Path(__file__).resolve().parents[2]
 REPO = SERVER.parent
 SHIMS = REPO / "deploy" / "shims" / "edith"
+
+# The fixtures the golden files were recorded with (the ids would otherwise be random).
+# Due Mon 2026-11-02 08:00 IST and Fri 2026-11-06 17:30 IST.
+REMINDERS = [
+    {"id": "aa11bb", "due": 1793586600.0, "text": "Pay rent", "every": "monthly", "chat_id": None, "created": 0},
+    {"id": "cc22dd", "due": 1793966400.0, "text": "Renew the domain", "every": None, "chat_id": None, "created": 0},
+]
+NOW = 1793500000.0  # Sun 01 Nov 2026, 07:56 IST
+# For firing at NOW: one 10 minutes late (repeating), one just due, one not yet due.
+FIRE = [
+    {"id": "a1b2c3", "due": NOW - 600, "text": "Stand up", "every": "daily", "chat_id": None, "created": 0},
+    {"id": "d4e5f6", "due": NOW - 30, "text": "Call mum", "every": None, "chat_id": None, "created": 0},
+    {"id": "0a0b0c", "due": NOW + 3600, "text": "Later", "every": None, "chat_id": None, "created": 0},
+]
 
 
 def golden(name):
@@ -47,11 +59,11 @@ def telegram_markup(rows):
 
 
 class StoreParityTest(unittest.TestCase):
-    """The same operations on the legacy module and the new Store give the same results and file bytes."""
+    """The same operations give the legacy module's results and file contents, step by step."""
 
     def test_same_results_and_file(self):
-        with legacy_home() as home:
-            old = load("bridge/reminders.py")
+        want = golden("reminders/store_steps.json")
+        with temp_home() as home:
             new = Store(str(home / "new" / "reminders.json"))
             steps = [
                 ("add", (NOW - 100, "Pay rent", "monthly")),
@@ -68,16 +80,12 @@ class StoreParityTest(unittest.TestCase):
                 ("pop_due", (NOW + 4 * 86400,)),        # fires again; old fired ones expire
                 ("pending", ()),
             ]
-            recorded = []
-            for name, args in steps:
-                with frozen():
-                    want = getattr(old, name)(*args)
+            self.assertEqual([w["step"] for w in want], [name for name, _ in steps])
+            for (name, args), expected in zip(steps, want):
                 with frozen():
                     got = getattr(new, name)(*args)
-                self.assertEqual(got, want, name)
-                self.assertEqual(pathlib.Path(new.path).read_bytes(), pathlib.Path(old.FILE).read_bytes(), name)
-                recorded.append({"step": name, "result": want, "file": pathlib.Path(old.FILE).read_text()})
-            assert_golden(self, "reminders/store_steps.json", recorded)  # only legacy records golden files
+                self.assertEqual(json.loads(json.dumps(got)), expected["result"], name)  # tuples -> lists, as recorded
+                self.assertEqual(pathlib.Path(new.path).read_text(), expected["file"], name)
 
     def test_next_due(self):
         ist = store.TZ
@@ -172,35 +180,22 @@ CLOCK = datetime(2026, 11, 2, 10, 43, tzinfo=store.TZ)  # a fixed "now" for cloc
 CLOCK_INPUTS = ("00:00", "10:43", "12:30", "23:59", "+2h", "+1d", "2026-12-01T10:00", "2026-12-01")
 
 
-class FrozenDatetime(datetime):
-    @classmethod
-    def now(cls, tz=None):
-        return CLOCK.astimezone(tz)
-
-
 class CliTest(unittest.TestCase):
     def transcript(self, main):
         with frozen():
             return "".join(f"$ remind.py {' '.join(argv)}\n{run_cli(main, argv)}" for argv in CLI_SCRIPT)
 
-    def test_legacy_and_new_match_golden(self):
-        with legacy_home():
-            legacy = load("bin/remind.py", extra_paths=[LEGACY / "bridge"])
-            old = self.transcript(legacy.main)
-            assert_golden(self, "reminders/cli.txt", old)  # only legacy records the golden file
-        with legacy_home():
-            self.assertEqual(self.transcript(cli.main), old)
+    def test_same_output_as_legacy(self):
+        self.maxDiff = None
+        with temp_home():
+            assert_matches(self, "reminders/cli.txt", self.transcript(cli.main))
 
     def test_clock_times_match_legacy(self):
-        with legacy_home():
-            legacy = load("bin/remind.py", extra_paths=[LEGACY / "bridge"])
-            legacy.datetime = FrozenDatetime  # legacy reads the clock itself; freeze it at CLOCK
-            recorded = {}
-            for when in CLOCK_INPUTS:
-                with mock.patch("time.time", return_value=NOW):
-                    recorded[when] = legacy.parse_when(when)
-                    self.assertEqual(cli.parse_when(when, now=CLOCK), recorded[when], when)
-            assert_golden(self, "reminders/parse_when.json", recorded)  # only legacy records golden files
+        want = golden("reminders/parse_when.json")  # recorded from legacy with its clock frozen at CLOCK
+        self.assertEqual(sorted(want), sorted(CLOCK_INPUTS))
+        for when in CLOCK_INPUTS:
+            with mock.patch("time.time", return_value=NOW):
+                self.assertEqual(cli.parse_when(when, now=CLOCK), want[when], when)
 
 
 class FeatureTest(unittest.TestCase):
@@ -285,40 +280,16 @@ class WrapperTest(unittest.TestCase):
             data = json.loads(pathlib.Path(home, ".cache/edith/reminders.json").read_text())
             self.assertEqual([r["text"] for r in data], ["Water the plants"])
 
-    def test_legacy_bridge_on_the_wrapper_matches_golden(self):
-        """The real legacy bridge, with the wrapper as its reminders.py: what step 1 deploys."""
-        with legacy_home(EDITH_APP_SERVER=str(SERVER)) as home:
-            bridge_dir = home / "edith" / "bridge"
-            bridge_dir.mkdir(parents=True)
-            shutil.copy(LEGACY / "bridge" / "edith_bridge.py", bridge_dir)
-            shutil.copy(SHIMS / "bridge" / "reminders.py", bridge_dir)
-            path = home / ".cache/edith/reminders.json"
-
-            def bridge():
-                b = load(bridge_dir / "edith_bridge.py")
-                self.assertEqual(b.reminders.default_store().path, str(path))  # never the live file
-                b.tg, b.tmux = FakeTelegram(), FakeTmux()
-                return b
-
-            path.write_text(json.dumps(REMINDERS))
-            b = bridge()
-            b.handle_message(message("/reminders"))
-            b.handle_callback(callback("rem:cancel:cc22dd"))
-            b.handle_callback(callback("rem:cancel:cc22dd", cb_id="cb2"))
-            # Compared with the legacy bridge's own recordings, never re-recorded from here.
-            self.assertEqual(b.tg.record(), golden("bridge/reminders_list_cancel.json"))
-
-            path.write_text(json.dumps(REMINDERS))
-            b = bridge()
-            with mock.patch("time.time", return_value=NOW):
-                b.handle_callback(callback("rem:snooze:15:cc22dd", text="⏰ Renew the domain"))
-                b.handle_callback(callback("rem:snooze:60:aa11bb", text="⏰ Pay rent", cb_id="cb2"))
-            self.assertEqual(b.tg.record(), golden("bridge/reminder_snooze.json"))
-
-            path.write_text(json.dumps(FIRE))
-            b = bridge()
-            fire_once(b)
-            self.assertEqual(b.tg.record(), golden("bridge/reminder_fire.json"))
+    def test_bridge_wrapper_keeps_the_legacy_module_names(self):
+        """~/edith/bridge/reminders.py: anything that still does `import reminders` gets the store."""
+        with tempfile.TemporaryDirectory() as home:
+            code = ("import reminders; print(sorted(n for n in ('FILE', 'add', 'cancel', 'fmt', 'pending', 'pop_due', "
+                    "'snooze', 'tomorrow_at') if hasattr(reminders, n)), reminders.FILE)")
+            r = subprocess.run([sys.executable, "-I", "-c", f"import sys; sys.path.insert(0, {str(SHIMS / 'bridge')!r}); {code}"],
+                               capture_output=True, text=True,
+                               env={"HOME": home, "EDITH_APP_SERVER": str(SERVER), "PATH": os.environ["PATH"]})
+            self.assertEqual(r.stdout, "['FILE', 'add', 'cancel', 'fmt', 'pending', 'pop_due', 'snooze', 'tomorrow_at'] "
+                                       f"{home}/.cache/edith/reminders.json\n", r.stderr)
 
 
 if __name__ == "__main__":

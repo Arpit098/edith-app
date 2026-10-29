@@ -15,10 +15,10 @@ from unittest import mock
 from edith.adapters.agents.claude_tmux.backend import NOTES_HEADER, ClaudeTmux
 from edith.adapters.agents.claude_tmux.tmux import Tmux
 from edith.core import EventBus
-from tests.fakes import FAKE_CLAUDE, FakeTelegram, FakeTmux
+from tests.fakes import FAKE_CLAUDE, FakeTmux
 from tests.fakes.claude import plan
-from tests.golden import assert_golden
-from tests.legacy import legacy_home, load
+from tests.golden import assert_matches
+from tests.home import temp_home
 
 REF = re.compile(r"\[tg-ref ([0-9a-f]+)\]")
 
@@ -268,22 +268,17 @@ class SideLaneTest(unittest.TestCase):
 
     def test_side_lane_command_matches_legacy(self):
         """Same `claude -p` arguments and environment as the legacy bridge's run_claude."""
-        with legacy_home(CLAUDE_BIN=FAKE_CLAUDE) as home, tempfile.TemporaryDirectory() as tmp:
+        with temp_home(CLAUDE_BIN=FAKE_CLAUDE) as home, tempfile.TemporaryDirectory() as tmp:
             log = os.path.join(tmp, "argv.jsonl")
             with mock.patch.dict(os.environ, {"FAKE_CLAUDE_PLAN": str(pathlib.Path(tmp, "p.json")), "FAKE_CLAUDE_LOG": log}):
                 pathlib.Path(tmp, "p.json").write_text(json.dumps(plan()))
-                bridge = load("bridge/edith_bridge.py")
-                bridge.tg = FakeTelegram()
-                bridge.state["sessions"] = {"111": "s1"}
-                bridge.run_claude(111, "hello\nworld", 5, side=True)
                 agent = ClaudeTmux({"claude_bin": FAKE_CLAUDE, "chat_key": "111"})
                 agent.state.update(lambda s: s.setdefault("sessions", {}).__setitem__("111", "s1"))
                 agent._run_side("hello\nworld", "telegram", "r1")
-            old, new = [json.loads(line) for line in pathlib.Path(log).read_text().splitlines()]
-            self.assertEqual(new, old)
-            self.assertIn(str(home), old[old.index("--mcp-config") + 1])
-            # only legacy records golden files (its HOME shown as ~)
-            assert_golden(self, "claude/side_lane_argv.json", [a.replace(str(home), "~") for a in old])
+            new = json.loads(pathlib.Path(log).read_text())
+            self.assertIn(str(home), new[new.index("--mcp-config") + 1])
+            # legacy run_claude(111, "hello\nworld", 5, side=True)'s argv, its HOME shown as ~
+            assert_matches(self, "claude/side_lane_argv.json", [a.replace(str(home), "~") for a in new])
 
 
 class LiveViewTest(unittest.TestCase):
