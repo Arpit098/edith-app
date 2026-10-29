@@ -1,0 +1,23 @@
+[
+ {
+  "chat_id": 111,
+  "message_id": 1,
+  "method": "setMessageReaction",
+  "reaction": [
+   {
+    "emoji": "👌",
+    "type": "emoji"
+   }
+  ]
+ },
+ {
+  "chat_id": 111,
+  "method": "sendMessage",
+  "text": "💤 Idle. No conversation yet."
+ },
+ {
+  "chat_id": 111,
+  "method": "sendMessage",
+  "text": "🖥 tmux session: running\nWatch live: ssh in, then edith-attach"
+ }
+]
