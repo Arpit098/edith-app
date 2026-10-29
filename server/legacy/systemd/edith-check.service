@@ -1,0 +1,7 @@
+[Unit]
+Description=Restart E.D.I.T.H if it has crashed
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/edith-check
+TimeoutStartSec=120

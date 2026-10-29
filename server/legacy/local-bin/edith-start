@@ -1,0 +1,17 @@
+#!/bin/bash
+# Start the Telegram-connected Claude session (E.D.I.T.H) in a detached tmux session.
+export PATH="$HOME/.local/bin:$HOME/.bun/bin:/usr/local/bin:/usr/bin:/bin"
+tmux has-session -t edith 2>/dev/null && exit 0
+cd "$HOME/edith"
+tmux new-session -d -s edith -x 200 -y 50 \
+  "claude --channels plugin:telegram@claude-plugins-official"
+# Fallback: trust for ~/edith is saved, but answer the prompt if it ever reappears.
+for i in $(seq 1 60); do
+  if tmux capture-pane -pt edith 2>/dev/null | grep -q "Yes, I trust this folder"; then
+    tmux send-keys -t edith Down; sleep 1; tmux send-keys -t edith Enter
+    edith-notify "⚠️ E.D.I.T.H: had to auto-accept the folder trust prompt on startup."
+    break
+  fi
+  tmux capture-pane -pt edith 2>/dev/null | grep -q "accept edits on" && break
+  sleep 1
+done
