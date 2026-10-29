@@ -176,6 +176,29 @@ live untracked in `~/edith`; a verbatim copy is kept in `server/legacy/` until e
 
 Later (optional), the app gets **Reminders, Calendar and Mail screens** that use the same features through the App API.
 
+### 4.10 Scheduled tasks (EDITH messages first)
+Today EDITH only runs when Arpit sends a message; reminders are plain text fired by the bridge's
+timer. Scheduled tasks let EDITH **do a job at a set time and report back unprompted**, e.g. "check
+the BLS Polymers allotment at 19:00 and tell me the result". (Asked for 2026-10-29.)
+
+- **Feature:** `features/scheduled_tasks/`, built on the reminders scheduler (one `heapq` of due
+  items, woken by a `Condition`, no polling). Data in `~/.cache/edith/tasks.json`, mode 0600, atomic writes.
+- **Running a task:** at the due time it runs as a **side lane** (`claude -p` fork), never the main
+  lane, so it can't collide with a live conversation. The reply goes to Telegram (and the app later),
+  prefixed with ⏰ and the task name.
+- **CLI for EDITH:** `task.py add "<when>" "<prompt>" [--every daily|weekdays|weekly|monthly]`,
+  `task.py list`, `task.py cancel <id>`, same time formats as `remind.py`. `/tasks` lists them in Telegram.
+- **Safety:**
+  - A run has a timeout (default 10 min) and a daily cap on runs, so a bad schedule can't burn
+    Claude usage.
+  - Permission prompts during a run go to Telegram as Allow/Deny, as today. Nothing is auto-approved.
+  - If a run fails or times out, Arpit gets a ❌ message with the reason, never silence.
+  - Keep sensitive data (PAN, account numbers) out of task prompts where possible; the file is
+    0600 and never goes in git.
+- **When:** a step at the end of Phase 1, after reminders move into `features/reminders/`.
+- **Done when:** a task set for +2 min runs on its own, its answer arrives in Telegram, a
+  repeating task fires on schedule, and `/tasks` and `task.py cancel` work.
+
 ## 5. Repository layout (`Arpit098/edith-app`, private)
 
 The code is organised as **ports, adapters and feature folders**, so a feature can be added or
