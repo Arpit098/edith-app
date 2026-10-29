@@ -32,6 +32,8 @@ Every event on the bus, and on the app's `/v1/stream` WebSocket, has this shape:
 | `command.reply` | `{ref, text, buttons}` | A command or button the app used answers later (e.g. a conversation switch); `ref` is the one its request returned |
 
 | `turn.retrying` | `{ref, lane, reason}` | A turn starts over (a side lane whose conversation is gone runs again fresh); frontends drop that turn's status message |
+| `voice.turn` | `{ref}` | The App API accepted a `POST /v1/messages` with `voice: true` (sent before the turn's own events). Origin `app` |
+| `voice.reply` | `{ref, outcome, speak}` | What the app says aloud for that voice turn (see "Voice" below). Origin `app` |
 
 Fields the agent adds (new fields only; existing meanings unchanged):
 - `turn.started`, `turn.progress`, `turn.done`, `turn.stopped` and `turn.failed` carry `lane` (`main`
@@ -106,3 +108,20 @@ length), e.g. a runaway decode; not retried) and 502 (whisper failed).
 
 App messages reach Claude as `[App message from Arpit, <time>]` (plus ` [voice]` for speech) and
 the text on the next line.
+
+## Voice
+
+The flow for a spoken request: record → `POST /v1/stt` → `{text}` → `POST /v1/messages {text, voice: true}`
+→ `{ref}` → the turn's events on the stream as usual (the live view shows everything) → `voice.reply` for
+that `ref`, which the app speaks with its TTS.
+
+- The `[voice]` tag asks EDITH to open with a 1–2 sentence spoken summary, then the details
+  (`server/edith/features/voice/output_style.md`).
+- `voice.reply.outcome` is `queued` (it waits for the main lane; a later reply follows), `done`, `failed` or
+  `stopped`. Each voice turn gets exactly one of `done`/`failed`/`stopped`, after `turn.done`/`turn.failed`/
+  `turn.stopped`.
+- `speak` is plain text for TTS: the reply's first paragraph without code, markdown, links, emoji or
+  `SEND_FILE`/`REACT` lines, at most 2 sentences and about 300 characters (`"Done."` if nothing in the reply
+  is speakable). For `failed`/`stopped`/`queued` it is a short fixed line, e.g. `"Stopped."`.
+- The app should speak `speak` and not the full `turn.done.text`. Only the app that sent the message acts on
+  it; other clients may ignore `voice.reply`.
