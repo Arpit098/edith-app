@@ -219,6 +219,41 @@ the BLS Polymers allotment at 19:00 and tell me the result". (Asked for 2026-10-
 - **Done when:** a task set for +2 min runs on its own, its answer arrives in Telegram, a
   repeating task fires on schedule, and `/tasks` and `task.py cancel` work.
 
+### 4.11 Design: Liquid Glass theme, logo and Live Alerts (asked for 2026-10-29)
+Arpit wants the app to look like Apple's new **Liquid Glass** interface (macOS Tahoe 26): black
+and grey, translucent frosted panels, and edges that catch the light. EDITH's states should also
+show in the phone's "dynamic island".
+
+- **Theme:** dark only to begin with: near-black background, grey glass surfaces, white text, and
+  the logo's soft blue as the one accent colour.
+  - Android can't refract light the way Apple's glass does. We approximate it with real-time blur
+    (`RenderEffect`, Android 12+) behind translucent layers, a thin light edge (a gradient border)
+    and a subtle inner highlight.
+  - Without blur (older Android, or battery saver) it falls back to flat translucent grey.
+  - Tokens live in one theme module (`app/src/core/theme/`: colours, glass levels, radii, motion).
+    Screens use the tokens and no raw colours, so each feature keeps its own look in step.
+  - Blur only on a few large surfaces (header, tab bar, cards, sheets), never in lists, to keep
+    scrolling at 60 fps and spare the battery.
+- **Logo:** Arpit's image (`app/assets/brand/edith-logo-source.jpg`: glowing blue and white glass rings
+  on near-black) becomes the launcher icon (adaptive foreground and background, plus a monochrome
+  version for themed icons) and the splash screen. The source is 838 px, which is enough for
+  launcher icons; ask Arpit for a larger or vector version if the splash looks soft.
+- **Live Alerts ("dynamic island"):** Arpit's phone is a OnePlus 13R. On OxygenOS 16 (Android 16),
+  the Live Alerts pill shows any app's **Android 16 Live Updates**: a promoted ongoing notification,
+  using `Notification.ProgressStyle` where it fits.
+  - States shown: listening, thinking, speaking, task running (with its progress), and waiting for
+    approval (it opens the approval screen).
+  - Driven by the same session events the app already streams; no polling.
+  - Built as a small native module behind an `OngoingStatus` port, so other features (timers,
+    reminders) can use it later.
+  - Before Android 16 it's a normal ongoing notification.
+  - Arpit turns on "Show Live Updates on Live Alerts" for EDITH once (OxygenOS asks this for each app).
+- **Phase 3 overlay:** its glow colours (cyan → violet → teal in `docs/PHASE3_APP_PLAN.md`) should
+  follow this theme. Settle that when Arpit approves Phase 3.
+- **Done when:** Arpit has approved screenshots of the main screens (a web preview harness plus
+  Playwright on edith) **before** the APK is built, the release APK shows the new icon and theme,
+  and a voice or text task shows its live state in the Live Alerts pill on the 13R.
+
 ## 5. Repository layout (`Arpit098/edith-app`, private)
 
 The code is organised as **ports, adapters and feature folders**, so a feature can be added or
@@ -262,6 +297,7 @@ on edith's ARM64.
 | **0. Plan** | This plan; private repo created | Arpit approves the plan |
 | **1. Server** | Tailscale on edith; bridge split into edith-core + Telegram + App API (same service); **reminders, Gmail and Calendar code moved into edith-app (§4.9)**; whisper.cpp built and benchmarked; whisper-server on localhost | `curl` over Tailscale can send a message, stream the live session, list/switch sessions, approve a permission and transcribe a WAV. `/reminders`, `/mail`, `/today`, `/brief` run from the repo code. **Telegram works exactly as before**; `server/legacy/` is empty |
 | **2. App v1** | RN app: connect (address + token), live session view, text send, stop, sessions, approvals, and the **Tools grid screen** (tiles from features' `tool`); Actions builds a signed APK | Arpit installs the APK and runs a full task from the phone while watching it live |
+| **2b. Design** | Liquid Glass theme, new logo as icon and splash, EDITH states in Live Alerts (§4.11) | Arpit approves the screenshots; the release APK has the new look; a task shows live in the Live Alerts pill on the 13R |
 | **3. Voice & triggers** | Push-to-talk → whisper → send; TTS of voice summaries; `[voice]` output-style rule (applied in Phase 1); listening overlay with VAD end-of-speech; **default-assistant role (power button + earbud button)**; **home-screen widget** | Long-press power → "check the server disk space" → spoken answer, under ~10 s plus task time. Same from the widget and the earbuds |
 | **4. Wake word (optional toggle)** | Trained `hey_edith` model; WakeWordService behind the Settings toggle (off by default) with sound gate | Triggers reliably across the room; under 1 false wake per hour; battery cost measured while on |
 | **5. Notifications & polish** | ntfy notifications; polish | EDITH replaces Google Assistant in daily use |
@@ -275,6 +311,10 @@ on edith's ARM64.
 - **Phase 2:**
   - Enables "Install unknown apps" for the browser or file manager.
   - Keeps an offline copy of the signing keystore.
+- **Phase 2b:**
+  - Checks that the 13R is on OxygenOS 16 (Settings → About device).
+  - Approves the theme screenshots.
+  - Turns on "Show Live Updates on Live Alerts" for EDITH.
 - **Phase 4:** records about 30–50 "Hey Edith" samples and a few minutes of normal home noise. The app will have a recorder screen for this.
 
 ## 8. Risks and open questions
