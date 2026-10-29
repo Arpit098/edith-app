@@ -27,10 +27,10 @@ repo. **Telegram must work exactly the same at every step.**
    has passed a full run on a **separate test bot** with a separate tmux session.
 5. **Backups before every live change** go to `~/edith-backups/p1-stepN/`. Each step below lists
    its rollback command.
-6. **Per step:** branch → PR → `make test` → Arpit merges → I send the change list → Arpit says
-   "yes" → I deploy and verify → I remove that piece from `server/legacy/` in the next PR.
-   While PR #1 is open, each branch is stacked on the previous one (starting from
-   `legacy-snapshot`), and I retarget them once it merges.
+6. **Per step:** a few commits on the `phase-1` branch (all of Phase 1 is one PR) → `make test`
+   before each commit → I tag the step's last commit and push the tag → I send the change list →
+   Arpit says "yes" → I deploy that tag and verify → I remove that piece from `server/legacy/` in
+   the next step's commits.
 
 Golden tests: before a piece is rewritten, I record what the legacy code outputs for fixed inputs
 (CLI output, Telegram API calls made, files written). The new code must match it exactly. These
@@ -299,8 +299,9 @@ streams it live, plus list/switch sessions and approve a permission. A request w
 
 | When | What |
 |---|---|
-| Now | Merge PR #1 when ready |
-| Each step | Merge the step's PR; a "yes" to its change list before I touch anything live |
+| Now | Merge PR #1 and #2 |
+| Each step | A "yes" to its change list before I touch anything live |
+| End of Phase 1 | Review and merge the `phase-1` PR |
 | Step 1 | OK to create `~/edith-app-live` (a clone of this repo at a tag) |
 | Step 3 | Re-run the Google login if the Testing-mode token has expired (~2026-11-03) |
 | Step 6 | A test bot token from @BotFather; 10 min on the test bot checklist; a quiet time for the switch |

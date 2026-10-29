@@ -9,17 +9,19 @@ The live system runs from a **separate clone pinned to a release tag**, never fr
 
 | What | Where |
 |---|---|
-| Dev repo (branches, PRs) | `~/Projects/Personal Projects/edith-app` |
+| Dev repo (phase branches) | `~/Projects/Personal Projects/edith-app` |
 | Live code | `~/edith-app-live` (a clone of `Arpit098/edith-app`, detached at a tag) |
 | Live config (not in git) | `~/.config/edith/config.toml`, `~/.config/edith/app-token` |
 | Backups | `~/edith-backups/p1-stepN/` |
 
 Switching branches in the dev repo never changes what is live.
 
-## Tags
+## Branches and tags
 
-Each Phase 1 step that changes something live gets a tag on `main` after its PR is merged:
-`p1-step1`, `p1-step2`, … (see [docs/PHASE1_PLAN.md](../docs/PHASE1_PLAN.md)).
+All of a phase's work is on one branch (`phase-1`, …) with one PR, merged when the phase is done.
+Each step that changes something live gets a tag on its last commit on that branch: `p1-step1`,
+`p1-step2`, … (see [docs/PHASE1_PLAN.md](../docs/PHASE1_PLAN.md)). Tags are pushed, so they keep
+their commits even if the branch is later rebased.
 
 ```bash
 git -C ~/edith-app-live fetch --tags
@@ -37,7 +39,7 @@ permanently.
 
 ## Steps for every live change
 
-1. The step's PR is merged and tagged.
+1. The step's commits pass `make test` and its tag is pushed.
 2. Send Arpit the change list: the exact commands, files and services, the downtime, and the rollback command.
 3. Wait for Arpit's "yes" for that step. A "yes" covers only that change list.
 4. Back up every file that will be replaced: `mkdir -p ~/edith-backups/p1-stepN && cp -p <file> ~/edith-backups/p1-stepN/`.
