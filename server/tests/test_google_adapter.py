@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from unittest import mock
 
@@ -53,6 +54,26 @@ class SessionTest(unittest.TestCase):
         self.assertEqual(self.refreshes, [])
         self.assertEqual(self.builds, [("gmail", "v1"), ("calendar", "v3")])
         self.assertFalse(os.path.exists(s.token_path))  # nothing written
+
+    def test_each_thread_gets_its_own_service_and_shares_credentials(self):
+        creds = Creds(valid=True)
+        s = Session(self.dir, load=lambda p: creds, build=lambda n, v, c: (object(), c))
+        got = {}
+
+        def use(name):
+            first = s.service("gmail", "v1")
+            got[name] = (first, s.service("gmail", "v1"))
+
+        threads = [threading.Thread(target=use, args=(n,)) for n in ("a", "b")]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        (a1, a2), (b1, b2) = got["a"], got["b"]
+        self.assertIs(a1, a2)                       # reused within a thread
+        self.assertIsNot(a1[0], b1[0])              # never shared across threads (httplib2 isn't thread-safe)
+        self.assertIs(a1[1], creds)                 # one credentials object for everyone
+        self.assertIs(b1[1], creds)
 
     def test_expired_token_is_refreshed_once_and_saved_privately(self):
         s = self.session(Creds(valid=False))
