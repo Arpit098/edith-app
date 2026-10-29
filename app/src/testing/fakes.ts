@@ -42,6 +42,10 @@ export class FakeTransport implements Transport {
     this.reconnects++;
   }
 
+  authorized(path: string) {
+    return this.config ? { url: this.config.baseUrl + path, headers: { Authorization: `Bearer ${this.config.token}` } } : null;
+  }
+
   get streaming(): number {
     return this.listeners.size;
   }

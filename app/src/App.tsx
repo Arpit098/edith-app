@@ -5,7 +5,9 @@ import { useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
+import { createAndroidInstaller } from './adapters/installer/android';
 import { createSecureStorage } from './adapters/storage/secure-store';
+import { createExpoOtaUpdates } from './adapters/updates/expo-updates';
 import { createEdithApiTransport } from './adapters/transport/edith-api';
 import { createApi } from './core/api';
 import { Connection } from './core/connection';
@@ -18,10 +20,12 @@ import { colors } from './ui/theme';
 function boot() {
   const transport = createEdithApiTransport();
   const storage = createSecureStorage();
+  const installer = createAndroidInstaller() ?? undefined;
+  const ota = createExpoOtaUpdates();
   const bus = new EventBus();
   const api = createApi(transport);
   const connection = new Connection(transport, storage, bus);
-  const loaded = loadFeatures(features, { bus, ports: { transport, storage }, api, connection });
+  const loaded = loadFeatures(features, { bus, ports: { transport, storage, installer, ota }, api, connection });
   return { connection, loaded };
 }
 

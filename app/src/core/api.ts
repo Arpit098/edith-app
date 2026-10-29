@@ -60,6 +60,20 @@ export interface HistoryPage {
   reset: boolean; // the cursor given was another conversation's: this is the newest page instead
 }
 
+/** GET /v1/app/latest (contracts/app-updates.md §3). */
+export interface AppRelease {
+  versionName: string;
+  versionCode: number;
+  sha: string;
+  built_at: number; // unix seconds
+  runtimeVersion: string;
+  size: number;
+  sha256: string; // hex
+  cert_sha256: string;
+  notes: string;
+  url: string; // path on the App API, e.g. /v1/app/apk/1042
+}
+
 export interface Command {
   name: string;
   description: string;
@@ -182,6 +196,33 @@ export function createApi(t: Transport) {
     async press(action: string): Promise<ActionResult> {
       const r = await t.request<Obj>('POST', '/v1/actions', { action });
       return { ref: str(r.ref), toast: r.toast ? str(r.toast) : null, note: r.note ? str(r.note) : null, replies: replies(r.replies) };
+    },
+
+    /** The newest APK edith offers, or null when it has none yet (404). */
+    async appLatest(): Promise<AppRelease | null> {
+      let r: Obj;
+      try {
+        r = await t.request<Obj>('GET', '/v1/app/latest');
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 404) return null;
+        throw e;
+      }
+      const sha256 = str(r.sha256).toLowerCase();
+      const url = str(r.url);
+      // Only a well-formed answer is usable: the download is checked against this sha256.
+      if (!/^[0-9a-f]{64}$/.test(sha256) || !url.startsWith('/v1/app/apk/')) throw new ApiError(502, 'edith sent a malformed app release');
+      return {
+        versionName: str(r.versionName),
+        versionCode: num(r.versionCode),
+        sha: str(r.sha),
+        built_at: num(r.built_at),
+        runtimeVersion: str(r.runtimeVersion),
+        size: num(r.size),
+        sha256,
+        cert_sha256: str(r.cert_sha256),
+        notes: str(r.notes),
+        url,
+      };
     },
 
     async commands(): Promise<Command[]> {

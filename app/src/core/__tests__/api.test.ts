@@ -1,4 +1,4 @@
-import { createApi } from '../api';
+import { ApiError, createApi } from '../api';
 import { FakeTransport } from '../../testing/fakes';
 
 describe('createApi', () => {
@@ -66,6 +66,18 @@ describe('createApi', () => {
       reset: false,
     });
     expect(await api.history('current', { after: 's1:10', before: undefined })).toMatchObject({ events: [], more: false, reset: false });
+  });
+
+  it('reads the latest app release, or null when edith has none', async () => {
+    const release = { versionName: '0.3.0', versionCode: 1043, sha256: 'A'.repeat(64), url: '/v1/app/apk/1043', size: 5 };
+    const t = new FakeTransport().on('GET /v1/app/latest', release);
+    expect(await createApi(t).appLatest()).toMatchObject({ versionCode: 1043, sha256: 'a'.repeat(64), url: '/v1/app/apk/1043' });
+    t.on('GET /v1/app/latest', () => {
+      throw new ApiError(404, 'no app build yet');
+    });
+    expect(await createApi(t).appLatest()).toBeNull();
+    t.on('GET /v1/app/latest', { ...release, url: 'http://elsewhere/x.apk' });
+    await expect(createApi(t).appLatest()).rejects.toMatchObject({ status: 502 });
   });
 
   it('handles permissions, actions and commands', async () => {

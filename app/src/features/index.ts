@@ -2,6 +2,7 @@
 // The shell adds its own Tools (the grid of features' `tool` tiles) and Settings tabs after these.
 
 import type { FeatureModule } from '../core/feature';
+import appUpdate from './app-update';
 import approvals from './approvals';
 import commands from './commands';
 import liveSession from './live-session';
@@ -12,6 +13,7 @@ export const features: FeatureModule[] = [
   sessions,
   approvals,
   commands,
+  appUpdate,
   // Phase 3: voice, assistant, widget
   // Phase 4: wakeword
 ];
