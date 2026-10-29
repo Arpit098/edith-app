@@ -38,6 +38,31 @@ export interface Transport {
   authorized(path: string): { url: string; headers: Record<string, string> } | null;
   /** POST a file as multipart/form-data (part `field`), answered with JSON. Sent once, never retried. */
   upload<T>(path: string, file: { uri: string; mime: string; name: string }, opts?: RequestOptions & { field?: string }): Promise<T>;
+  /**
+   * POST a file as the raw request body (with Content-Length; contracts/attachments.md), streamed from
+   * disk, answered with JSON. Sent once, never retried.
+   */
+  uploadRaw<T>(
+    path: string,
+    file: { uri: string; mime: string; name: string },
+    opts?: RequestOptions & { onProgress?: (sent: number, total: number) => void },
+  ): Promise<T>;
+}
+
+/** A file Arpit picked to attach. */
+export interface PickedFile {
+  kind: 'image' | 'audio';
+  uri: string;
+  name: string;
+  mime: string;
+  size: number; // bytes, 0 if unknown
+}
+
+/** The camera, the gallery and the file picker. */
+export interface MediaPicker {
+  /** Null when Arpit cancels. Images come back as JPEG with the long edge at most 2048 px. */
+  pickImage(source: 'camera' | 'library'): Promise<PickedFile | null>;
+  pickAudio(): Promise<PickedFile | null>;
 }
 
 export type InstallStatus = 'pending' | 'success' | 'cancelled' | 'incompatible' | 'failed';
@@ -134,9 +159,10 @@ export interface Ports {
   storage: SecureStorage;
   installer?: AppInstaller; // absent where the native module isn't (tests, web)
   ota?: OtaUpdates;
+  stt?: SpeechToText; // push-to-talk (and Phase 3 voice)
+  recorder?: Recorder;
+  media?: MediaPicker; // attachments
   // Built in later phases (PLAN.md §6); absent until then.
-  stt?: SpeechToText; // Phase 3
   tts?: TextToSpeech; // Phase 3
-  recorder?: Recorder; // Phase 3
   wakeWord?: WakeWord; // Phase 4
 }

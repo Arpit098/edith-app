@@ -50,6 +50,18 @@ export class FakeTransport implements Transport {
     return handler(file) as T;
   }
 
+  async uploadRaw<T>(
+    path: string,
+    file: { uri: string; mime: string; name: string },
+    opts: { onProgress?: (sent: number, total: number) => void } = {},
+  ): Promise<T> {
+    this.uploads.push({ path, file, field: 'raw' });
+    const handler = this.routes.get(`UPLOAD ${path}`);
+    if (!handler) throw new Error(`FakeTransport: no answer for UPLOAD ${path}`);
+    opts.onProgress?.(50, 100);
+    return handler(file) as T;
+  }
+
   authorized(path: string) {
     return this.config ? { url: this.config.baseUrl + path, headers: { Authorization: `Bearer ${this.config.token}` } } : null;
   }

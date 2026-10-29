@@ -1,17 +1,22 @@
 // Adapter: the Transport port over the EDITH App API (HTTP + one WebSocket), reached over Tailscale.
 
+import { createUploadTask } from 'expo-file-system/legacy';
 import { AppState } from 'react-native';
 
 import type { RequestOptions, ServerConfig, Transport } from '../../../core/ports';
 import { httpRequest, httpUpload, type Fetch } from './http';
 import { EventStream, type AppStateLike, type WebSocketFactory, type WebSocketLike } from './stream';
+import { uploadRaw, type CreateUploadTask } from './upload';
 
 export interface EdithApiOptions {
   fetch?: Fetch;
   connect?: WebSocketFactory;
   appState?: AppStateLike | null;
   requestTimeoutMs?: number;
+  createUploadTask?: CreateUploadTask;
 }
+
+const UPLOAD_TIMEOUT_MS = 120_000; // callers that know the size pass their own
 
 type RNWebSocket = new (url: string, protocols: null, options: { headers: Record<string, string> }) => WebSocketLike;
 
@@ -47,5 +52,7 @@ export function createEdithApiTransport(opts: EdithApiOptions = {}): Transport {
     authorized: (path) => (server ? { url: server.baseUrl + path, headers: { Authorization: `Bearer ${server.token}` } } : null),
     upload: <T,>(path: string, file: { uri: string; mime: string; name: string }, uopts: RequestOptions & { field?: string } = {}) =>
       httpUpload<T>(server, path, file, uopts.field ?? 'file', uopts.timeoutMs ?? http.timeoutMs, http.fetch),
+    uploadRaw: <T,>(path: string, file: { uri: string; mime: string; name: string }, ropts: RequestOptions & { onProgress?: (sent: number, total: number) => void } = {}) =>
+      uploadRaw<T>(server, path, file, { timeoutMs: ropts.timeoutMs ?? UPLOAD_TIMEOUT_MS, onProgress: ropts.onProgress }, opts.createUploadTask ?? (createUploadTask as unknown as CreateUploadTask)),
   };
 }
