@@ -110,6 +110,7 @@ class Route:
     handler: Callable[[dict[str, Any]], Any]
     owner: str
     max_body: int = 64 * 1024  # bytes; larger requests get 413
+    stream: bool = False       # True: the body is not read up front; the handler gets req["body_stream"]
 
 
 @dataclass
@@ -223,9 +224,11 @@ class Context:
         """Read-only use only (e.g. building /help from the registered commands)."""
         return self._registry
 
-    def add_route(self, method: str, path: str, handler, *, max_body: int = 64 * 1024) -> None:
-        """An App API route (see Route). Raise ApiError(status, message) from the handler for errors."""
-        self._registry.add_route(Route(method.upper(), path, handler, self.feature, max_body))
+    def add_route(self, method: str, path: str, handler, *, max_body: int = 64 * 1024, stream: bool = False) -> None:
+        """An App API route (see Route). Raise ApiError(status, message) from the handler for errors.
+        With stream=True the body is not read for the handler: req["body_stream"].read(n) returns its
+        bytes in chunks (b"" at the end) and req["length"] is its Content-Length (required: 411 without)."""
+        self._registry.add_route(Route(method.upper(), path, handler, self.feature, max_body, stream))
 
     def add_action(self, prefix: str, handler) -> None:
         """Handle presses of buttons whose action starts with "<prefix>:"."""

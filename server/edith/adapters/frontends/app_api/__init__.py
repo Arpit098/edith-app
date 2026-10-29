@@ -33,6 +33,7 @@ from edith.common.paths import resolve
 from edith.core import ApiError, CommandCall, Event, Reply, Response, Route
 
 from . import ws
+from .attachments import MAX_BYTES as MAX_ATTACHMENT, AttachmentError, Attachments
 
 log = logging.getLogger("edith.adapter.app_api")
 
@@ -145,6 +146,7 @@ class AppApi:
         self._audit_lock = threading.Lock()
         self._slots = threading.BoundedSemaphore(MAX_CONNECTIONS)
         self._thread = None
+        self.attachments = Attachments(self.paths.inbox, os.path.join(self.paths.state_dir, "app-attachments.json"))
 
     # ---- lifecycle ----
 
@@ -210,6 +212,7 @@ class AppApi:
 
     def _routes(self, registry):
         own = [Route("POST", "/v1/messages", self._messages, self.name, 16 * 1024),
+               Route("POST", "/v1/attachments", self._attach, self.name, MAX_ATTACHMENT, stream=True),
                Route("POST", "/v1/actions", self._actions, self.name),
                Route("GET", "/v1/commands", self._command_list, self.name),
                Route("POST", "/v1/commands/{name}", self._command, self.name, 16 * 1024)]
@@ -250,13 +253,32 @@ class AppApi:
     def _messages(self, req):
         body = req.get("body") or {}
         text = (body.get("text") or "").strip()
-        if not text:
+        ids = body.get("attachments") or []
+        try:
+            files = self.attachments.paths(ids)
+        except AttachmentError as e:
+            raise ApiError(e.status, e.message)
+        if not text and not files:
             raise ApiError(400, "text is required")
         ref = f"app:{secrets.token_hex(6)}"
         if body.get("voice"):  # before send, so the voice feature knows the ref before any of its turn events
             self.bus.publish(self._event("voice.turn", {"ref": ref}))
-        handle = self.agent.send(self._prompt(text, bool(body.get("voice"))), "app", ref, force_queue=bool(body.get("queue")))
-        return {"ref": ref, "lane": handle.lane}
+        prompt = self._prompt(text, bool(body.get("voice"))) + "".join(f"\n[Attached file saved at: {f}]" for f in files)
+        handle = self.agent.send(prompt, "app", ref, force_queue=bool(body.get("queue")))
+        answer = {"ref": ref, "lane": handle.lane}
+        if not files:
+            return answer
+        return Response(200, {"content-type": "application/json"}, json.dumps(answer).encode(),
+                        audit={"attachments": [str(i) for i in ids]})
+
+    def _attach(self, req):
+        h = req.get("headers") or {}
+        try:
+            record = self.attachments.add(req["body_stream"], req["length"], h.get("x-filename"), h.get("x-content-sha256"))
+        except AttachmentError as e:
+            raise ApiError(e.status, e.message)
+        return Response(200, {"content-type": "application/json"}, json.dumps(record).encode(),
+                        audit={"attachment": {k: record[k] for k in ("id", "type", "size", "sha256")}})
 
     def _actions(self, req):
         action = (req.get("body") or {}).get("action") or ""
@@ -438,6 +460,22 @@ class Server(http.server.ThreadingHTTPServer):
             log.exception("App API connection from %s failed", client_address[0])
 
 
+class BodyReader:
+    """A request body read in chunks, never past its Content-Length."""
+
+    def __init__(self, rfile, length):
+        self.rfile, self.left = rfile, length
+
+    def read(self, n=64 * 1024):
+        if self.left <= 0:
+            return b""
+        data = self.rfile.read(min(n, self.left))
+        if not data:
+            raise ConnectionError("the client stopped sending")
+        self.left -= len(data)
+        return data
+
+
 class Handler(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     timeout = 30  # seconds per socket read/write: a stalled client can't hold a slot forever
@@ -458,6 +496,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _answer(self, result):
+        """Send a handler's result (a Response, or JSON with 200). -> (status, extra audit fields)."""
+        if isinstance(result, Response):
+            return self._respond(result).get("status", result.status), dict(result.audit)
+        self._send(200, result if result is not None else {})
+        return 200, {}
 
     def _respond(self, r: Response):
         """A non-JSON answer: its body, or `length` bytes of its file from `offset`, sent with
@@ -503,6 +548,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if length > route.max_body:
                 self.close_connection = True
                 raise ApiError(413, "request too large")
+            if route.stream:
+                if self.headers.get("Transfer-Encoding") or "Content-Length" not in self.headers:
+                    self.close_connection = True
+                    raise ApiError(411, "Content-Length is required")
+                reader = BodyReader(self.rfile, length)
+                try:
+                    result = route.handler({"body_stream": reader, "length": length, "params": params, "origin": "app",
+                                            "content_type": self.headers.get("Content-Type", ""),
+                                            "query": dict(urllib.parse.parse_qsl(url.query)),
+                                            "headers": {k.lower(): v for k, v in self.headers.items()}})
+                finally:
+                    if reader.left:  # the handler stopped early (e.g. a 400): don't reuse the connection
+                        self.close_connection = True
+                status, extra = self._answer(result)
+                return
             raw = self.rfile.read(length) if length else b""
             ctype = self.headers.get("Content-Type", "")
             body = None
@@ -516,12 +576,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             result = route.handler({"body": body, "raw": raw, "content_type": ctype, "params": params,
                                     "query": dict(urllib.parse.parse_qsl(url.query)), "origin": "app",
                                     "headers": {k.lower(): v for k, v in self.headers.items()}})
-            if isinstance(result, Response):
-                status, extra = result.status, dict(result.audit)
-                status = self._respond(result).get("status", status)
-            else:
-                status = 200
-                self._send(200, result if result is not None else {})
+            status, extra = self._answer(result)
         except ApiError as e:
             status = e.status
             self._send(e.status, {"error": e.message})

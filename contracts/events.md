@@ -112,7 +112,8 @@ Base `http://<edith's Tailscale IP>:8787`, reachable over Tailscale only. Every 
 
 | Method | Path | Body | Answer |
 |---|---|---|---|
-| POST | `/v1/messages` | `{text, voice?: bool, queue?: bool}` | `{ref, lane}`; the turn's events then arrive on the stream with this `ref` |
+| POST | `/v1/messages` | `{text, voice?: bool, queue?: bool, attachments?: [id]}` | `{ref, lane}`; the turn's events then arrive on the stream with this `ref`. `attachments`: ids from `POST /v1/attachments` (contracts/attachments.md) |
+| POST | `/v1/attachments` | the raw file (image or audio), `x-filename?` | `{id, name, type, size, sha256}` (contracts/attachments.md) |
 | GET | `/v1/stream` | WebSocket | every event above as one JSON text message `{type, ts, session_id, origin, data}`; the server pings every 25 s (protocol ping) when the line is quiet. The app may send `{"type": "ping", "id"?: any}`; the answer is `{"type": "pong", "ts", "session_id": null, "origin": "system", "data": {"id"?}}` (`id` echoed). Any frame from the app counts as alive; three quiet periods without one and the server drops it. Other text from the app is ignored |
 | POST | `/v1/stop` | | `{running, dropped: [ref]}` |
 | GET | `/v1/status` | | `{main: busy/idle, queued, runs: [{ref, lane, seconds, step}], tmux: running/down, conversation: bool, session: {id, title} \| null}` |
