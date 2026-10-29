@@ -1,0 +1,16 @@
+{
+ "exit": 0,
+ "files": {
+  "perms left": []
+ },
+ "request": {
+  "id": "ID",
+  "input": {
+   "file_path": "~/.ssh/config"
+  },
+  "run": null,
+  "tool_name": "Write",
+  "ts": 0
+ },
+ "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PermissionRequest\", \"decision\": {\"behavior\": \"allow\"}}}\n"
+}

@@ -1,0 +1,16 @@
+{
+ "exit": 0,
+ "files": {
+  "perms left": []
+ },
+ "request": {
+  "id": "ID",
+  "input": {
+   "command": "rm -rf /tmp/x"
+  },
+  "run": "abc123",
+  "tool_name": "Bash",
+  "ts": 0
+ },
+ "stdout": "{\"hookSpecificOutput\": {\"hookEventName\": \"PermissionRequest\", \"decision\": {\"behavior\": \"deny\", \"message\": \"Arpit denied this on Telegram.\"}}}\n"
+}

@@ -1,0 +1,14 @@
+{
+ "exit": 0,
+ "files": {
+  "perms left": [],
+  "tmux-session.json": {
+   "session_id": "s1",
+   "source": "resume",
+   "transcript_path": "/t/s1.jsonl",
+   "ts": 0
+  }
+ },
+ "request": null,
+ "stdout": ""
+}
