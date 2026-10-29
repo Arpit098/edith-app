@@ -12,6 +12,11 @@ def main():
             f.write(json.dumps(sys.argv[1:]) + "\n")
     with open(os.environ["FAKE_CLAUDE_PLAN"]) as f:
         plan = json.load(f)
+    if "--resume" in sys.argv and "if_resume" in plan:
+        plan = plan["if_resume"]
+    if plan.get("stderr_first"):
+        sys.stderr.write(plan["stderr_first"])
+        sys.stderr.flush()
     for ev in plan.get("events", []):
         print(json.dumps(ev), flush=True)
         time.sleep(plan.get("delay", 0))

@@ -38,7 +38,10 @@ Fields the agent adds (new fields only; existing meanings unchanged):
   tmux Claude is ready), so a `not_ready` failure has no `turn.started` before it.
 - `turn.done` also carries `is_error` and `subtype` (Claude's result subtype, e.g. `success`).
 - `turn.failed` with `reason: error` carries `code` (the exit code) and `stderr` (its last 800 characters).
-- `permission.request` also carries `ref` and `lane` of the turn that asked (both `null` when unknown).
+  Two more reasons: `queue_full` (too many messages already waiting) and `bridge_error` (a bug;
+  `detail` has the message).
+- `permission.request` and `permission.resolved` also carry `ref` and `lane` of the turn that asked
+  (both `null` when unknown).
 - `permission.resolved.decision` is `allow`, `deny` or `gone` (answered elsewhere or timed out).
 
 ## Replies and buttons
