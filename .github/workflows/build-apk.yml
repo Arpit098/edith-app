@@ -43,11 +43,24 @@ jobs:
       - run: npm run typecheck
       - run: npx jest --ci
 
+  # Runs alongside `check` (no `needs`): a failing check still fails the PR, and the APK isn't
+  # held back by the tests.
   apk:
     name: Build APK
-    needs: check
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    env:
+      # ccache for the C++ the build compiles (expo-modules-core JSI, the app's codegen). CMake reads
+      # these launcher variables from the environment. Paths are made relative to the workspace and
+      # mtimes ignored, so a fresh checkout still hits the cache.
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_NOHASHDIR: 'true'
+      CCACHE_COMPILERCHECK: content
+      CCACHE_SLOPPINESS: file_macro,time_macros,include_file_mtime,include_file_ctime,pch_defines
+      CCACHE_MAXSIZE: 1G
+      CMAKE_C_COMPILER_LAUNCHER: ccache
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -59,15 +72,43 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
-      - uses: gradle/actions/setup-gradle@v4 # caches Gradle downloads and build outputs between runs
+      - uses: gradle/actions/setup-gradle@v4 # caches Gradle downloads and the Gradle build cache
+        with:
+          cache-read-only: false # also save from PR builds (by default only the default branch saves)
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ccache
       - run: npm ci --no-audit --no-fund
+      - name: React Native version (for the ccache key)
+        id: rn
+        run: echo "version=$(node -p "require('react-native/package.json').version")" >> "$GITHUB_OUTPUT"
+      - name: ccache
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          # A new entry each run (run_id), restored from the newest one with the same lockfile + RN.
+          key: ccache-${{ runner.os }}-rn${{ steps.rn.outputs.version }}-${{ hashFiles('app/package-lock.json') }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-${{ runner.os }}-rn${{ steps.rn.outputs.version }}-${{ hashFiles('app/package-lock.json') }}-
+            ccache-${{ runner.os }}-rn${{ steps.rn.outputs.version }}-
+      - run: ccache --zero-stats
       - name: Expo prebuild (generates android/)
         run: npx expo prebuild --platform android --no-install
         env:
           CI: 1
-      - name: "Gradle assembleRelease (arm64 only: every current Android phone; halves the build)"
+      # arm64 only (every current Android phone). Gradle build cache on (task outputs reused across
+      # runs through setup-gradle). This build is debug-signed, so no R8/minify, no resource
+      # shrinking and no PNG crunching: they only cost time here.
+      - name: Gradle assembleRelease
         working-directory: app/android
-        run: ./gradlew assembleRelease --no-daemon -PreactNativeArchitectures=arm64-v8a
+        run: >-
+          ./gradlew assembleRelease --no-daemon --build-cache
+          -PreactNativeArchitectures=arm64-v8a
+          -Pandroid.enableMinifyInReleaseBuilds=false
+          -Pandroid.enableShrinkResourcesInReleaseBuilds=false
+          -Pandroid.enablePngCrunchInReleaseBuilds=false
+          "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g"
+      - name: ccache hit rate
+        if: always()
+        run: ccache --show-stats
       - name: Name the APK
         id: apk
         run: |
