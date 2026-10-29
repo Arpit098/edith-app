@@ -1,6 +1,6 @@
 module.exports = {
   preset: 'jest-expo/android',
-  roots: ['<rootDir>/src'],
+  roots: ['<rootDir>/src', '<rootDir>/scripts'],
   testMatch: ['**/__tests__/**/*.test.ts?(x)'],
   clearMocks: true,
 };

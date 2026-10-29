@@ -1,9 +1,13 @@
 # Builds the EDITH Android APK on GitHub's x86 runners (never on edith: ARM64, PLAN.md §5).
-# Expo prebuild + Gradle, no EAS or other paid service. The APK is a workflow artifact.
+# Expo prebuild + Gradle, no EAS or other paid service.
 #
-# Signing: for now the release build is signed with the debug keystore that prebuild generates
-# (installable, not for distribution). Release signing comes later from a keystore Arpit creates
-# and stores in GitHub Secrets; no keystore is ever generated or committed here.
+# Publishes, per contracts/app-updates.md §2, the artifacts edith collects from successful `main` runs:
+# - `edith-apk`: edith.apk + apk.json (version, versionCode, sha256, runtimeVersion, signing cert);
+# - `edith-ota`: the signed expo-updates bundle (only when the OTA signing key is configured).
+#
+# Signing (§6): the release key from GitHub Secrets (EDITH_KEYSTORE_*) when present, else Expo's public
+# debug key, with a warning in the job summary (edith never offers a debug-signed APK). Secrets reach
+# only the steps that need them, are written to $RUNNER_TEMP, never echoed, and deleted at the end.
 name: build-apk
 
 on:
@@ -50,6 +54,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
+      # The release certificate Arpit made (contracts/app-updates.md §6): a release build must carry it.
+      RELEASE_CERT_SHA256: 2B:6C:D3:6E:EA:02:20:9B:55:D9:7D:7A:78:20:E1:F6:81:A6:B1:60:67:3A:4A:49:F2:2B:43:9F:3F:D8:02:AB
+      UPDATES_BASE_URL: http://edith:8787
       # ccache for the C++ the build compiles (expo-modules-core JSI, the app's codegen). CMake reads
       # these launcher variables from the environment. Paths are made relative to the workspace and
       # mtimes ignored, so a fresh checkout still hits the cache.
@@ -90,15 +97,67 @@ jobs:
             ccache-${{ runner.os }}-rn${{ steps.rn.outputs.version }}-${{ hashFiles('app/package-lock.json') }}-
             ccache-${{ runner.os }}-rn${{ steps.rn.outputs.version }}-
       - run: ccache --zero-stats
+
+      - name: Signing keys (from GitHub Secrets, if set)
+        id: keys
+        env:
+          EDITH_KEYSTORE_B64: ${{ secrets.EDITH_KEYSTORE_B64 }}
+          EDITH_UPDATES_KEY_PEM: ${{ secrets.EDITH_UPDATES_KEY_PEM }}
+          EDITH_UPDATES_CERT_PEM: ${{ secrets.EDITH_UPDATES_CERT_PEM }}
+        run: |
+          set -euo pipefail
+          umask 077
+          echo "EDITH_VERSION_CODE=$((1000 + GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
+          if [ -n "$EDITH_KEYSTORE_B64" ]; then
+            printf '%s' "$EDITH_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.p12"
+            echo "EDITH_KEYSTORE_PATH=$RUNNER_TEMP/release.p12" >> "$GITHUB_ENV"
+            echo "signing=release" >> "$GITHUB_OUTPUT"
+          else
+            echo "signing=debug" >> "$GITHUB_OUTPUT"
+            {
+              echo "### ⚠️ Debug-signed APK"
+              echo "No release keystore in GitHub Secrets (EDITH_KEYSTORE_B64), so this APK is signed with Expo's"
+              echo "**public** debug key. It installs for testing, but edith will never offer it as an update."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -n "$EDITH_UPDATES_KEY_PEM" ]; then
+            printf '%s\n' "$EDITH_UPDATES_KEY_PEM" > "$RUNNER_TEMP/ota-key.pem"
+            committed=$(openssl x509 -in certs/updates-certificate.pem -outform DER | sha256sum | cut -d' ' -f1)
+            if [ -n "$EDITH_UPDATES_CERT_PEM" ]; then
+              secret=$(printf '%s\n' "$EDITH_UPDATES_CERT_PEM" | openssl x509 -outform DER | sha256sum | cut -d' ' -f1)
+              [ "$secret" = "$committed" ] || { echo "::error::EDITH_UPDATES_CERT_PEM differs from app/certs/updates-certificate.pem"; exit 1; }
+            fi
+            echo "EDITH_UPDATES_SIGNING=1" >> "$GITHUB_ENV"
+            echo "ota=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "ota=0" >> "$GITHUB_OUTPUT"
+            {
+              echo "### ⚠️ OTA updates off"
+              echo "No OTA signing key in GitHub Secrets (EDITH_UPDATES_KEY_PEM): this APK has expo-updates disabled"
+              echo "and no \`edith-ota\` bundle is published."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Expo prebuild (generates android/)
         run: npx expo prebuild --platform android --no-install
         env:
           CI: 1
+      - name: runtimeVersion (fingerprint of the native side)
+        id: runtime
+        run: |
+          rv=$(npx expo-updates runtimeversion:resolve --platform android | node -pe "JSON.parse(require('fs').readFileSync(0)).runtimeVersion")
+          [ -n "$rv" ] || { echo "::error::no runtimeVersion"; exit 1; }
+          echo "version=$rv" >> "$GITHUB_OUTPUT"
+
       # arm64 only (every current Android phone). Gradle build cache on (task outputs reused across
-      # runs through setup-gradle). This build is debug-signed, so no R8/minify, no resource
-      # shrinking and no PNG crunching: they only cost time here.
+      # runs through setup-gradle). No R8/minify, resource shrinking or PNG crunching: they cost
+      # build time and buy nothing for this personal app.
       - name: Gradle assembleRelease
         working-directory: app/android
+        env:
+          EDITH_KEYSTORE_PASSWORD: ${{ secrets.EDITH_KEYSTORE_PASSWORD }}
+          EDITH_KEY_ALIAS: ${{ secrets.EDITH_KEY_ALIAS }}
+          EDITH_KEY_PASSWORD: ${{ secrets.EDITH_KEY_PASSWORD }}
         run: >-
           ./gradlew assembleRelease --no-daemon --build-cache
           -PreactNativeArchitectures=arm64-v8a
@@ -109,15 +168,71 @@ jobs:
       - name: ccache hit rate
         if: always()
         run: ccache --show-stats
-      - name: Name the APK
+
+      - name: Verify and describe the APK (apk.json)
         id: apk
+        env:
+          SIGNING: ${{ steps.keys.outputs.signing }}
+          RUNTIME_VERSION: ${{ steps.runtime.outputs.version }}
         run: |
-          name="edith-$(node -p "require('./app.json').expo.version")-${GITHUB_SHA::7}.apk"
-          mv android/app/build/outputs/apk/release/app-release.apk "$name"
-          echo "name=$name" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          mkdir -p out/apk
+          mv android/app/build/outputs/apk/release/app-release.apk out/apk/edith.apk
+          apk=out/apk/edith.apk
+          apksigner="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)/apksigner"
+          digest=$("$apksigner" verify --print-certs "$apk" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | tr 'a-f' 'A-F' | sed 's/../&:/g; s/:$//')
+          echo "Signing certificate SHA-256: $digest"
+          if [ "$SIGNING" = release ] && [ "$digest" != "$RELEASE_CERT_SHA256" ]; then
+            echo "::error::Release build is signed with $digest, expected $RELEASE_CERT_SHA256"; exit 1
+          fi
+          embedded=$(unzip -p "$apk" assets/fingerprint 2>/dev/null || true)
+          if [ -n "$embedded" ] && [ "$embedded" != "$RUNTIME_VERSION" ]; then
+            echo "::error::The APK's runtimeVersion ($embedded) differs from the resolved one ($RUNTIME_VERSION)"; exit 1
+          fi
+          jq -n \
+            --arg versionName "$(node -p "require('./app.json').expo.version")" \
+            --argjson versionCode "$EDITH_VERSION_CODE" \
+            --arg sha "$GITHUB_SHA" --argjson run_id "$GITHUB_RUN_ID" --argjson built_at "$(date +%s)" \
+            --arg runtimeVersion "$RUNTIME_VERSION" \
+            --argjson size "$(stat -c %s "$apk")" --arg sha256 "$(sha256sum "$apk" | cut -d' ' -f1)" \
+            --arg cert_sha256 "$digest" --arg signing "$SIGNING" \
+            '{versionName: $versionName, versionCode: $versionCode, sha: $sha, run_id: $run_id, built_at: $built_at,
+              runtimeVersion: $runtimeVersion, size: $size, sha256: $sha256, cert_sha256: $cert_sha256, signing: $signing}' \
+            > out/apk/apk.json
+          cat out/apk/apk.json
+          {
+            echo "### APK"
+            echo "| | |"; echo "|---|---|"
+            jq -r 'to_entries[] | "| \(.key) | `\(.value)` |"' out/apk/apk.json
+          } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.apk.outputs.name }}
-          path: app/${{ steps.apk.outputs.name }}
+          name: edith-apk
+          path: app/out/apk/
           if-no-files-found: error
           retention-days: 30
+
+      - name: OTA bundle (expo export + signed manifest)
+        if: steps.keys.outputs.ota == '1'
+        env:
+          RUNTIME_VERSION: ${{ steps.runtime.outputs.version }}
+        run: |
+          set -euo pipefail
+          npx expo export --platform android --output-dir out/ota/dist
+          npx expo config --type public --json > "$RUNNER_TEMP/expo-config.json"
+          node scripts/ota.js --dir out/ota --runtime-version "$RUNTIME_VERSION" \
+            --key "$RUNNER_TEMP/ota-key.pem" --cert certs/updates-certificate.pem \
+            --base-url "$UPDATES_BASE_URL" --sha "$GITHUB_SHA" --run-id "$GITHUB_RUN_ID" \
+            --expo-config "$RUNNER_TEMP/expo-config.json"
+          echo "OTA update \`$(jq -r .id out/ota/update.json)\` for runtime \`$RUNTIME_VERSION\`" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: steps.keys.outputs.ota == '1'
+        with:
+          name: edith-ota
+          path: app/out/ota/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Remove signing keys
+        if: always()
+        run: rm -f "$RUNNER_TEMP/release.p12" "$RUNNER_TEMP/ota-key.pem"
