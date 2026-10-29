@@ -4,7 +4,6 @@ import json
 import pathlib
 import shutil
 import tempfile
-import time
 import unittest
 import urllib.error
 import urllib.request
@@ -102,9 +101,7 @@ class EndToEndTest(unittest.TestCase):
                           resolve_ip=lambda: "127.0.0.1", allow_loopback=True, retry_wait=0.05)
         self.api.start(EventBus(), registry, None)
         self.addCleanup(self.api.stop)
-        deadline = time.monotonic() + 5
-        while self.api.address is None and time.monotonic() < deadline:  # the bind runs on its own thread
-            time.sleep(0.01)
+        self.assertTrue(self.api.listening.wait(5))  # the bind runs on its own thread
         self.host, self.port = self.api.address
 
     def post(self, data, ctype):

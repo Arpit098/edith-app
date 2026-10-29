@@ -4,6 +4,7 @@ import email.parser
 import email.policy
 import io
 import json
+import socket
 import threading
 import wave
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -56,12 +57,21 @@ class FakeWhisper:
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.server.daemon_threads = True
         self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
-        self._thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        # A long idle poll: close() wakes it with a connection instead (the default 0.5 s poll made
+        # every close wait up to half a second).
+        self._thread = threading.Thread(target=self.server.serve_forever, kwargs={"poll_interval": 60}, daemon=True)
         self._thread.start()
 
     def close(self):
         self.release.set()
-        self.server.shutdown()
+        stopper = threading.Thread(target=self.server.shutdown)
+        stopper.start()
+        while stopper.is_alive():  # serve_forever sees the shutdown when select() wakes: wake it
+            try:
+                socket.create_connection(self.server.server_address, timeout=1).close()
+            except OSError:
+                pass
+            stopper.join(0.05)
         self.server.server_close()
         self._thread.join(5)
 
