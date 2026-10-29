@@ -67,7 +67,7 @@ class RouteTest(unittest.TestCase):
 
     def test_stt_errors_map_to_statuses(self):
         for kind, status in [("bad_audio", 400), ("too_long", 413), ("busy", 429), ("unavailable", 503),
-                             ("error", 502)]:
+                             ("timeout", 504), ("error", 502)]:
             _, route = load(FakeStt(SttError(kind, "why")))
             with self.assertRaises(ApiError) as cm:
                 call(route, b"x")

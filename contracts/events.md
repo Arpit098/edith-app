@@ -101,7 +101,8 @@ M4A/AAC from Android's recorder works. `language` (optional, e.g. `hi`) skips la
 `text` is `""` when there was no speech; `language` is the detected or given code; `seconds` is the
 transcription time and `duration` the audio length. Limits: 8 MB (413) and 60 s of audio (413).
 More errors: 400 (unreadable audio), 429 (transcriptions already waiting), 503 (whisper is down or
-loading its model, or stt is not configured) and 502 (whisper failed).
+loading its model, or stt is not configured), 504 (no transcript within max(5 s, 1.5 × the audio
+length), e.g. a runaway decode; not retried) and 502 (whisper failed).
 
 App messages reach Claude as `[App message from Arpit, <time>]` (plus ` [voice]` for speech) and
 the text on the next line.

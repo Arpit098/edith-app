@@ -9,7 +9,7 @@ import email.policy
 from edith.core import ApiError, Context, Feature
 from edith.ports.stt import SttError
 
-STATUS = {"bad_audio": 400, "too_long": 413, "busy": 429, "unavailable": 503, "error": 502}
+STATUS = {"bad_audio": 400, "too_long": 413, "busy": 429, "unavailable": 503, "timeout": 504, "error": 502}
 
 
 def audio_from(raw: bytes, content_type: str) -> tuple[bytes, str]:
