@@ -153,7 +153,8 @@ class MainLaneTest(unittest.TestCase):
         self.assertEqual((result.running, result.dropped), (1, ["m2"]))
         self.assertEqual(h.wait("turn.stopped", "m1", timeout=2).data["lane"], "main")
         self.assertIn("Escape", h.fake.keys)
-        self.assertEqual(h.types("m2"), ["turn.queued"])  # never ran
+        self.assertEqual(h.types("m2"), ["turn.queued", "turn.stopped"])  # never ran
+        self.assertEqual(h.wait("turn.stopped", "m2").data["lane"], "queued")
 
     def test_stop_grace_when_no_interrupt_shows(self):
         h = Harness(self)

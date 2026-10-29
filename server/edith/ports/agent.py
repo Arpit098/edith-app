@@ -24,6 +24,8 @@ class RunInfo:
 
 
 class AgentBackend(Protocol):
+    max_side_lanes: int  # side lanes that can run while the main lane is busy
+
     def start(self, bus) -> None:
         """Begin working (threads, watchers). Progress and replies arrive as events on `bus`."""
 
@@ -32,13 +34,19 @@ class AgentBackend(Protocol):
         (always the queue when force_queue). Results arrive as events (contracts/events.md)."""
 
     def stop(self) -> StopResult:
-        """Interrupt running turns and drop queued ones."""
+        """Interrupt running turns and drop queued ones (each dropped one gets turn.stopped, lane "queued")."""
 
     def status(self) -> tuple[list[RunInfo], int]:
         """Running turns (oldest first) and the number of queued messages."""
 
     def busy(self) -> bool:
         """True while the main lane is working or has messages queued."""
+
+    def tmux_alive(self) -> bool:
+        """Whether the main lane's interactive session is running."""
+
+    def has_conversation(self) -> bool:
+        """Whether a conversation is in progress (side lanes would fork it)."""
 
     def current_session(self) -> str | None: ...
 

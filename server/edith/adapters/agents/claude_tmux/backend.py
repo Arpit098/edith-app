@@ -73,7 +73,7 @@ class ClaudeTmux:
         self.claude = config.get("claude_bin") or os.environ.get("CLAUDE_BIN") or os.path.join(p.home, ".local/bin/claude")
         self.mcp_config = config.get("mcp_config") or os.path.join(bridge, "mcp.json")
         self.launch = config.get("launch") or os.path.join(bridge, "edith-claude.sh")
-        self.max_side = int(config.get("max_side_lanes", 2))
+        self.max_side = self.max_side_lanes = int(config.get("max_side_lanes", 2))
         self.ready_timeout = float(config.get("ready_timeout", 90))
         self.alive_every = float(config.get("check_alive_every", 5))
         self.stop_grace = float(config.get("stop_grace", 15))
@@ -424,6 +424,7 @@ class ClaudeTmux:
                 self._main.put(None)  # keep a shutdown signal
                 break
             dropped.append(job[2])
+            self._publish("turn.stopped", job[1], ref=job[2], lane="queued")
         with self._lock:
             live = [r for r in self._runs.values() if r.lane == "main" or (r.proc and r.proc.poll() is None)]
         for r in live:

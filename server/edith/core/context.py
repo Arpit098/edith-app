@@ -39,14 +39,22 @@ class CommandCall:
     args: str
     origin: str  # telegram | app | terminal
     reply: Callable[[str | Reply], None]
+    ref: str | None = None     # the message it came in (turn events for it carry this ref)
+    prompt: str | None = None  # the rest of the message as an agent prompt, built by the frontend
+    #                            (e.g. Telegram's "[Telegram message from Arpit, …]" header), or None if empty
 
 
 @dataclass
 class Command:
     name: str
-    description: str
+    description: str  # shown in a frontend's command menu (Telegram's setMyCommands), when `menu`
     handler: Callable[[CommandCall], str | Reply | None]  # a returned value is sent as the reply
     owner: str
+    help: str | None = None   # its /help line ("start a fresh conversation"); None: not in /help
+    usage: str = ""           # arguments shown in /help, e.g. "<title>"
+    menu: bool = False        # listed in the command menu
+    order: int = 1000         # position in /help and the menu
+    group: str | None = None  # commands of one group share a /help line ("/brief /mail … – quick actions")
 
 
 @dataclass
@@ -63,6 +71,7 @@ class ActionCall:
     action: str  # the full action string, e.g. "rem:snooze:15:ab12cd"
     origin: str
     reply: Callable[[str | Reply], None]  # send a new message to where the press came from
+    ref: str | None = None  # a ref for a turn this press starts (e.g. a quick action)
 
     @property
     def args(self) -> list[str]:
@@ -136,10 +145,30 @@ class Registry:
             raise ValueError(f"job {job.name} already registered by {self.jobs[job.name].owner}")
         self.jobs[job.name] = job
 
-    def press(self, action: str, origin: str, reply) -> ActionResult | None:
+    def press(self, action: str, origin: str, reply, ref: str | None = None) -> ActionResult | None:
         """Route a button press to the feature that owns its prefix. Unknown prefixes return None."""
         handler = self.actions.get(action.split(":", 1)[0])
-        return handler.handler(ActionCall(action, origin, reply)) if handler else None
+        return handler.handler(ActionCall(action, origin, reply, ref)) if handler else None
+
+    def _listed(self, keep):
+        return sorted((c for c in self.commands.values() if keep(c)), key=lambda c: (c.order, c.name))
+
+    def help_lines(self) -> list[str]:
+        """The /help lines, in order: "/name <usage> – help", one line per group."""
+        lines, at = [], {}
+        for c in self._listed(lambda c: c.help):
+            label = f"/{c.name}" + (f" {c.usage}" if c.usage else "")
+            if c.group and c.group in at:
+                lines[at[c.group]][0].append(label)
+                continue
+            if c.group:
+                at[c.group] = len(lines)
+            lines.append(([label], c.help))
+        return [f"{' '.join(labels)} – {text}" for labels, text in lines]
+
+    def menu(self) -> list[dict]:
+        """The command menu, in order: [{command, description}] (Telegram's setMyCommands)."""
+        return [{"command": c.name, "description": c.description} for c in self._listed(lambda c: c.menu)]
 
 
 class Context:
@@ -151,8 +180,16 @@ class Context:
         self._registry = registry
         self._log = logging.getLogger(f"edith.feature.{feature}")
 
-    def add_command(self, name: str, description: str, handler) -> None:
-        self._registry.add_command(Command(name, description, handler, self.feature))
+    def add_command(self, name: str, description: str, handler, *, help: str | None = None, usage: str = "",
+                    menu: bool = False, order: int = 1000, group: str | None = None) -> None:
+        """A /command on every frontend. `help`, `usage`, `menu`, `order` and `group` place it in
+        /help and the command menu (see Registry.help_lines and Registry.menu)."""
+        self._registry.add_command(Command(name, description, handler, self.feature, help, usage, menu, order, group))
+
+    @property
+    def registry(self) -> Registry:
+        """Read-only use only (e.g. building /help from the registered commands)."""
+        return self._registry
 
     def add_route(self, method: str, path: str, handler) -> None:
         self._registry.add_route(Route(method, path, handler, self.feature))

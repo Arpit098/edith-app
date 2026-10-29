@@ -42,6 +42,9 @@ Fields the agent adds (new fields only; existing meanings unchanged):
   `detail` has the message).
 - `permission.request` and `permission.resolved` also carry `ref` and `lane` of the turn that asked
   (both `null` when unknown).
+- `turn.stopped` with `lane: queued` is a queued message dropped by /stop (it never ran).
+- `message.system` may carry `key`, a feature's name for that message. A later
+  `message.buttons_cleared {key}` removes its buttons (e.g. an approval answered elsewhere or timed out).
 - `permission.resolved.decision` is `allow`, `deny` or `gone` (answered elsewhere or timed out).
 
 ## Replies and buttons
