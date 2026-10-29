@@ -19,6 +19,20 @@ EDITH, and you build it from this server. Arpit reviews the work.
   - Small work (doc fixes, tiny tweaks) goes straight to `main`, with no PR.
   - Live deploys use tags made from the phase branch (see `deploy/README.md`).
   - No co-author lines in commits.
+- **Quality:** the architecture must be solid and efficient, with no brute-force methods.
+  - Wait on events (hook event, file change, socket, `Condition`/`Queue`), never fixed sleeps or busy
+    loops. If polling can't be avoided, poll with backoff and a timeout, and say why in a comment.
+  - Don't re-read or re-parse whole files repeatedly. Tail transcripts and event logs from a saved
+    byte offset; cache parsed config and state, and reload only when the file changes.
+  - Use the right data structures: dict/set lookups, `heapq` for due reminders, bounded queues, no
+    O(n²) loops over sessions or messages.
+  - One thread per job, never one per message. Shut down cleanly, with no leaked processes, fds or tmux panes.
+  - Shared state: atomic writes (tmp + `os.replace`) and file locks, no read-modify-write races.
+  - Every network call (Telegram, Google, whisper) has a timeout and retries with backoff; failures
+    stay inside their adapter or feature.
+  - Keep it simple: stdlib first, no extra layers, frameworks or dependencies unless they remove real complexity.
+  - The legacy code defines the behaviour, not the design. Keep its outputs identical (golden tests),
+    fix brute-force internals while migrating, and list each fix in the step summary.
 - **Live system is separate from this repo.** The running Telegram bridge lives in `~/edith/bridge/`,
   with services `edith-bridge` and `edith-claude` (systemd --user).
   - Never edit, restart or replace them (or `~/edith/.claude/settings.json`) without first sending
