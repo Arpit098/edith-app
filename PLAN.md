@@ -10,7 +10,7 @@ _Created 2026-10-29, updated 2026-10-29 (battery-light triggers). Status: Phase 
 ## 1. Goals
 
 - Talk to EDITH by voice or text from an Android phone, **light on battery by default**. There is no
-  background listening unless Arpit turns on the **"Hey Edith"** wake word himself (see 4.8).
+  background listening unless Arpit chooses to turn on the **"Hey Edith"** wake word (see 4.8).
 - See the **live Claude Code session**: messages, tool calls, file edits and diffs as they happen.
 - Do everything the Telegram bot can: switch sessions, stop tasks, Allow/Deny permission prompts.
 - Long-press the power button to open EDITH, by making it Android's **default digital assistant**.
@@ -148,7 +148,7 @@ Light by default. **Nothing listens in the background unless Arpit turns it on.*
 | **Power button long-press** | EDITH set as the default digital assistant | Zero |
 | **Home-screen widget** | Tap, and EDITH opens already listening | Zero |
 | **Earbud / headset button** | The headset assistant gesture (long-press on most Bluetooth earbuds) goes to the default assistant | Zero |
-| **"Hey Edith" wake word** | **Manual toggle, off by default.** Arpit turns it on when he wants hands-free and off afterwards. In the app's Settings, and "Turn off" in its notification | Only while on, roughly 5–15%/day if left on all day (to be measured) |
+| **"Hey Edith" wake word** | **Manual toggle, off by default.** Arpit turns it on when hands-free is wanted and off afterwards. In the app's Settings, and "Turn off" in its notification | Only while on, roughly 5–15%/day if left on all day (to be measured) |
 
 While the wake word is on, a cheap **sound gate** (a loudness check) keeps the openWakeWord model idle in
 silence. This reduces the cost without changing how it behaves. The toggle's state is
