@@ -22,6 +22,10 @@ class FakeTelegram:
         finally:
             self._notify()
 
+    def once(self, method: str, timeout: int = 40, **params):
+        """BotApi.once (a single attempt): recorded like any call."""
+        return self(method, timeout, **params)
+
     def _notify(self):
         with self.changed:
             self.changed.notify_all()

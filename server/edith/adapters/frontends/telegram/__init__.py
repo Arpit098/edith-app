@@ -10,6 +10,9 @@ Changes from legacy:
 - access.json is parsed again only when it changes (legacy re-read it for every message).
 - The offset is saved before each update is handled, so a crash never replays a message.
 - Network calls have timeouts and retries (api.py); polling backs off 1 s → 30 s on errors.
+- start() never touches the network: the startup calls (deleteWebhook, setMyCommands, the crash
+  notice; one attempt each, as legacy) run on the poller thread, so an unreachable Telegram can't
+  hold up the bridge's start.
 - Nothing is read until start(): building the adapter (e.g. `make check`) touches no file.
 """
 import logging
@@ -78,10 +81,15 @@ class TelegramFrontend:
         self._stopping = threading.Event()
         self._threads: list[threading.Thread] = []
         self._allowed_key, self._allowed = None, set()
+        self._crashed = False
+        self.startup_done = threading.Event()  # set once the startup calls have been made
 
     # ---- lifecycle ----
 
     def start(self, bus, registry, agent):
+        """Never touches the network: Telegram may be unreachable. The startup calls and polling run
+        on the poller thread, so the bridge comes up (and logs) at once either way."""
+        log.info("Telegram frontend starting")
         self.bus, self.registry, self.agent = bus, registry, agent
         self.state = StateFile.at(self.paths.bridge_state)
         if self.api is None:
@@ -89,17 +97,22 @@ class TelegramFrontend:
         for pattern, handler in (("turn.*", self._on_turn), ("permission.*", self._on_permission),
                                  ("message.system", self._on_system), ("message.buttons_cleared", self._on_cleared)):
             bus.subscribe(pattern, handler, owner="telegram")
-        self.api("deleteWebhook")
-        self.api("setMyCommands", commands=registry.menu())
-        if not self.state.get("clean_exit", True):
-            for uid in self.allowed():
-                self.api("sendMessage", chat_id=uid, text="⚠️ E.D.I.T.H restarted after a crash and is back online.")
+        self._crashed = not self.state.get("clean_exit", True)
         self.state.update(lambda s: s.__setitem__("clean_exit", False))
-        workers = [("ticker", self._ticker)] + ([("poller", self._poller)] if self.poll else [])
-        for name, target in workers:
+        for name, target in (("ticker", self._ticker), ("poller", self._poller)):
             t = threading.Thread(target=target, name=f"telegram:{name}", daemon=True)
             t.start()
             self._threads.append(t)
+
+    def _startup_calls(self):
+        """As legacy at startup, in its order, one attempt each (a failure is logged, not retried)."""
+        self.api.once("deleteWebhook")
+        self.api.once("setMyCommands", commands=self.registry.menu())
+        if self._crashed:
+            for uid in self.allowed():
+                self.api.once("sendMessage", chat_id=uid, text="⚠️ E.D.I.T.H restarted after a crash and is back online.")
+        log.info("Telegram startup calls done; polling")
+        self.startup_done.set()
 
     def stop(self):
         self._stopping.set()
@@ -173,13 +186,21 @@ class TelegramFrontend:
         return int(chat), (int(msg) if msg.isdigit() else None)
 
     def _poller(self):
+        self._startup_calls()
+        if not self.poll:  # tests drive handle_update() themselves
+            return
         offset, failures = self.state.get("offset"), 0
         while not self._stopping.is_set():
             updates = self.api.get_updates(offset)
             if updates is None:
                 failures += 1
-                self._stopping.wait(min(30, 2 ** (failures - 1)))  # back off: 1, 2, 4 … 30 s
+                wait = min(30, 2 ** (failures - 1))  # back off: 1, 2, 4 … 30 s
+                if failures in (1, 5) or failures % 20 == 0:  # an outage is logged, not every attempt
+                    log.warning("Telegram unreachable (%d failed polls); retrying in %ds", failures, wait)
+                self._stopping.wait(wait)
                 continue
+            if failures:
+                log.info("Telegram reachable again after %d failed polls", failures)
             failures = 0
             for u in updates:
                 offset = u["update_id"] + 1

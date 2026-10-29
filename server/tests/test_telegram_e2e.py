@@ -117,6 +117,7 @@ class New:
         self.frontend = TelegramFrontend({"poll": False}, api=self.tg)
         self.agent.start(self.bus)
         self.frontend.start(self.bus, self.registry, self.agent)
+        assert self.frontend.startup_done.wait(5)  # the startup calls run on the poller thread
         self.startup = self.tg.record()
         self.tg.calls.clear()
 

@@ -45,28 +45,29 @@ def allowed_ids(telegram_dir):
 
 
 class BotApi:
-    def __init__(self, token, sleep=time.sleep):
-        self._base = f"https://api.telegram.org/bot{token}/"
-        self._files = f"https://api.telegram.org/file/bot{token}/"
+    def __init__(self, token, sleep=time.sleep, server="https://api.telegram.org"):
+        self._base = f"{server}/bot{token}/"
+        self._files = f"{server}/file/bot{token}/"
         self._sleep = sleep
 
-    def _post(self, method, data, headers, timeout):
-        """One request with retries. Returns the parsed body, or None after logging the failure."""
-        for attempt in range(RETRIES + 1):
+    def _post(self, method, data, headers, timeout, retries=RETRIES):
+        """One request with up to `retries` retries. Returns the parsed body, or None after logging
+        the failure."""
+        for attempt in range(retries + 1):
             req = urllib.request.Request(self._base + method, data=data, headers=headers)
             try:
                 with urllib.request.urlopen(req, timeout=timeout) as r:
                     return json.load(r)
             except urllib.error.HTTPError as e:
                 body = e.read().decode(errors="replace")
-                if e.code == 429 and attempt < RETRIES:
+                if e.code == 429 and attempt < retries:
                     try:
                         wait = json.loads(body).get("parameters", {}).get("retry_after", 1)
                     except ValueError:
                         wait = 1
                     self._sleep(min(MAX_RETRY_AFTER, wait))
                     continue
-                if e.code >= 500 and attempt < RETRIES:
+                if e.code >= 500 and attempt < retries:
                     self._sleep(2 ** attempt)
                     continue
                 if "message is not modified" not in body:
@@ -78,7 +79,7 @@ class BotApi:
                 log.warning("tg %s timed out", method)  # it may have arrived: don't send it twice
                 return None
             except (urllib.error.URLError, ConnectionError) as e:
-                if attempt < RETRIES:  # never reached Telegram: safe to try again
+                if attempt < retries:  # never reached Telegram: safe to try again
                     self._sleep(2 ** attempt)
                     continue
                 log.warning("tg %s error: %s", method, getattr(e, "reason", e))
@@ -93,11 +94,18 @@ class BotApi:
         body = self._post(method, data, {"Content-Type": "application/json"}, timeout)
         return body.get("result") if body else None
 
+    def once(self, method, timeout=40, **params):
+        """Like a call, but a single attempt (no retries): for the startup calls, as legacy did them."""
+        data = json.dumps({k: v for k, v in params.items() if v is not None}).encode()
+        body = self._post(method, data, {"Content-Type": "application/json"}, timeout, retries=0)
+        return body.get("result") if body else None
+
     def get_updates(self, offset, timeout=30):
-        """Long poll. Returns the updates, or None on failure (the caller backs off)."""
+        """Long poll, a single attempt. Returns the updates, or None on failure: the poll loop backs
+        off and tries again, so retries never stack up during an outage."""
         data = json.dumps({"offset": offset, "timeout": timeout,
                            "allowed_updates": ["message", "callback_query"]}).encode()
-        body = self._post("getUpdates", data, {"Content-Type": "application/json"}, timeout + 15)
+        body = self._post("getUpdates", data, {"Content-Type": "application/json"}, timeout + 15, retries=0)
         return body.get("result", []) if body else None
 
     def send_file(self, chat_id, path, caption=None):
