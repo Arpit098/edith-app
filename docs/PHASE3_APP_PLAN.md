@@ -234,7 +234,18 @@ Playwright, **rendering the same overlay components as the phone**.
 The preview page shows a small "Preview: device differs" tag in a corner (outside the 412 × 915 frame,
 or hidden with `&clean=1` for screenshots), so no one mistakes a screenshot for the phone.
 
-## 9. Proposal: over-the-air JS updates, self-hosted on edith
+## 9. Updating the app from inside the app
+
+Two paths, both served by edith over Tailscale only, both behind Arpit's App API token:
+
+| Change | Path | On the phone |
+|---|---|---|
+| JavaScript only (screens, overlay look, feature logic) | **(a) OTA bundle** via expo-updates | Downloads in the background, used on the next launch, rolled back on its own if it crashes at start |
+| Native (new library, Kotlin module, permissions, SDK upgrade) | **(b) New APK** from edith | Settings → "Update available" → download → sha256 check → Android's installer (one tap) |
+
+Both depend on **(c) one stable signing key**, so read (c) first: it decides when (b) can ship.
+
+### 9a. Over-the-air JS updates (expo-updates, self-hosted)
 
 Most changes in Phase 3 and later are JavaScript (screens, the overlay's look, feature logic). Today
 each one means a new APK (about 8 minutes of CI, a download and an install). With **expo-updates**
@@ -261,25 +272,115 @@ the next launch, with no EAS and no Expo account. A new APK is needed only when 
     answers a signed `multipart/mixed` manifest (or "no update" / "roll back to embedded");
   - `GET /v1/updates/assets/<hash>`, which serves files by content hash with long cache headers.
   It runs on the App API, so it's on the **Tailscale IP only**, like everything else.
-- **Auth:** expo-updates sends fixed request headers set at build time, so it can't use Arpit's
-  bearer token (which is entered at runtime and must never be baked into the APK). Proposal: a separate
-  **read-only updates token** (it allows only the two `updates` routes) is injected into
-  `app.json`'s `updates.requestHeaders` by CI from a GitHub secret. Even if it leaked, it would allow only
-  downloading our own signed app code, and only inside the tailnet. The manifest signature (the app
-  embeds the public certificate, `updates.codeSigningCertificate`) means the app runs only bundles
-  signed on edith.
+- **Auth: Arpit's token, set at runtime.** expo-updates 57.0.26 has
+  `Updates.setUpdateRequestHeadersOverride({ Authorization: 'Bearer …' })`, which needs no
+  `disableAntiBrickingMeasures`. The app calls it at startup with the token from secure storage, so the
+  token is **never baked into the APK** and the `updates` routes use the same bearer check as every other
+  route. The URL is set at build time: `http://edith:8787/v1/updates/manifest`, with the Tailscale
+  MagicDNS name, which works whatever IP edith has. Changing the URL at runtime would need
+  `setUpdateURLAndRequestHeadersOverride`, which only works with the anti-bricking measures switched off,
+  so we avoid it.
+  - Caveats: this API is marked **experimental**. The first launch after install has no override yet,
+    so that first check gets a 401 (harmless: the app just stays on its bundle). Both are checked in the step-0 spike.
+  - Fallback if it misbehaves: a separate read-only updates token (allowed only on the `updates` routes)
+    injected into `updates.requestHeaders` at build time from a GitHub secret.
+- **Verified:** the manifest is **code-signed** (expo-updates code signing: the app embeds the public
+  certificate `updates.codeSigningCertificate`; the private key stays on edith). The app refuses any
+  bundle not signed on edith, even one served from the right URL with the right token. Assets are fetched
+  by content hash and checked against the manifest.
 - **On the phone:**
   - `checkAutomatically: ON_LOAD` with `fallbackToCacheTimeout: 0`: launch never waits for the
     network; a new bundle downloads in the background and applies on the next cold start.
   - Settings gets "Check for update" (download and reload now) and shows the running update id and date in IST.
-  - expo-updates' error recovery rolls back to the previous bundle if a new one crashes at launch.
+  - **Crash on start → rollback:** expo-updates' error recovery marks a bundle that throws a fatal
+    error before the first render settles as failed, and launches the previous working one (in the
+    end, the APK's embedded bundle). The app then reports the failed update id to edith
+    (`POST /v1/app/events`, logged in the audit log) so it isn't served again.
 - **Rollback:** `deploy/ota-publish.sh --rollback` points the manifest back at the previous update id,
   or "roll back to embedded" (the APK's own bundle).
 - **Cost:** free. Each check is one small HTTP request at cold start, over Tailscale, and is skipped
   when offline. No polling.
-- **Needs approval** (it changes the live service): the `updates` server feature, the signing key on
-  edith, the updates token (GitHub secret + server config), and one APK that adds expo-updates (a native
-  module). After that, JS-only changes ship as OTA bundles.
+- **Needs approval** (it changes the live service): the `updates` server feature, the OTA signing key
+  on edith, and one APK that adds expo-updates (a native module). After that, JS-only changes ship as
+  OTA bundles.
+
+### 9b. In-app APK updates (native changes)
+
+- **Collect (on edith, pull only):** a server job (`features/app_updates`, `ctx.add_worker` plus a
+  scheduled check every 30 min, with backoff and a timeout on each `gh` call; no tight loop) runs
+  `gh run list --workflow build-apk.yml --branch main --status success`. For each new run it does
+  `gh run download <id>` into `~/.local/share/edith/apk/<versionCode>-<sha>/`. It records
+  `{versionName, versionCode, sha, run_id, size, sha256, built_at}` in `index.json` (atomic write), and
+  keeps the newest 5. A new `apk` artifact also carries a `version.json`, written by CI, with
+  `versionName`, `versionCode` and the signing certificate's SHA-256 digest.
+- **Verify on edith before offering it:** the signing certificate digest (`apksigner verify
+  --print-certs`, from the Android build-tools package on edith, a one-time install that needs approval)
+  must equal the pinned release digest in the server config. An APK signed by any other key is never
+  offered, which also stops a debug-signed build from reaching the phone once (c) is done.
+- **App API** (bearer token, Tailscale IP only; added to contracts/events.md first):
+
+  | Method | Path | Answer |
+  |---|---|---|
+  | GET | `/v1/app/latest` | `{versionName, versionCode, sha, size, sha256, cert_sha256, built_at, notes}` (`notes`: the commit subjects since the last APK) or 404 when there's none |
+  | GET | `/v1/app/apk?versionCode=` | The APK bytes (`application/vnd.android.package-archive`), with `Content-Length` and resumable with `Range`. Streamed from disk, never loaded whole |
+
+- **On the phone** (a `features/app-update` feature plus a `PackageInstaller` port and a small Kotlin adapter):
+  1. On `app.connected` (at most once per 6 h) and from Settings → "Check for updates": `GET /v1/app/latest`;
+     if `versionCode` is above the running one, Settings shows **Update available** (and a dot on the tab).
+  2. Download to the app's cache with progress (resumable; a timeout per chunk; one download at a time).
+  3. **Check the sha256** of the file against `latest.sha256`. On mismatch, delete it and say so.
+  4. Hand it to **Android's installer** (`PackageInstaller` session API, which needs the
+     `REQUEST_INSTALL_PACKAGES` permission). The first time, Android sends Arpit to "Install unknown apps"
+     to allow EDITH. Android **always** asks for one confirmation tap per install for apps that aren't
+     from a store; that can't be skipped, and we don't try.
+  5. Android itself rejects an APK whose signature differs from the installed app, which is a second,
+     independent check (see (c)).
+- **Rollback:** Android can't install an older `versionCode` over a newer one without uninstalling.
+  So a bad APK is fixed forward (a new build). JS mistakes are fixed with an OTA bundle (9a).
+
+### 9c. Signing: what we have now, and the release key
+
+**Checked 2026-10-29 (17:56 IST):** our CI APKs are all signed with **the same fixed debug keystore**,
+not a new one per run.
+- `expo prebuild` copies `android/app/debug.keystore` from Expo's template package
+  (`expo-template-bare-minimum`). The file is byte-identical in SDK 54, 56, 57 and 58 (sha256
+  `221e0a3106aa4c3c…`), and `build.gradle` signs the release build with it (`storePassword 'android'`,
+  alias `androiddebugkey`).
+- So **the signature is stable**: today's CI APKs install over each other, and an SDK upgrade won't
+  change the key.
+- **But that key is public.** Every Expo/React Native project ships the same file with the same
+  password, so anyone can sign an APK that Android accepts as an update to `com.arpit.edith`. That's
+  fine for testing. It's not acceptable for in-app updates of an app that can run commands on edith.
+
+**Plan for the release key** (before 9b ships):
+1. **Arpit creates it once, on his own machine** (never on edith, never by an agent):
+   `keytool -genkeypair -v -keystore edith-release.jks -alias edith -keyalg RSA -keysize 4096 -validity 10000`
+   with a strong password. Android requires the same key for every future update, so this key is the
+   app's identity for good.
+2. **Offline backup:** two copies (e.g. an encrypted USB stick and a password manager attachment), plus
+   the passwords in the password manager. If it's lost, the app can only be reinstalled under a new key
+   (an uninstall).
+3. **GitHub Secrets** (repo `Arpit098/edith-app`): `ANDROID_KEYSTORE_BASE64` (the `.jks`, base64),
+   `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`. CI decodes it to
+   `$RUNNER_TEMP` (never into the repo), and a small config plugin adds a `release` `signingConfig` read
+   from environment variables. The keystore file is deleted at the end of the job (`if: always()`).
+   PR builds from forks don't get secrets. That can't happen in this private repo, but release signing
+   runs only on `main` anyway.
+4. **Pin it on edith:** the release certificate's SHA-256 digest goes in the server config, so 9b only
+   offers APKs signed with it.
+5. **One-time reinstall:** going from the debug key to the release key changes the signature, and
+   Android won't update across that. So **once**, Arpit uninstalls the debug-signed EDITH and installs
+   the first release-signed APK. That deletes the app's data: he enters the server address and token
+   again (the token stays on edith; nothing is lost there). After that, every update (OTA or APK) keeps
+   the data.
+6. Optional later: APK Signature Scheme v3 key rotation (`apksigner rotate`) lets a future key change
+   happen without a reinstall, but only if planned from the release key onwards.
+
+### 9d. Order
+
+1. Release key (Arpit) → CI release signing → the one-time reinstall.
+2. 9b (APK updates), since it needs the stable key.
+3. 9a (OTA). The APK that adds expo-updates is delivered through 9b.
 
 ## 10. Open questions for Arpit
 
@@ -290,3 +391,5 @@ the next launch, with no EAS and no Expo account. A new APK is needed only when 
 3. **Spoken answer length:** keep the server's 2-sentence `speak`, or longer?
 4. **Over the lock screen:** allow talking to EDITH while the phone is locked (answers shown and spoken),
    or require unlocking first?
+5. **Release key:** when will you create it (9c)? Everything in 9 waits for it, and the one-time
+   reinstall happens then.
