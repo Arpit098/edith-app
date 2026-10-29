@@ -3,13 +3,14 @@
 An Android voice assistant ("Hey Edith") for E.D.I.T.H, the Claude Code agent running on the
 `edith` server. Like Siri, but it drives Arpit's own Claude Code session, and shows that session live.
 
-_Created 2026-10-29. Status: Phase 0 (planning)._
+_Created 2026-10-29, updated 2026-10-29 (battery-light triggers). Status: Phase 0 (planning)._
 
 ---
 
 ## 1. Goals
 
-- Talk to EDITH by voice or text from an Android phone, hands-free with the wake phrase **"Hey Edith"**.
+- Talk to EDITH by voice or text from an Android phone, **light on battery by default**. There is no
+  background listening unless Arpit turns on the **"Hey Edith"** wake word himself (see 4.8).
 - See the **live Claude Code session**: messages, tool calls, file edits and diffs as they happen.
 - Do everything the Telegram bot can: switch sessions, stop tasks, Allow/Deny permission prompts.
 - Long-press the power button to open EDITH, by making it Android's **default digital assistant**.
@@ -107,10 +108,12 @@ All of them run in the same `edith-bridge` service, and the existing behaviour m
     - Mic button (push-to-talk), text box and Stop button.
     - Allow/Deny cards shown inline.
   - **Sessions**: list, switch, rename, new.
-  - **Settings**: server address and token, wake-word on/off and sensitivity, voice (TTS) on/off, auto-send after speech.
+  - **Settings**: server address and token, **"Hey Edith" toggle (off by default)** and sensitivity, voice (TTS) on/off, auto-send after speech.
+- **Home-screen widget**: one tap opens EDITH already listening.
 - **Voice out:** Android TextToSpeech (`expo-speech`). It speaks EDITH's short voice summary (see 4.7).
 - **Native Kotlin modules:**
-  - **WakeWordService** (foreground service, microphone type):
+  - **WakeWordService** (foreground service, microphone type). It runs **only while the "Hey Edith"
+    toggle is on**. Its ongoing notification has a "Turn off" button.
     - `AudioRecord` at 16 kHz feeds the openWakeWord pipeline: `melspectrogram` → `embedding` → `hey_edith` model.
     - Runs on ONNX Runtime Android (MIT), or TFLite (Apache-2.0).
     - On detection: beep, then open the listening overlay.
@@ -136,6 +139,21 @@ All of them run in the same `edith-bridge` service, and the existing behaviour m
 - **Phase 2–3:** local notifications from the app while it's connected.
 - **Phase 5:** self-hosted **ntfy** (open source) on edith, reachable only over Tailscale. It pushes "task
   done" and "approval needed" even when the app is closed.
+
+### 4.8 Triggers and battery
+Light by default. **Nothing listens in the background unless Arpit turns it on.**
+
+| Trigger | How | Idle battery |
+|---|---|---|
+| **Power button long-press** | EDITH set as the default digital assistant | Zero |
+| **Home-screen widget** | Tap, and EDITH opens already listening | Zero |
+| **Earbud / headset button** | The headset assistant gesture (long-press on most Bluetooth earbuds) goes to the default assistant | Zero |
+| **"Hey Edith" wake word** | **Manual toggle, off by default.** Arpit turns it on when he wants hands-free and off afterwards. In the app's Settings, and "Turn off" in its notification | Only while on, roughly 5–15%/day if left on all day (to be measured) |
+
+While the wake word is on, a cheap **sound gate** (a loudness check) keeps the openWakeWord model idle in
+silence. This reduces the cost without changing how it behaves. The toggle's state is
+remembered, but after a phone reboot Android requires the app to be opened once before listening
+can resume.
 
 ### 4.7 Voice mode for EDITH
 - Messages from voice are tagged `[voice]`.
@@ -168,9 +186,9 @@ on edith's ARM64.
 | **0. Plan** | This plan; private repo created | Arpit approves the plan |
 | **1. Server** | Tailscale on edith; bridge split into edith-core + Telegram + App API (same service); whisper.cpp built and benchmarked; whisper-server on localhost | `curl` over Tailscale can send a message, stream the live session, list/switch sessions, approve a permission and transcribe a WAV. **Telegram works exactly as before** |
 | **2. App v1** | RN app: connect (address + token), live session view, text send, stop, sessions, approvals; Actions builds a signed APK | Arpit installs the APK and runs a full task from the phone while watching it live |
-| **3. Voice** | Push-to-talk → whisper → send; TTS of voice summaries; `[voice]` output-style rule | "Check the server disk space" spoken → spoken answer, under ~10 s plus task time |
-| **4. Wake word** | Trained `hey_edith` model; WakeWordService; listening overlay; VAD end-of-speech | Triggers reliably across the room; under 1 false wake per hour; battery cost acceptable over a day |
-| **5. Assistant & notifications** | Default-assistant role (power-button long press); ntfy notifications; polish | EDITH replaces Google Assistant in daily use |
+| **3. Voice & triggers** | Push-to-talk → whisper → send; TTS of voice summaries; `[voice]` output-style rule; listening overlay with VAD end-of-speech; **default-assistant role (power button + earbud button)**; **home-screen widget** | Long-press power → "check the server disk space" → spoken answer, under ~10 s plus task time. Same from the widget and the earbuds |
+| **4. Wake word (optional toggle)** | Trained `hey_edith` model; WakeWordService behind the Settings toggle (off by default) with sound gate | Triggers reliably across the room; under 1 false wake per hour; battery cost measured while on |
+| **5. Notifications & polish** | ntfy notifications; polish | EDITH replaces Google Assistant in daily use |
 
 ## 7. What Arpit does
 
@@ -190,8 +208,9 @@ on edith's ARM64.
   - After a reboot, EDITH must be opened once for "Hey Edith" to start listening again.
   - The power-button assistant still works.
 - **Battery:**
-  - Always-on listening costs battery. openWakeWord is light, but this must be measured.
-  - Option: listen only while charging or during set hours.
+  - Handled by design: the wake word is a manual toggle, off by default.
+  - All other triggers use no battery while idle.
+  - The cost while the toggle is on will be measured in Phase 4.
 - **whisper.cpp speed on 2 OCPU:**
   - If `small` is too slow, use `base`, or a quantized `small`.
   - It uses roughly 0.5–1 GB of RAM, which is fine on 12 GB.
