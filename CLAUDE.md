@@ -8,6 +8,9 @@ EDITH, and you build it from this server. Arpit reviews the work.
   status line at the top when a phase is done.
 - **docs/ARCHITECTURE.md** and **docs/ADDING_A_FEATURE.md** cover ports, adapters, `common/` and feature folders.
 - **contracts/events.md** is the server ⇄ app event contract. Change it first, then both sides.
+- **server/legacy/** is a verbatim copy of today's live code from `~/edith` (bridge, reminders, Google
+  Gmail/Calendar, changes) and its systemd units. Migrate it piece by piece into features and adapters
+  (PLAN.md §4.9), then delete each piece from `legacy/`. Never edit `legacy/` in place.
 
 ## Rules
 - **Architecture:** one feature per folder. Features never import other features or adapters;
