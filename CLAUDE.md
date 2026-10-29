@@ -14,6 +14,7 @@ server. Arpit reviews the work.
   Change a golden file only by a reviewed edit, when the behaviour is meant to change.
 
 ## Rules
+- **Times:** always report times in IST (Asia/Kolkata, UTC+5:30), never UTC, in every message and summary.
 - **Architecture:** one feature per folder. Features never import other features or adapters;
   shared code goes in `common/`, which imports core only. `server/tests/test_isolation.py` enforces this.
 - **Tests:** run `cd server && make test` before every commit. Add tests with every feature.
