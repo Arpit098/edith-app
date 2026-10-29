@@ -36,6 +36,40 @@ export interface Transport {
   reconnect(): void;
   /** Absolute URL and auth headers for a request made outside this transport (a native download). */
   authorized(path: string): { url: string; headers: Record<string, string> } | null;
+  /**
+   * Keep the stream connected in the background (normally it closes after a minute there, for
+   * battery), e.g. while the live status shows a running task. Returns the release function.
+   */
+  holdOpen(): () => void;
+}
+
+/** What EDITH's live status shows (Live Alerts on the phone). The wording is the feature's. */
+export interface OngoingStatusView {
+  title: string;
+  text: string;
+  chip: string; // a word or two for the status-bar chip / Live Alerts pill
+  startedAt: number | null; // unix ms: a running timer, without per-second updates
+  progress: boolean; // indeterminate progress
+  link: string; // opened on tap, e.g. edith://approvals
+  alert: boolean; // peek once (an approval is waiting)
+}
+
+/** A persistent status notification: an Android 16 Live Update, an ongoing notification before. */
+export interface OngoingStatus {
+  show(view: OngoingStatusView): void;
+  clear(): void;
+  /** Ask once for permission to post notifications (Android 13+). */
+  ensurePermission(): Promise<boolean>;
+  /** Android 16: whether the status may be promoted to the chip / Live Alerts. */
+  canPromote(): boolean;
+  openPromotionSettings(): void;
+}
+
+/** Battery saver: glass falls back to flat surfaces while it's on. */
+export interface DevicePower {
+  readonly sdkInt: number;
+  powerSave(): boolean;
+  onPowerSaveChange(handler: (on: boolean) => void): () => void;
 }
 
 export type InstallStatus = 'pending' | 'success' | 'cancelled' | 'incompatible' | 'failed';
@@ -116,6 +150,7 @@ export interface Ports {
   storage: SecureStorage;
   installer?: AppInstaller; // absent where the native module isn't (tests, web)
   ota?: OtaUpdates;
+  status?: OngoingStatus;
   // Built in later phases (PLAN.md §6); absent until then.
   stt?: SpeechToText; // Phase 3
   tts?: TextToSpeech; // Phase 3

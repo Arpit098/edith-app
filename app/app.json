@@ -2,6 +2,7 @@
   "expo": {
     "name": "EDITH",
     "slug": "edith",
+    "scheme": "edith",
     "version": "0.2.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",

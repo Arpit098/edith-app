@@ -7,7 +7,7 @@ import { timeAgo } from '../../common/format';
 import { Button } from '../../ui/Button';
 import { Empty } from '../../ui/Empty';
 import { Icon } from '../../ui/Icon';
-import { colors, radius, space } from '../../ui/theme';
+import { colors, radius, space, type, useChrome } from '../../core/theme';
 import { toast } from '../../ui/toast';
 import type { SessionsModel, SessionsState } from './model';
 
@@ -21,6 +21,7 @@ export function SessionsScreen({ model }: { model: SessionsModel }) {
   const list = useStore(model.store, selectList);
   const loading = useStore(model.store, selectLoading);
   const error = useStore(model.store, selectError);
+  const chromeInsets = useChrome();
   const switchingId = useStore(model.store, selectSwitchingId);
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
@@ -39,17 +40,21 @@ export function SessionsScreen({ model }: { model: SessionsModel }) {
 
   return (
     <View style={styles.screen}>
-      <View style={styles.top}>
-        <Button label="New conversation" icon="plus" variant="primary" onPress={startNew} busy={creating} />
-      </View>
-      {error ? <Text style={styles.error}>Couldn't load: {error}</Text> : null}
       <FlatList
         data={list}
         keyExtractor={keyOf}
         renderItem={renderItem}
-        refreshControl={<RefreshControl refreshing={loading} onRefresh={refresh} colors={[colors.accent]} progressBackgroundColor={colors.surface} />}
-        contentContainerStyle={styles.list}
+        refreshControl={
+          <RefreshControl refreshing={loading} onRefresh={refresh} colors={[colors.accent]} progressBackgroundColor={colors.bg} progressViewOffset={chromeInsets.top} />
+        }
+        contentContainerStyle={[styles.list, { paddingTop: chromeInsets.top + space.m, paddingBottom: chromeInsets.bottom + space.l }]}
         keyboardShouldPersistTaps="handled"
+        ListHeaderComponent={
+          <View style={styles.top}>
+            <Button label="New conversation" icon="plus" variant="primary" onPress={startNew} busy={creating} />
+            {error ? <Text style={styles.error}>Couldn't load: {error}</Text> : null}
+          </View>
+        }
         ListEmptyComponent={loading ? null : <Empty icon="history" title="No saved conversations yet" />}
       />
     </View>
@@ -103,7 +108,7 @@ const Row = memo(function Row({ s, model, switching, anySwitching, editing, setE
     void model.resume(s.session_id).then(toast);
   };
   return (
-    <Pressable style={[styles.row, s.current && styles.current]} onPress={resume} android_ripple={{ color: '#ffffff11' }} accessibilityRole="button" accessibilityHint={s.current ? undefined : 'Switch to this conversation'}>
+    <Pressable style={[styles.row, s.current && styles.current]} onPress={resume} android_ripple={{ color: colors.ripple }} accessibilityRole="button" accessibilityHint={s.current ? undefined : 'Switch to this conversation'}>
       <View style={styles.body}>
         <Text style={styles.title} numberOfLines={1}>
           {name}
@@ -131,14 +136,24 @@ const Row = memo(function Row({ s, model, switching, anySwitching, editing, setE
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
-  top: { padding: space.m },
-  error: { color: colors.danger, paddingHorizontal: space.m, paddingBottom: space.s },
-  list: { paddingHorizontal: space.m, paddingBottom: space.l, gap: space.s, flexGrow: 1 },
-  row: { flexDirection: 'row', alignItems: 'center', gap: space.m, backgroundColor: colors.surface, borderRadius: radius.m, padding: space.m, overflow: 'hidden' },
-  current: { borderWidth: 1, borderColor: colors.accent },
+  top: { gap: space.s, marginBottom: space.xs },
+  error: { color: colors.danger },
+  list: { paddingHorizontal: space.l, gap: space.s, flexGrow: 1 },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.m,
+    backgroundColor: colors.card,
+    borderRadius: radius.m,
+    padding: space.m,
+    overflow: 'hidden',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.hairline,
+  },
+  current: { borderColor: colors.accent, backgroundColor: colors.accentSoft },
   editRow: { gap: space.s },
   body: { flex: 1 },
-  title: { color: colors.text, fontSize: 16, fontWeight: '600' },
-  meta: { color: colors.textDim, fontSize: 13, marginTop: 2 },
-  input: { flex: 1, color: colors.text, backgroundColor: colors.bg, borderRadius: radius.s, paddingHorizontal: space.s, paddingVertical: space.xs, fontSize: 15 },
+  title: { color: colors.text, fontSize: type.size.title, fontWeight: '600' },
+  meta: { color: colors.textDim, fontSize: type.size.small, marginTop: 2 },
+  input: { flex: 1, color: colors.text, backgroundColor: colors.input, borderRadius: radius.s, paddingHorizontal: space.s, paddingVertical: space.xs, fontSize: type.size.body },
 });

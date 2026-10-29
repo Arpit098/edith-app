@@ -5,7 +5,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import { formatBytes, formatIST } from '../../common/format';
 import { useStore } from '../../core/store';
 import { Button } from '../../ui/Button';
-import { colors, space } from '../../ui/theme';
+import { colors, space } from '../../core/theme';
 import { apkAvailable, type AppUpdateModel, type AppUpdateState } from './model';
 
 const selectState = (s: AppUpdateState) => s;
@@ -65,7 +65,7 @@ export function UpdateSection({ model }: { model: AppUpdateModel }) {
 
 const styles = StyleSheet.create({
   box: { gap: space.xs },
-  block: { gap: space.s, marginTop: space.s, paddingTop: space.s, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
+  block: { gap: space.s, marginTop: space.s, paddingTop: space.s, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.hairline },
   row: { flexDirection: 'row', alignItems: 'center', gap: space.s, marginTop: space.s, flexWrap: 'wrap' },
   value: { color: colors.text, fontSize: 16 },
   text: { color: colors.text, fontSize: 14 },

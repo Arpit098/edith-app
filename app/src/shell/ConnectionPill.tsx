@@ -3,7 +3,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import type { Connection, ConnectionState, LinkState } from '../core/connection';
 import { shallowEqual, useStore } from '../core/store';
-import { colors, space } from '../ui/theme';
+import { colors, space } from '../core/theme';
 
 const DOT: Record<LinkState, string> = {
   loading: colors.textDim,

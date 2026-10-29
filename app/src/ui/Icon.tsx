@@ -4,7 +4,7 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import { memo } from 'react';
 
-import { colors } from './theme';
+import { colors } from '../core/theme';
 
 type Glyph = keyof typeof MaterialCommunityIcons.glyphMap;
 

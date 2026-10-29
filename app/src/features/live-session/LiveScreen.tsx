@@ -1,10 +1,11 @@
-import { memo, useCallback, useState } from 'react';
+import { memo, useCallback, useMemo, useState } from 'react';
 import { ActivityIndicator, FlatList, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { shallowEqual, useStore } from '../../core/store';
+import { colors, radius, space, type, useChrome } from '../../core/theme';
 import { Button } from '../../ui/Button';
 import { Empty } from '../../ui/Empty';
-import { colors, radius, space } from '../../ui/theme';
+import { Glass } from '../../ui/Glass';
 import { toast } from '../../ui/toast';
 import { ItemView } from './ItemView';
 import { summarize, type Item, type LiveModel, type LiveState } from './model';
@@ -22,16 +23,18 @@ export function LiveScreen({ model }: { model: LiveModel }) {
   );
   const renderItem = useCallback(({ item }: { item: Item }) => <ItemView item={item} onPress={onPress} />, [onPress]);
   const loadOlder = useCallback(() => void model.loadOlder(), [model]);
+  const chromeInsets = useChrome();
+  // The transcript scrolls under the header and the status pill; inverted, so its top is paddingBottom.
+  const listInsets = useMemo(() => ({ paddingBottom: chromeInsets.top + TURN_BAR_SPACE }), [chromeInsets.top]);
   return (
-    <View style={styles.screen}>
-      <TurnBar model={model} />
+    <View style={[styles.screen, { paddingBottom: chromeInsets.bottom }]}>
       {items.length ? (
         <FlatList
           data={items}
           inverted // items are stored newest first: the newest sits at the bottom with no scroll-to-end
           keyExtractor={keyOf}
           renderItem={renderItem}
-          contentContainerStyle={styles.list}
+          contentContainerStyle={[styles.list, listInsets]}
           initialNumToRender={15}
           maxToRenderPerBatch={10}
           windowSize={9}
@@ -43,12 +46,19 @@ export function LiveScreen({ model }: { model: LiveModel }) {
         />
       ) : (
         // Outside the list: an inverted list would draw its empty component upside down.
-        <Empty icon="message-processing-outline" title="Nothing yet" detail="EDITH's live session shows up here as it happens, from the app, Telegram or the terminal." />
+        <View style={[styles.screen, { paddingTop: chromeInsets.top + TURN_BAR_SPACE }]}>
+          <Empty icon="message-processing-outline" title="Nothing yet" detail="EDITH's live session shows up here as it happens, from the app, Telegram or the terminal." />
+        </View>
       )}
       <Composer model={model} />
+      <View style={[styles.barSlot, { top: chromeInsets.top + space.s }]} pointerEvents="box-none">
+        <TurnBar model={model} />
+      </View>
     </View>
   );
 }
+
+const TURN_BAR_SPACE = 52; // the floating status pill plus its margins
 
 const selectLoadingOlder = (s: LiveState) => s.loadingOlder;
 
@@ -62,8 +72,8 @@ const TurnBar = memo(function TurnBar({ model }: { model: LiveModel }) {
   const t = useStore(model.store, summarize, shallowEqual);
   const title = useStore(model.store, selectTitle);
   return (
-    <View style={styles.bar}>
-      {t.busy ? <ActivityIndicator size="small" color={colors.warn} /> : <View style={styles.idleDot} />}
+    <Glass level="thin" radius={radius.pill} style={styles.bar}>
+      {t.busy ? <ActivityIndicator size="small" color={colors.accent} /> : <View style={styles.idleDot} />}
       <Text style={styles.barText} numberOfLines={1}>
         {t.busy ? ['Working', t.step, t.elapsed ? `${t.elapsed}s` : null].filter(Boolean).join(' · ') : 'Idle'}
         {t.running > 1 ? ` (+${t.running - 1} parallel)` : ''}
@@ -74,7 +84,7 @@ const TurnBar = memo(function TurnBar({ model }: { model: LiveModel }) {
           {title}
         </Text>
       ) : null}
-    </View>
+    </Glass>
   );
 });
 
@@ -101,31 +111,32 @@ const Composer = memo(function Composer({ model }: { model: LiveModel }) {
   };
 
   return (
-    <View style={styles.composer}>
+    <Glass level="regular" radius={radius.l} style={styles.composer}>
       <TextInput
         style={styles.input}
         value={text}
         onChangeText={setText}
         placeholder="Message EDITH"
-        placeholderTextColor={colors.textDim}
+        placeholderTextColor={colors.textFaint}
         multiline
         maxLength={8000}
         accessibilityLabel="Message"
       />
       {busy ? <Button icon="stop" variant="danger" onPress={stop} busy={stopping} accessibilityLabel="Stop" /> : null}
       <Button icon="send" variant="primary" onPress={send} busy={sending} disabled={!text.trim()} accessibilityLabel="Send" />
-    </View>
+    </Glass>
   );
 });
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
-  list: { paddingHorizontal: space.m, paddingVertical: space.s, flexGrow: 1 },
+  list: { paddingHorizontal: space.m, paddingTop: space.s, flexGrow: 1 },
   older: { padding: space.m },
-  bar: { flexDirection: 'row', alignItems: 'center', gap: space.s, paddingHorizontal: space.m, paddingVertical: space.s, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
-  idleDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: colors.ok, marginHorizontal: 5 },
-  barText: { color: colors.text, fontSize: 13, flex: 1 },
-  barTitle: { color: colors.textDim, fontSize: 12, maxWidth: '40%' },
-  composer: { flexDirection: 'row', alignItems: 'flex-end', gap: space.s, padding: space.s, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
-  input: { flex: 1, color: colors.text, backgroundColor: colors.surface, borderRadius: radius.m, paddingHorizontal: space.m, paddingVertical: space.s, fontSize: 15, maxHeight: 140, minHeight: 44 },
+  barSlot: { position: 'absolute', left: space.l, right: space.l },
+  bar: { flexDirection: 'row', alignItems: 'center', gap: space.s, paddingHorizontal: space.m, paddingVertical: space.s },
+  idleDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.ok, marginHorizontal: 6 },
+  barText: { color: colors.text, fontSize: type.size.small, flex: 1 },
+  barTitle: { color: colors.textDim, fontSize: type.size.caption, maxWidth: '40%' },
+  composer: { flexDirection: 'row', alignItems: 'flex-end', gap: space.s, padding: space.s, marginHorizontal: space.m, marginBottom: space.s },
+  input: { flex: 1, color: colors.text, backgroundColor: colors.input, borderRadius: radius.m, paddingHorizontal: space.m, paddingVertical: space.s, fontSize: type.size.body, maxHeight: 140, minHeight: 44 },
 });

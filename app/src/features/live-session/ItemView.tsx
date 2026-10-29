@@ -7,7 +7,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { DiffView } from '../../ui/DiffView';
 import { Icon } from '../../ui/Icon';
 import { ReplyButtons } from '../../ui/ReplyButtons';
-import { colors, mono, radius, space } from '../../ui/theme';
+import { colors, type, radius, space } from '../../core/theme';
 import type { Item } from './model';
 
 const ORIGIN_LABEL: Record<string, string> = { telegram: 'Telegram', terminal: 'Terminal', app: '', system: '' };
@@ -101,19 +101,19 @@ function DiffCard({ path, diff }: { path: string; diff: string }) {
 
 const styles = StyleSheet.create({
   bubble: { borderRadius: radius.l, paddingHorizontal: space.m, paddingVertical: space.s + 2, marginVertical: space.xs, maxWidth: '88%' },
-  user: { backgroundColor: colors.user, alignSelf: 'flex-end', borderBottomRightRadius: radius.s },
-  assistant: { backgroundColor: colors.surface, alignSelf: 'flex-start', borderBottomLeftRadius: radius.s },
-  text: { color: colors.text, fontSize: 15, lineHeight: 21 },
-  meta: { color: colors.textDim, fontSize: 11, marginBottom: 2 },
-  note: { color: colors.textDim, fontSize: 13, marginTop: space.xs },
-  system: { backgroundColor: colors.surfaceHigh, borderRadius: radius.m, padding: space.m, marginVertical: space.xs, borderLeftWidth: 3, borderLeftColor: colors.accent },
-  systemError: { borderLeftColor: colors.danger },
-  tool: { backgroundColor: colors.surface, borderRadius: radius.m, padding: space.s, marginVertical: 2, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border },
+  user: { backgroundColor: colors.userBubble, alignSelf: 'flex-end', borderBottomRightRadius: radius.s },
+  assistant: { backgroundColor: colors.assistantBubble, alignSelf: 'flex-start', borderBottomLeftRadius: radius.s, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.hairline },
+  text: { color: colors.text, fontSize: type.size.body, lineHeight: 21 },
+  meta: { color: colors.textDim, fontSize: type.size.caption, marginBottom: 2 },
+  note: { color: colors.textDim, fontSize: type.size.small, marginTop: space.xs },
+  system: { backgroundColor: colors.cardRaised, borderRadius: radius.m, padding: space.m, marginVertical: space.xs, borderLeftWidth: 3, borderLeftColor: colors.accent },
+  systemError: { borderLeftColor: colors.danger, backgroundColor: colors.dangerSoft },
+  tool: { backgroundColor: colors.card, borderRadius: radius.m, padding: space.s, marginVertical: 2, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.hairline },
   toolRow: { flexDirection: 'row', alignItems: 'center', gap: space.s },
-  toolName: { color: colors.text, fontFamily: mono, fontSize: 13, fontWeight: '700' },
-  toolSummary: { color: colors.textDim, fontFamily: mono, fontSize: 13, flex: 1 },
-  toolResult: { color: colors.text, fontFamily: mono, fontSize: 12, marginTop: space.s },
+  toolName: { color: colors.text, fontFamily: type.mono, fontSize: type.size.small, fontWeight: '700' },
+  toolSummary: { color: colors.textDim, fontFamily: type.mono, fontSize: type.size.small, flex: 1 },
+  toolResult: { color: colors.text, fontFamily: type.mono, fontSize: 12, marginTop: space.s },
   divider: { flexDirection: 'row', alignItems: 'center', gap: space.s, marginVertical: space.m },
-  rule: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: colors.border },
-  dividerText: { color: colors.textDim, fontSize: 12, maxWidth: '70%' },
+  rule: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: colors.hairline },
+  dividerText: { color: colors.textDim, fontSize: type.size.caption, maxWidth: '70%' },
 });
