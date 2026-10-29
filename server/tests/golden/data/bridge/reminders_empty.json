@@ -1,0 +1,18 @@
+[
+ {
+  "chat_id": 111,
+  "message_id": 1,
+  "method": "setMessageReaction",
+  "reaction": [
+   {
+    "emoji": "👌",
+    "type": "emoji"
+   }
+  ]
+ },
+ {
+  "chat_id": 111,
+  "method": "sendMessage",
+  "text": "No reminders set. Just tell me, e.g. \"remind me Friday 5pm to renew the domain\"."
+ }
+]

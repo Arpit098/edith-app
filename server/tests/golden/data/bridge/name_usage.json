@@ -1,0 +1,18 @@
+[
+ {
+  "chat_id": 111,
+  "message_id": 1,
+  "method": "setMessageReaction",
+  "reaction": [
+   {
+    "emoji": "👌",
+    "type": "emoji"
+   }
+  ]
+ },
+ {
+  "chat_id": 111,
+  "method": "sendMessage",
+  "text": "Usage: /name <title>, e.g. /name youtube automation"
+ }
+]

@@ -1,0 +1,49 @@
+[
+ {
+  "chat_id": 111,
+  "message_id": 1,
+  "method": "setMessageReaction",
+  "reaction": [
+   {
+    "emoji": "👌",
+    "type": "emoji"
+   }
+  ]
+ },
+ {
+  "chat_id": 111,
+  "method": "sendMessage",
+  "reply_markup": {
+   "inline_keyboard": [
+    [
+     {
+      "callback_data": "rem:cancel:aa11bb",
+      "text": "❌ Cancel 1"
+     }
+    ],
+    [
+     {
+      "callback_data": "rem:cancel:cc22dd",
+      "text": "❌ Cancel 2"
+     }
+    ]
+   ]
+  },
+  "text": "⏰ Upcoming reminders (IST):\n1. Mon 02 Nov, 08:00 🔁 monthly - Pay rent\n2. Fri 06 Nov, 17:30 - Renew the domain"
+ },
+ {
+  "callback_query_id": "cb1",
+  "method": "answerCallbackQuery",
+  "text": "Cancelled."
+ },
+ {
+  "chat_id": 111,
+  "method": "sendMessage",
+  "text": "❌ Cancelled: Renew the domain"
+ },
+ {
+  "callback_query_id": "cb2",
+  "method": "answerCallbackQuery",
+  "text": "Already gone."
+ }
+]

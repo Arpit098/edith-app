@@ -1,0 +1,7 @@
+[
+ {
+  "callback_query_id": "cb1",
+  "method": "answerCallbackQuery",
+  "text": "Not authorized."
+ }
+]

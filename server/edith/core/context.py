@@ -6,19 +6,69 @@ from typing import Any, Callable
 from .events import EventBus
 
 
+MAX_ACTION_BYTES = 64  # Telegram's callback_data limit (contracts/events.md, "Replies and buttons")
+
+
+@dataclass
+class Button:
+    label: str
+    action: str  # "<prefix>:<args…>", handled by the feature that registered <prefix>
+
+    def __post_init__(self):
+        if not self.action:
+            raise ValueError("a button needs an action")
+        if len(self.action.encode()) > MAX_ACTION_BYTES:
+            raise ValueError(f"action {self.action!r} is over {MAX_ACTION_BYTES} bytes")
+
+
+@dataclass
+class Reply:
+    """A reply with buttons. Plain replies can stay plain strings."""
+    text: str
+    buttons: list[list[Button]] = field(default_factory=list)  # rows
+
+
 @dataclass
 class CommandCall:
     """One invocation of a command from any frontend."""
     args: str
     origin: str  # telegram | app | terminal
-    reply: Callable[[str], None]
+    reply: Callable[[str | Reply], None]
 
 
 @dataclass
 class Command:
     name: str
     description: str
-    handler: Callable[[CommandCall], str | None]  # a returned string is sent as the reply
+    handler: Callable[[CommandCall], str | Reply | None]  # a returned value is sent as the reply
+    owner: str
+
+
+@dataclass
+class ActionResult:
+    """What a button press shows: a short popup, and/or a note appended to the pressed message
+    (which then loses its buttons). Both optional."""
+    toast: str | None = None
+    note: str | None = None
+
+
+@dataclass
+class ActionCall:
+    """One button press from any frontend."""
+    action: str  # the full action string, e.g. "rem:snooze:15:ab12cd"
+    origin: str
+    reply: Callable[[str | Reply], None]  # send a new message to where the press came from
+
+    @property
+    def args(self) -> list[str]:
+        """The parts after the prefix: "rem:snooze:15:ab12cd" -> ["snooze", "15", "ab12cd"]."""
+        return self.action.split(":")[1:]
+
+
+@dataclass
+class Action:
+    prefix: str
+    handler: Callable[[ActionCall], ActionResult | None]
     owner: str
 
 
@@ -35,15 +85,18 @@ class Ports:
     """Adapters chosen in config.toml; None when not configured."""
     agent: Any = None      # ports.agent.AgentBackend
     stt: Any = None        # ports.stt.SpeechToText
+    mail: Any = None       # ports.mail.MailBox
+    calendar: Any = None   # ports.calendar.Calendar
     notifiers: list = field(default_factory=list)  # [ports.notifier.Notifier]
 
 
 class Registry:
-    """Commands and routes registered by features. Frontends read from here."""
+    """Commands, routes and button actions registered by features. Frontends read from here."""
 
     def __init__(self):
         self.commands: dict[str, Command] = {}
         self.routes: dict[tuple[str, str], Route] = {}
+        self.actions: dict[str, Action] = {}
 
     def add_command(self, cmd: Command) -> None:
         if cmd.name in self.commands:
@@ -55,6 +108,18 @@ class Registry:
         if key in self.routes:
             raise ValueError(f"route {key} already registered by {self.routes[key].owner}")
         self.routes[key] = route
+
+    def add_action(self, action: Action) -> None:
+        if not action.prefix or ":" in action.prefix:
+            raise ValueError(f"action prefix {action.prefix!r} must be non-empty and contain no ':'")
+        if action.prefix in self.actions:
+            raise ValueError(f"action {action.prefix}: already registered by {self.actions[action.prefix].owner}")
+        self.actions[action.prefix] = action
+
+    def press(self, action: str, origin: str, reply) -> ActionResult | None:
+        """Route a button press to the feature that owns its prefix. Unknown prefixes return None."""
+        handler = self.actions.get(action.split(":", 1)[0])
+        return handler.handler(ActionCall(action, origin, reply)) if handler else None
 
 
 class Context:
@@ -71,6 +136,10 @@ class Context:
 
     def add_route(self, method: str, path: str, handler) -> None:
         self._registry.add_route(Route(method, path, handler, self.feature))
+
+    def add_action(self, prefix: str, handler) -> None:
+        """Handle presses of buttons whose action starts with "<prefix>:"."""
+        self._registry.add_action(Action(prefix, handler, self.feature))
 
     def subscribe(self, pattern: str, handler) -> None:
         self.bus.subscribe(pattern, handler, owner=self.feature)

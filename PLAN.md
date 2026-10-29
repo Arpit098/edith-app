@@ -3,7 +3,7 @@
 An Android voice assistant ("Hey Edith") for E.D.I.T.H, the Claude Code agent running on the
 `edith` server. Like Siri, but it drives Arpit's own Claude Code session, and shows that session live.
 
-_Created 2026-10-29, updated 2026-10-29 (battery-light triggers; modular codebase; existing tools migration). Status: Phase 0 (planning)._
+_Created 2026-10-29, updated 2026-10-29 (battery-light triggers; modular codebase; existing tools migration; Phase 1 plan approved). Status: Phase 1 (server), step 0. See [docs/PHASE1_PLAN.md](docs/PHASE1_PLAN.md)._
 
 ---
 
@@ -62,8 +62,8 @@ All of them run in the same `edith-bridge` service, and the existing behaviour m
 ## 4. Components
 
 ### 4.1 App API (on edith)
-- **Stack:** Python. The bridge is stdlib-only, so the API will use either the stdlib or one small
-  async dependency in `~/edith/venv`. This is decided in Phase 1.
+- **Stack:** Python standard library only: `ThreadingHTTPServer` plus a small WebSocket server
+  kept in this repo, so the bridge keeps running on the system `python3` with no venv. (Decided 2026-10-29.)
 - **Network and auth:**
   - Binds **only to the Tailscale IP** (100.x.y.z).
   - Auth is a long random bearer token, stored on the phone in the Android Keystore.
@@ -81,6 +81,7 @@ All of them run in the same `edith-bridge` service, and the existing behaviour m
   | PATCH | `/v1/sessions/{id}` | Rename |
   | POST | `/v1/permissions/{id}` | Allow / deny |
   | GET | `/v1/status` | Lane state, tmux state, current session |
+  | POST | `/v1/actions` | Press a reply button (`{action}`), e.g. snooze a reminder |
 
 - **Live view source:** the session transcript (JSONL), tailed, plus hook events. Every turn is
   shown in the app, whether it came from Telegram, the app or the terminal. A reply is *sent*

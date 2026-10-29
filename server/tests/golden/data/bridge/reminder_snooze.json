@@ -1,0 +1,24 @@
+[
+ {
+  "callback_query_id": "cb1",
+  "method": "answerCallbackQuery",
+  "text": "💤 Snoozed to Sun 01 Nov, 08:11"
+ },
+ {
+  "chat_id": 111,
+  "message_id": 500,
+  "method": "editMessageText",
+  "text": "⏰ Renew the domain\n\n💤 Snoozed to Sun 01 Nov, 08:11"
+ },
+ {
+  "callback_query_id": "cb2",
+  "method": "answerCallbackQuery",
+  "text": "💤 Snoozed to Sun 01 Nov, 08:56"
+ },
+ {
+  "chat_id": 111,
+  "message_id": 500,
+  "method": "editMessageText",
+  "text": "⏰ Pay rent\n\n💤 Snoozed to Sun 01 Nov, 08:56"
+ }
+]

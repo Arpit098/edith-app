@@ -20,6 +20,15 @@
    - Talk to other features **only through events** (`ctx.bus.publish(...)`), never by importing them.
    - Use ports (`ctx.ports.agent`, `ctx.ports.stt`, …) for outside services, never a library directly.
      This keeps the feature testable and lets the service be swapped later.
+   - **Buttons:** return a `Reply` with rows of `Button(label, action)`, and handle presses with
+     `ctx.add_action(prefix, handler)`. The handler gets an `ActionCall` (`call.args` are the parts
+     after the prefix) and returns an `ActionResult(toast, note)`. Keep action strings under 64 bytes:
+     ```python
+     from edith.core import ActionResult, Button, Reply
+
+     ctx.add_command("hello", "Say hi", lambda call: Reply("Hi!", [[Button("👋 Wave", "hello:wave")]]))
+     ctx.add_action("hello", lambda call: ActionResult(toast="Waved", note="👋"))
+     ```
 3. Enable it in `config.toml`:
    ```toml
    [features]
