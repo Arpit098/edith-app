@@ -1,0 +1,17 @@
+# Staging interactive Claude in its own tmux socket (-L edith-staging), for the step 6 test run.
+# Not enabled; started by hand for the test, then stopped and removed (deploy/staging/README.md).
+[Unit]
+Description=E.D.I.T.H staging - interactive Claude Code in tmux (edith-staging)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=forking
+WorkingDirectory=%h/edith-staging
+Environment=PATH=%h/.local/bin:%h/.bun/bin:/usr/local/bin:/usr/bin:/bin
+Environment=LANG=C.UTF-8
+Environment=EDITH_WORK_DIR=%h/edith-staging
+Environment=EDITH_STATE_DIR=%h/.cache/edith-staging
+ExecStart=/usr/bin/tmux -L edith-staging new-session -d -s edith-staging -x 200 -y 50 %h/edith-app-live/deploy/edith/bridge/edith-claude.sh
+ExecStop=/usr/bin/tmux -L edith-staging kill-server
+Restart=no

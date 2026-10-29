@@ -1,0 +1,27 @@
+# Live config for edith (step 6): copy to ~/.config/edith/config.toml. Secrets are never in here:
+# the bot token and allowlist stay in ~/.claude/channels/telegram, Google tokens in ~/.config/edith-google.
+# Paths default to today's live locations (edith/common/paths.py), so the state files are shared
+# with the legacy bridge and a rollback simply starts the old bridge again.
+
+[adapters]
+agent = "claude_tmux"
+mail = "google"
+calendar = "google"
+frontends = ["telegram"]   # "app_api" is added in step 8, once Tailscale is up
+notifiers = []
+
+[adapter.claude_tmux]
+work_dir = "~/edith"
+tmux_socket = "edith"
+tmux_target = "edith"
+tmux_service = "edith-claude"
+max_side_lanes = 2
+
+[adapter.google]
+credentials_dir = "~/.config/edith-google"
+
+[adapter.telegram]
+telegram_dir = "~/.claude/channels/telegram"
+
+[features]
+enabled = ["sessions", "approvals", "control", "reminders", "mail", "calendar", "changes", "quick_actions"]

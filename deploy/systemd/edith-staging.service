@@ -1,0 +1,19 @@
+# Staging bridge for the step 6 test run (deploy/staging/README.md). Not enabled; started by hand
+# for the test, then stopped and removed. Separate bot, tmux socket, work dir and state from live.
+[Unit]
+Description=E.D.I.T.H staging - new bridge on the TEST bot
+After=network-online.target edith-claude-staging.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/edith-staging
+Environment=PATH=%h/.local/bin:%h/.bun/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PYTHONUNBUFFERED=1
+Environment=EDITH_WORK_DIR=%h/edith-staging
+Environment=EDITH_STATE_DIR=%h/.cache/edith-staging
+Environment=TELEGRAM_STATE_DIR=%h/.config/edith-staging/telegram
+ExecStart=/usr/bin/python3 -I %h/edith-app-live/deploy/bin/edith-bridge --config %h/.config/edith-staging/config.toml
+Restart=no
+KillMode=mixed
+TimeoutStopSec=20
