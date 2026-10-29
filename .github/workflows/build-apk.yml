@@ -63,7 +63,7 @@ jobs:
         run: npx expo prebuild --platform android --no-install
         env:
           CI: 1
-      - name: Gradle assembleRelease (arm64 only: every current Android phone; halves the build)
+      - name: "Gradle assembleRelease (arm64 only: every current Android phone; halves the build)"
         working-directory: app/android
         run: ./gradlew assembleRelease --no-daemon -PreactNativeArchitectures=arm64-v8a
       - name: Name the APK
