@@ -69,6 +69,12 @@ class AgentBackend(Protocol):
     def new_session(self) -> str:
         """Start a fresh conversation (/clear). Returns busy | ok."""
 
+    def history(self, session_id: str | None = None, after: str | None = None, before: str | None = None,
+                limit: int = 50) -> dict | None:
+        """A conversation's recent events (the current one by default), as the live view sends them.
+        `after`/`before` are cursors from events or earlier pages. -> {session_id, events, start,
+        cursor, more, reset}, or None if there is no such conversation (contracts/events.md, History)."""
+
     def resolve_permission(self, request_id: str, allow: bool) -> bool:
         """Answer a permission request; False if it has already gone (answered or timed out)."""
 

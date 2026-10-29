@@ -1,17 +1,20 @@
 """The live view: every entry Claude adds to the current conversation's transcript, as events
 (message.user, message.assistant, tool.call, tool.result, file.diff), whoever started the turn:
-Telegram, the app, or someone typing in tmux ("terminal").
+Telegram, the app, or someone typing in tmux ("terminal"). Each event's data carries a `cursor`,
+"<session id>:<byte offset just after its entry>", so the app can join it up with history().
 
 One thread. It waits on inotify (the transcript folder and tmux-session.json) and reads only the
 bytes added since its saved offset; it follows /clear and resumes to the new transcript, starting
 at its end. All parsing of Claude Code's transcript format is in transcript.py and here.
 """
+import datetime as dt
 import difflib
 import logging
+import os
 import re
 import threading
 
-from .transcript import Tail, describe_tool
+from .transcript import Tail, describe_tool, read_backward, read_forward
 from .watch import Watch
 
 log = logging.getLogger("edith.adapter.claude_tmux")
@@ -19,6 +22,7 @@ log = logging.getLogger("edith.adapter.claude_tmux")
 REF = re.compile(r"\n?\[tg-ref ([0-9a-f]+)\]")
 MAX_DIFF = 20_000    # characters of a file.diff
 MAX_TOOL_IDS = 1000  # tool_use id -> name, for naming results
+HISTORY_BYTES = 4 * 1024 * 1024  # read per history() call at most (a few huge tool results can't stall it)
 
 
 def unified(path, old, new):
@@ -59,9 +63,9 @@ class LiveView:
                     # entries aren't missed; a resumed one from its end, so its history isn't replayed.
                     tail = Tail(current, offset=0 if session.get("source") in ("clear", "startup") else None)
                     self._follow(current)
-                for entry, _ in tail.read():
+                for entry, _, end in tail.read_spans():
                     try:
-                        self.entry(entry)
+                        self.entry(entry, cursor(tail.path, end))
                     except Exception:
                         log.exception("live view: could not read a transcript entry")
                 self.watch.wait(60)  # wakes on any change; the timeout is only a safety net
@@ -71,43 +75,118 @@ class LiveView:
             self.following = path
             self.switched.notify_all()
 
-    def entry(self, e):
-        if e.get("isSidechain") or e.get("isMeta"):
-            return
+    def entry(self, e, cursor=None):
+        """Publish the events of one transcript entry; `cursor` (see history()) goes in their data."""
         sid = e.get("sessionId") or self.session().get("session_id")
-        content = e.get("message", {}).get("content")
-        if e.get("type") == "user":
-            if isinstance(content, list) and any(isinstance(b, dict) and b.get("type") == "tool_result" for b in content):
-                for b in content:
-                    if isinstance(b, dict) and b.get("type") == "tool_result":
-                        summary = text_of(b.get("content")) if not isinstance(b.get("content"), str) else b["content"]
-                        self.publish("tool.result", "system", sid, {
-                            "name": self._tools.get(b.get("tool_use_id"), ""), "ok": not b.get("is_error"),
-                            "summary": (summary or "").strip().split("\n", 1)[0][:200]})
-                return
-            text = text_of(content)
-            if not text or text.lstrip().startswith("<"):
-                return  # slash-command and system wrappers
-            m = REF.search(text)
-            origin = (self.origin_of(m.group(1)) if m else None) or ("telegram" if m else "terminal")
-            self.publish("message.user", origin, sid, {"text": REF.sub("", text).strip(), "voice": "[voice]" in text})
-        elif e.get("type") == "assistant" and isinstance(content, list):
+        for type, origin, data in events_of(e, self._tools, self.origin_of):
+            if cursor:
+                data["cursor"] = cursor
+            self.publish(type, origin, sid, data)
+
+
+def origin_from(text, origin_of):
+    m = REF.search(text)
+    if m and origin_of(m.group(1)):
+        return origin_of(m.group(1))
+    if text.startswith("[App message"):
+        return "app"
+    return "telegram" if m else "terminal"
+
+
+def remember(tools, tool_id, name):
+    tools[tool_id] = name
+    if len(tools) > MAX_TOOL_IDS:
+        tools.pop(next(iter(tools)))
+
+
+def events_of(e, tools, origin_of=lambda ref: None):
+    """[(type, origin, data)] for one transcript entry. `tools` maps tool_use ids to names (for
+    naming results) and is updated; it is bounded to MAX_TOOL_IDS."""
+    if e.get("isSidechain") or e.get("isMeta"):
+        return []
+    out = []
+    content = e.get("message", {}).get("content")
+    if e.get("type") == "user":
+        if isinstance(content, list) and any(isinstance(b, dict) and b.get("type") == "tool_result" for b in content):
             for b in content:
-                if not isinstance(b, dict):
-                    continue
-                if b.get("type") == "text" and b.get("text", "").strip():
-                    self.publish("message.assistant", "system", sid, {"text": b["text"]})
-                elif b.get("type") == "tool_use":
-                    name, inp = b.get("name", ""), b.get("input") or {}
-                    self._tools[b.get("id")] = name
-                    if len(self._tools) > MAX_TOOL_IDS:
-                        self._tools.pop(next(iter(self._tools)))
-                    self.publish("tool.call", "system", sid, {"name": name, "summary": describe_tool(name, inp)})
-                    if name in ("Edit", "MultiEdit", "Write") and inp.get("file_path"):
-                        path = inp["file_path"]
-                        if name == "Write":
-                            diff = unified(path, "", inp.get("content", ""))
-                        else:
-                            edits = inp.get("edits") or [inp]
-                            diff = "".join(unified(path, x.get("old_string", ""), x.get("new_string", "")) for x in edits)
-                        self.publish("file.diff", "system", sid, {"path": path, "diff": diff[:MAX_DIFF]})
+                if isinstance(b, dict) and b.get("type") == "tool_result":
+                    summary = text_of(b.get("content")) if not isinstance(b.get("content"), str) else b["content"]
+                    out.append(("tool.result", "system", {
+                        "id": b.get("tool_use_id"), "name": tools.get(b.get("tool_use_id"), ""), "ok": not b.get("is_error"),
+                        "summary": (summary or "").strip().split("\n", 1)[0][:200]}))
+            return out
+        text = text_of(content)
+        if not text or text.lstrip().startswith("<"):
+            return []  # slash-command and system wrappers
+        return [("message.user", origin_from(text, origin_of), {"text": REF.sub("", text).strip(), "voice": "[voice]" in text})]
+    if e.get("type") == "assistant" and isinstance(content, list):
+        for b in content:
+            if not isinstance(b, dict):
+                continue
+            if b.get("type") == "text" and b.get("text", "").strip():
+                out.append(("message.assistant", "system", {"text": b["text"]}))
+            elif b.get("type") == "tool_use":
+                name, inp = b.get("name", ""), b.get("input") or {}
+                remember(tools, b.get("id"), name)
+                out.append(("tool.call", "system", {"id": b.get("id"), "name": name, "summary": describe_tool(name, inp)}))
+                if name in ("Edit", "MultiEdit", "Write") and inp.get("file_path"):
+                    path = inp["file_path"]
+                    if name == "Write":
+                        diff = unified(path, "", inp.get("content", ""))
+                    else:
+                        edits = inp.get("edits") or [inp]
+                        diff = "".join(unified(path, x.get("old_string", ""), x.get("new_string", "")) for x in edits)
+                    out.append(("file.diff", "system", {"id": b.get("id"), "path": path, "diff": diff[:MAX_DIFF]}))
+    return out
+
+
+def cursor(path, offset):
+    return f"{os.path.basename(path or '')[:-len('.jsonl')]}:{offset}"
+
+
+def timestamp(e):
+    try:
+        return dt.datetime.fromisoformat(e["timestamp"]).timestamp()
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def history(path, after=None, before=None, limit=50, origin_of=lambda ref: None, max_bytes=HISTORY_BYTES):
+    """Transcript events as the live view sends them, read by byte offset, never the whole file:
+    - after=N: the events of entries after offset N, oldest first (catching up after a reconnect);
+    - otherwise the newest `limit` events, of entries ending at or before `before` (None: the end).
+    Whole entries only, so a page may hold a few events more than `limit` when one entry has several.
+    -> {events, start, end, more}: offsets of the first and just after the last entry read, and
+    whether more entries lie past them (after the end for after=, before the start otherwise)."""
+    sid = os.path.basename(path)[:-len(".jsonl")]
+
+    def as_event(e, end, tools):
+        return [{"type": t, "ts": timestamp(e), "session_id": e.get("sessionId") or sid, "origin": o,
+                 "data": {**d, "cursor": cursor(path, end)}} for t, o, d in events_of(e, tools, origin_of)]
+
+    if after is not None:
+        found, end, more = read_forward(path, after, max_bytes)
+        tools, out, done = {}, [], after
+        for e, _, _, line_end in found:
+            evs = as_event(e, line_end, tools)
+            if out and len(out) + len(evs) > limit:
+                return {"events": out, "start": after, "end": done, "more": True}
+            out.extend(evs)
+            done = line_end
+        return {"events": out, "start": after, "end": end, "more": more}
+
+    picked, count, start, end = [], 0, None, None
+    for e, _, line_start, line_end in read_backward(path, before, max_bytes):
+        n = len(events_of(e, {}))
+        if picked and count + n > limit:
+            break
+        picked.append((e, line_end))
+        start, end, count = line_start, end or line_end, count + n
+        if count >= limit:
+            break
+    tools, out = {}, []
+    for e, line_end in reversed(picked):  # oldest first, so results are named after their calls
+        out += as_event(e, line_end, tools)
+    if start is None:
+        start = end = before or 0
+    return {"events": out, "start": start, "end": end, "more": start > 0}

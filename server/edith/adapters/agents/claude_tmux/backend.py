@@ -24,6 +24,7 @@ import json
 import logging
 import os
 import queue
+import re
 import secrets
 import signal
 import subprocess
@@ -37,7 +38,7 @@ from edith.common.text import take_directives
 from edith.core import Event
 from edith.ports.agent import RunInfo, StopResult, TurnHandle
 
-from .live import LiveView
+from .live import LiveView, cursor, history
 from .sessions import Sessions
 from .tmux import Tmux
 from .transcript import Tail, tool_uses
@@ -46,6 +47,8 @@ from .watch import Watch, wait_for
 log = logging.getLogger("edith.adapter.claude_tmux")
 
 MAX_QUEUE = 50          # messages waiting for the main lane; more than this is refused
+MAX_HISTORY = 500       # events per history page
+SESSION_ID = re.compile(r"[A-Za-z0-9-]{1,64}")
 STOPPED_CODES = (-signal.SIGTERM, -signal.SIGKILL, 143, 137)
 NOTES_HEADER = ("[While you were busy, parallel lanes (forks of this conversation) handled these. "
                 "You didn't see them, so here they are for context:]")
@@ -537,6 +540,31 @@ class ClaudeTmux:
         self.state.update(cleared)
         self._publish("session.changed", "system", session_id=None, title=None, source="new")
         return "ok"
+
+    def history(self, session_id=None, after=None, before=None, limit=50):
+        sid = session_id or self.current_session()
+        if not sid or not SESSION_ID.fullmatch(sid):
+            return None
+        path = os.path.join(self.paths.transcripts, f"{sid}.jsonl")
+        if not os.path.exists(path):
+            if session_id:
+                return None
+            return {"session_id": sid, "events": [], "start": cursor(path, 0), "cursor": cursor(path, 0),
+                    "more": False, "reset": False}
+
+        def offset(c):
+            """A cursor's byte offset, or None if it belongs to another conversation."""
+            if c is None:
+                return None
+            owner, _, n = str(c).rpartition(":")
+            if not n.isdigit():
+                raise ValueError("bad cursor")
+            return int(n) if owner == sid else None
+        after_at, before_at = offset(after), offset(before)
+        reset = (after is not None and after_at is None) or (before is not None and before_at is None)
+        page = history(path, after_at, before_at, max(1, min(int(limit), MAX_HISTORY)), self._origin_of)
+        return {"session_id": sid, "events": page["events"], "start": cursor(path, page["start"]),
+                "cursor": cursor(path, page["end"]), "more": page["more"], "reset": reset}
 
     # ---- permission relay (perm.py writes requests, we show them and write decisions) ----
 

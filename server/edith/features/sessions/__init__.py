@@ -2,7 +2,8 @@
 
 Conversations come from the agent port. Switching restarts the tmux Claude and can take a while,
 so switches run one at a time on this feature's own worker (ctx.add_worker), never on the caller's
-thread (legacy started a thread per switch).
+thread (legacy started a thread per switch). Every switch ends with one session.switched event
+{ref, result, session_id}, after its last reply, so a client knows it is over.
 """
 import queue
 import time
@@ -39,18 +40,26 @@ def setup(ctx: Context) -> None:
         return Reply("\n".join(lines) + "\n\n/name <title> names the current one.", rows)
 
     def switch(item):
-        sid, reply = item
-        result = agent.resume(sid, before=lambda: reply(f"🔄 Switching to: {agent.session_title(sid) or sid[:8]}…"))
-        reply(SWITCH_MESSAGES[result])
+        sid, reply, ref, origin = item
+        result = "failed"
+        try:
+            result = agent.resume(sid, before=lambda: reply(f"🔄 Switching to: {agent.session_title(sid) or sid[:8]}…"))
+            reply(SWITCH_MESSAGES[result])
+        finally:  # even if the switch raised: a client waiting for the end must not wait forever
+            switched(ref, origin, sid, result)
+
+    def switched(ref, origin, sid, result):
+        ctx.bus.publish(Event("session.switched", {"ref": ref, "result": result, "session_id": sid}, origin=origin))
 
     submit = ctx.add_worker("switch", switch)
 
-    def queue_switch(sid, reply):
+    def queue_switch(sid, reply, ref, origin):
         try:
-            submit((sid, reply))
+            submit((sid, reply, ref, origin))
             return True
         except queue.Full:  # ten switches already waiting
             reply(SWITCH_MESSAGES["busy"])
+            switched(ref, origin, sid, "busy")
             return False
 
     def sessions(call: CommandCall):
@@ -61,7 +70,7 @@ def setup(ctx: Context) -> None:
         sid = agent.find_session(arg) if arg else None
         if not sid:
             return listing()
-        queue_switch(sid, call.reply)
+        queue_switch(sid, call.reply, call.ref, call.origin)
 
     def name(call: CommandCall):
         title = call.args.strip()
@@ -75,7 +84,7 @@ def setup(ctx: Context) -> None:
         return "🆕 Fresh conversation started. The old one is still in /sessions."
 
     def press(call: ActionCall):
-        queue_switch(call.action[len("sess:"):], call.reply)
+        queue_switch(call.action[len("sess:"):], call.reply, call.ref, call.origin)
         return ActionResult(toast="Switching…")
 
     ctx.add_command("new", "Start a fresh conversation", new, menu=True, order=50, help="start a fresh conversation")
@@ -93,17 +102,30 @@ def setup(ctx: Context) -> None:
 
     def api_resume(req):
         """Switching takes a while: it runs on the switch job, and its messages arrive on the stream
-        as command.reply events with this ref (plus session.changed when done)."""
+        as command.reply events with this ref, then session.changed (if it switched) and last
+        session.switched {ref, result}."""
         ref = f"app:switch:{req['params']['id'][:8]}:{int(time.time() * 1000)}"
 
         def reply(out):
             data = out.as_data() if isinstance(out, Reply) else {"text": out, "buttons": []}
             ctx.bus.publish(Event("command.reply", {"ref": ref, **data}, origin="app"))
         try:
-            submit((req["params"]["id"], reply))
+            submit((req["params"]["id"], reply, ref, "app"))
         except queue.Full:
             raise ApiError(429, "Too many switches waiting")
         return {"status": "switching", "ref": ref}
+
+    def api_history(req):
+        q = req.get("query") or {}
+        sid = req["params"]["id"]
+        try:
+            limit = int(q.get("limit", 50))
+        except ValueError:
+            raise ApiError(400, "limit must be a number")
+        page = agent.history(None if sid == "current" else sid, q.get("after"), q.get("before"), limit)
+        if page is None:
+            raise ApiError(404, "No such conversation")
+        return page
 
     def api_new(req):
         return {"result": agent.new_session()}
@@ -119,6 +141,7 @@ def setup(ctx: Context) -> None:
     ctx.add_action("sess", press)
     ctx.add_route("GET", "/v1/sessions", api_list)
     ctx.add_route("POST", "/v1/sessions/{id}/resume", api_resume)
+    ctx.add_route("GET", "/v1/sessions/{id}/history", api_history)
     ctx.add_route("POST", "/v1/sessions/new", api_new)
     ctx.add_route("PATCH", "/v1/sessions/{id}", api_rename)
 

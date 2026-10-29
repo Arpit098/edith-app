@@ -280,12 +280,26 @@ class RoutesTest(unittest.TestCase):
         self.assertEqual(self.a.call("POST", "/v1/sessions/new", {}), (200, {"result": "ok"}))
 
     def test_resume_answers_on_the_stream(self):
-        replies = []
-        self.a.bus.subscribe("command.reply", lambda ev: replies.append(ev.data))
+        events = []
+        self.a.bus.subscribe("command.reply", events.append)
+        self.a.bus.subscribe("session.*", events.append)
         status, body = self.a.call("POST", "/v1/sessions/gone/resume", {})
         self.assertEqual((status, body["status"]), (200, "switching"))
         run_workers(self.a.registry)  # the queued switch, here and now
-        self.assertEqual(replies, [{"ref": body["ref"], "text": "❌ That conversation doesn't exist any more.", "buttons": []}])
+        self.assertEqual([(e.type, e.origin, e.data) for e in events], [
+            ("command.reply", "app", {"ref": body["ref"], "text": "❌ That conversation doesn't exist any more.", "buttons": []}),
+            ("session.switched", "app", {"ref": body["ref"], "result": "missing", "session_id": "gone"})])  # last
+
+    def test_history(self):
+        page = {"session_id": "s1", "events": [], "start": "s1:0", "cursor": "s1:0", "more": False, "reset": False}
+        self.a.agent.history = lambda sid, after, before, limit: (self.a.agent.asked.append((sid, after, before, limit))
+                                                                   or (page if sid in (None, "s1") else None))
+        self.a.agent.asked = []
+        self.assertEqual(self.a.call("GET", "/v1/sessions/current/history"), (200, page))
+        self.assertEqual(self.a.call("GET", "/v1/sessions/s1/history?after=s1:10&limit=5")[0], 200)
+        self.assertEqual(self.a.call("GET", "/v1/sessions/zz/history")[0], 404)
+        self.assertEqual(self.a.call("GET", "/v1/sessions/current/history?limit=x")[0], 400)
+        self.assertEqual(self.a.agent.asked, [(None, None, None, 50), ("s1", "s1:10", None, 5), ("zz", None, None, 50)])
 
     def test_messages(self):
         with mock.patch("time.strftime", return_value="2026-11-02 10:43 IST"):
@@ -373,6 +387,30 @@ class StreamTest(unittest.TestCase):
         self.assertEqual(read_frame(s), (ws.OP_PONG, b"hi"))
         s.sendall(ws.client_frame(ws.OP_CLOSE, struct.pack("!H", 1000)))
         self.assertEqual(read_frame(s)[0], ws.OP_CLOSE)
+
+    def test_json_ping_gets_a_pong(self):
+        s, _, _ = self.a.stream()
+        self.addCleanup(s.close)
+        s.sendall(ws.client_frame(ws.OP_TEXT, b'{"type": "ping", "id": 7}'))
+        op, payload = read_frame(s)
+        pong = json.loads(payload)
+        self.assertEqual((op, pong["type"], pong["data"]), (ws.OP_TEXT, "pong", {"id": 7}))
+        s.sendall(ws.client_frame(ws.OP_TEXT, b'{"type": "ping"}'))
+        self.assertEqual(json.loads(read_frame(s)[1])["data"], {})
+        s.sendall(ws.client_frame(ws.OP_TEXT, b"not json") + ws.client_frame(ws.OP_TEXT, b'{"type": "hello"}'))
+        s.sendall(ws.client_frame(ws.OP_PING, b"after"))  # the ignored texts got no answer: the pong comes next
+        self.assertEqual(read_frame(s), (ws.OP_PONG, b"after"))
+
+    def test_any_client_frame_counts_as_alive(self):
+        with mock.patch.object(app_api, "PING_EVERY", 0.05):
+            s, _, _ = self.a.stream()
+            self.addCleanup(s.close)
+            for i in range(6):  # 6 quiet periods, each answered with a JSON ping instead of a pong
+                op, payload = read_frame(s)
+                self.assertEqual((op, payload), (ws.OP_PING, b"edith"))
+                s.sendall(ws.client_frame(ws.OP_TEXT, json.dumps({"type": "ping", "id": i}).encode()))
+                self.assertEqual(json.loads(read_frame(s)[1])["data"], {"id": i})
+            self.assertTrue(self.a.api._clients)  # still connected
 
     def test_unauthorized_and_bad_handshake(self):
         s, head, _ = self.a.stream(token=None)

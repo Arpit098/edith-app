@@ -1,6 +1,7 @@
 """The agent adapter (docs/PHASE1_PLAN.md, step 4): main lane in tmux, side lanes, queue, /stop,
 conversations and the permission relay, with the legacy bridge's rules. Runs against FakeTmux
 (playing the tmux Claude and its hooks) and the fake `claude -p`, in a temporary HOME."""
+import datetime as dt
 import json
 import os
 import pathlib
@@ -298,15 +299,21 @@ class LiveViewTest(unittest.TestCase):
         result = h.wait("tool.result")
         self.assertIsNotNone(result)
         live = [(e.type, e.origin, e.data) for e in h.events if e.type.startswith(("message.", "tool.", "file."))]
+        cursors = [d.pop("cursor") for _, _, d in live]
         self.assertEqual(live[:4], [
             ("message.user", "terminal", {"text": "typed in tmux", "voice": False}),
             ("message.user", "telegram", {"text": "[Telegram message from Arpit]\nhi [voice]", "voice": True}),
             ("message.assistant", "system", {"text": "Fixing it."}),
-            ("tool.call", "system", {"name": "Edit", "summary": "Edit: /x/a.py"})])
-        self.assertEqual(live[4][0], "file.diff")
+            ("tool.call", "system", {"id": "tu1", "name": "Edit", "summary": "Edit: /x/a.py"})])
+        self.assertEqual((live[4][0], live[4][2]["id"]), ("file.diff", "tu1"))
         self.assertIn("-x = 1\n+x = 2\n", live[4][2]["diff"])
-        self.assertEqual(live[5], ("tool.result", "system", {"name": "Edit", "ok": True, "summary": "Updated /x/a.py"}))
+        self.assertEqual(live[5], ("tool.result", "system", {"id": "tu1", "name": "Edit", "ok": True, "summary": "Updated /x/a.py"}))
         self.assertEqual(result.session_id, "s1")
+        # Each event's cursor is its entry's end in the transcript: the same as history() gives.
+        lines = h.transcript.read_bytes().splitlines(keepends=True)
+        ends = [sum(map(len, lines[:i + 1])) for i in range(len(lines))]
+        self.assertEqual(cursors, [f"s1:{ends[i]}" for i in (0, 3, 4, 4, 4, 5)])
+        self.assertEqual([e["data"]["cursor"] for e in h.agent.history(limit=50)["events"]], cursors)
 
     def test_follows_a_new_transcript_without_replaying_a_resumed_one(self):
         h = Harness(self)
@@ -326,6 +333,103 @@ class LiveViewTest(unittest.TestCase):
             h.cond.wait_for(lambda: any(e.data.get("text") == "first in s3" for e in h.events), 5)
         texts = [e.data["text"] for e in h.events if e.type == "message.user"]
         self.assertEqual(texts, ["new in s2", "first in s3"])
+
+
+class HistoryTest(unittest.TestCase):
+    """The app's Live view: the newest events on open, older pages, and catching up after a reconnect."""
+
+    def setUp(self):
+        self.h = Harness(self, live_view=False)
+        self.h.transcript.write_text("")
+        self.entries = []
+        for i in range(10):
+            self.add({"type": "user", "timestamp": f"2026-11-02T05:{i:02d}:00Z",
+                      "message": {"content": f"[App message from Arpit, x]\nq{i}\n[tg-ref ab{i}]"}})
+            self.add({"type": "assistant", "message": {"content": [
+                {"type": "text", "text": f"a{i}"}, {"type": "tool_use", "id": f"t{i}", "name": "Bash", "input": {"command": "ls"}}]}})
+            self.add({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": f"t{i}", "content": "ok"}]}})
+
+    def add(self, entry):
+        self.h.transcript_line(entry)
+
+    def texts(self, page):
+        return [e["data"].get("text") or e["data"]["id"] for e in page["events"]]
+
+    def test_newest_page_then_older_ones(self):
+        page = self.h.agent.history(limit=8)
+        # Whole entries only: 8 events = the last 2 turns (4 events each).
+        self.assertEqual(self.texts(page), ["[App message from Arpit, x]\nq8", "a8", "t8", "t8",
+                                            "[App message from Arpit, x]\nq9", "a9", "t9", "t9"])
+        first = page["events"][0]
+        self.assertEqual((first["type"], first["origin"], first["session_id"]), ("message.user", "app", "s1"))
+        self.assertEqual(first["ts"], dt.datetime(2026, 11, 2, 5, 8, tzinfo=dt.timezone.utc).timestamp())
+        result = page["events"][3]
+        self.assertEqual(result["data"], {"id": "t8", "name": "Bash", "ok": True, "summary": "ok",
+                                          "cursor": result["data"]["cursor"]})
+        self.assertEqual(page["cursor"], f"s1:{self.h.transcript.stat().st_size}")
+        self.assertTrue(page["more"])
+        seen = self.texts(page)
+        while page["more"]:
+            page = self.h.agent.history(before=page["start"], limit=7)  # 7: never splits an entry's 3 events
+            seen = self.texts(page) + seen
+        self.assertEqual(len(seen), 40)
+        self.assertEqual(seen[:2], ["[App message from Arpit, x]\nq0", "a0"])
+
+    def test_catch_up_after_a_cursor(self):
+        page = self.h.agent.history(limit=4)
+        self.add({"type": "user", "message": {"content": "typed later"}})
+        self.add({"type": "assistant", "message": {"content": [{"type": "text", "text": "answer"}]}})
+        with open(self.h.transcript, "a") as f:
+            f.write('{"type": "assistant", "mess')  # being written: not read yet
+        later = self.h.agent.history(after=page["cursor"])
+        self.assertEqual(self.texts(later), ["typed later", "answer"])
+        self.assertEqual([e["origin"] for e in later["events"]], ["terminal", "system"])
+        self.assertFalse(later["more"])
+        self.assertEqual(self.h.agent.history(after=later["cursor"])["events"], [])
+        # Paged: limit 1 hands back one entry at a time, `more` until the end.
+        one = self.h.agent.history(after=page["cursor"], limit=1)
+        self.assertEqual((self.texts(one), one["more"]), (["typed later"], True))
+        two = self.h.agent.history(after=one["cursor"], limit=1)
+        self.assertEqual(self.texts(two), ["answer"])
+
+    def test_reads_only_what_it_needs(self):
+        size = self.h.transcript.stat().st_size
+        real_open, read = open, []
+
+        class Counting:
+            def __init__(self, f):
+                self.f = f
+
+            def __getattr__(self, name):
+                return getattr(self.f, name)
+
+            def read(self, n=-1):
+                data = self.f.read(n)
+                read.append(len(data))
+                return data
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                self.f.close()
+
+        with mock.patch("builtins.open", lambda *a, **k: Counting(real_open(*a, **k))), \
+                mock.patch("edith.adapters.agents.claude_tmux.transcript.read_backward.__defaults__", (64,)):
+            self.h.agent.history(limit=4)
+        self.assertLess(sum(read), size / 3)  # the newest entries, not the whole file
+
+    def test_other_conversations_and_bad_cursors(self):
+        other = self.h.transcripts / "s2.jsonl"
+        other.write_text(json.dumps({"type": "user", "message": {"content": "in s2"}}) + "\n")
+        self.assertEqual(self.texts(self.h.agent.history("s2")), ["in s2"])
+        self.assertIsNone(self.h.agent.history("nope"))
+        self.assertIsNone(self.h.agent.history("../etc/passwd"))
+        page = self.h.agent.history(after="s2:0", limit=2)  # a cursor from another conversation
+        self.assertTrue(page["reset"])
+        self.assertEqual(self.texts(page), ["t9"])  # the newest page instead (the entry before has 2 events)
+        with self.assertRaises(ValueError):
+            self.h.agent.history(after="s1:abc")
 
 
 class ConstructionTest(unittest.TestCase):

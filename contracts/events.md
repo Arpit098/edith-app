@@ -14,15 +14,16 @@ Every event on the bus, and on the app's `/v1/stream` WebSocket, has this shape:
 |---|---|---|
 | `message.user` | `{text, voice: bool}` | A user message enters the main lane |
 | `message.assistant` | `{text}` | Claude writes text (partial or final) |
-| `tool.call` | `{name, summary}` | Claude starts a tool (e.g. `Bash: npm test`) |
-| `tool.result` | `{name, ok, summary}` | A tool finishes |
-| `file.diff` | `{path, diff}` | A file is edited |
+| `tool.call` | `{id, name, summary}` | Claude starts a tool (e.g. `Bash: npm test`). `id` is Claude's tool_use id |
+| `tool.result` | `{id, name, ok, summary}` | A tool finishes. `id` is the `tool.call.id` it answers |
+| `file.diff` | `{id, path, diff}` | A file is edited (`id`: the Edit/Write `tool.call.id`) |
 | `turn.started` | `{ref}` | A main-lane turn begins |
 | `turn.done` | `{ref, text, steps, elapsed}` | A main-lane turn ends with a reply |
 | `turn.stopped` | `{ref}` | A turn is interrupted |
 | `permission.request` | `{id, tool, detail}` | Claude needs approval |
 | `permission.resolved` | `{id, decision}` | Approved, denied or timed out |
 | `session.changed` | `{session_id, title, source}` | New, resumed or cleared session |
+| `session.switched` | `{ref, result, session_id}` | A conversation switch (`/resume`, a `sess:` button, `POST /v1/sessions/{id}/resume`) is over: always the last event of that switch, after its `command.reply` messages and `session.changed`. `result`: `ok`, `already`, `busy`, `missing` or `failed`; `ref` is the one the request returned (for Telegram, its message id) |
 | `lane.status` | `{main: idle/busy, side: n, queued: n}` | Lane state changes |
 | `turn.queued` | `{ref, position}` | A message waits for the main lane (all lanes busy, or `/queue`) |
 | `turn.progress` | `{ref, lane, steps, step, elapsed}` | A running turn moves on (`step` is the latest tool summary, e.g. `$ npm test`) |
@@ -74,6 +75,34 @@ A command's reply, and the `data` of `message.system`, can carry buttons:
 conversation's transcript, for every turn, whoever started it. `message.user.origin` is
 `telegram`, `app` or `terminal` (typed in tmux); the others have origin `system`. `session_id` is set.
 `file.diff.diff` is a unified diff of an Edit/MultiEdit/Write (at most 20,000 characters).
+`tool.result.id` equals the `tool.call.id` it answers, so the two pair exactly (`name` of a result
+whose call came before the window read can be `""`; pair by `id`).
+
+Every live-view event's `data` also carries `cursor`: `"<session_id>:<byte offset>"`, the end of its
+transcript entry (several events from one entry share it). Cursors are opaque to the app; compare
+them only by equality, or use them with History below.
+
+### History
+
+`GET /v1/sessions/{id}/history?after=&before=&limit=` (`{id}` is a session id or `current`) returns
+the same events as the live view, read from the transcript by byte offset (never the whole file):
+
+```json
+{ "session_id": "…", "events": [{type, ts, session_id, origin, data: {…, cursor}}],
+  "start": "<cursor>", "cursor": "<cursor>", "more": true, "reset": false }
+```
+
+- No `after`/`before`: the newest `limit` events (default 50, at most 500). `more`: older ones exist; get
+  them with `before=<start>`.
+- `after=<cursor>`: what came after it, oldest first. `more`: there is more past `cursor`; ask again with
+  `after=<cursor>`.
+- Whole entries only: a page may hold a few events more than `limit` (one entry can make several
+  events), and it never splits one. `ts` is the entry's own time.
+- `reset: true`: the cursor given belongs to another conversation (Claude switched); the page is the
+  newest of the current one instead. A malformed cursor is a 400; an unknown session a 404.
+- Live view on open: connect `/v1/stream` first (buffer events), then fetch the newest page, then
+  apply buffered events whose `cursor` is not in that page. After a reconnect: `after=<last cursor>`
+  until `more` is false.
 
 ## App API (v1)
 
@@ -84,11 +113,12 @@ Base `http://<edith's Tailscale IP>:8787`, reachable over Tailscale only. Every 
 | Method | Path | Body | Answer |
 |---|---|---|---|
 | POST | `/v1/messages` | `{text, voice?: bool, queue?: bool}` | `{ref, lane}`; the turn's events then arrive on the stream with this `ref` |
-| GET | `/v1/stream` | WebSocket | every event above as one JSON text message `{type, ts, session_id, origin, data}`; the server pings every 25 s |
+| GET | `/v1/stream` | WebSocket | every event above as one JSON text message `{type, ts, session_id, origin, data}`; the server pings every 25 s (protocol ping) when the line is quiet. The app may send `{"type": "ping", "id"?: any}`; the answer is `{"type": "pong", "ts", "session_id": null, "origin": "system", "data": {"id"?}}` (`id` echoed). Any frame from the app counts as alive; three quiet periods without one and the server drops it. Other text from the app is ignored |
 | POST | `/v1/stop` | | `{running, dropped: [ref]}` |
 | GET | `/v1/status` | | `{main: busy/idle, queued, runs: [{ref, lane, seconds, step}], tmux: running/down, conversation: bool, session: {id, title} \| null}` |
 | GET | `/v1/sessions` | | `{sessions: [{session_id, title, updated, current}]}` |
-| POST | `/v1/sessions/{id}/resume` | | `{status: "switching", ref}`; the outcome comes as `command.reply` (and `session.changed`) |
+| POST | `/v1/sessions/{id}/resume` | | `{status: "switching", ref}`; the messages come as `command.reply`, then `session.changed` (if it switched) and last `session.switched {ref, result}` |
+| GET | `/v1/sessions/{id}/history` | `?after=&before=&limit=` | `{session_id, events, start, cursor, more, reset}` (see History) |
 | POST | `/v1/sessions/new` | | `{result: ok/busy}` |
 | PATCH | `/v1/sessions/{id}` | `{title}` | `{session_id, title}` |
 | GET | `/v1/permissions` | | `{pending: [{id, tool, detail, ref, lane}]}` |

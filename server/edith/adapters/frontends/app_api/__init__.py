@@ -325,16 +325,17 @@ class AppApi:
                             return
                 if sock in ready:
                     opcode, payload = reader.read()
+                    missed = 0  # anything from the client shows it is still there
                     if opcode == ws.OP_CLOSE:
                         sock.sendall(ws.close_frame(ws.CLOSE_NORMAL))
                         return
                     if opcode == ws.OP_PING:
                         sock.sendall(ws.encode(ws.OP_PONG, payload))
-                    elif opcode == ws.OP_PONG:
-                        missed = 0
                     elif opcode == ws.OP_BINARY:
                         raise ws.ProtocolError(ws.CLOSE_UNSUPPORTED, "binary messages are not accepted")
-                    # text from the client is read and ignored
+                    elif opcode == ws.OP_TEXT and (pong := self._pong(payload)):
+                        sock.sendall(pong)  # this thread is the socket's only writer, so frames never interleave
+                    # other text from the client is read and ignored
                 if not ready:
                     missed += 1
                     if missed > 2:
@@ -352,6 +353,20 @@ class AppApi:
                 self._clients.discard(client)
             client.close()
             self._notify()
+
+    @staticmethod
+    def _pong(payload):
+        """{"type": "ping", "id"?} from the app's watchdog -> a pong frame (echoing its id), else None."""
+        try:
+            msg = json.loads(payload)
+        except ValueError:
+            return None
+        if not isinstance(msg, dict) or msg.get("type") != "ping":
+            return None
+        pong = {"type": "pong", "ts": time.time(), "session_id": None, "origin": "system", "data": {}}
+        if "id" in msg:
+            pong["data"]["id"] = msg["id"]
+        return ws.encode(ws.OP_TEXT, json.dumps(pong).encode())
 
     # ---- audit ----
 
