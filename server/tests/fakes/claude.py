@@ -3,7 +3,8 @@
 It reads a plan from the JSON file in $FAKE_CLAUDE_PLAN, prints its stream-json events, writes
 its stderr, then exits with its code. If $FAKE_CLAUDE_LOG is set, it appends its argv there as a
 JSON line, so tests can check flags such as --resume and --fork-session. A plan may hold
-"if_resume" (another plan, used when run with --resume) and "stderr_first" (written before stdout).
+"if_resume" (another plan, used when run with --resume), "stderr_first" (written before stdout) and
+"hang" (print everything but the result, then wait until killed: a turn that is still working).
 """
 import json
 import os

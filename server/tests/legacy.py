@@ -11,9 +11,23 @@ import os
 import pathlib
 import sys
 import tempfile
+import time
 
 LEGACY = pathlib.Path(__file__).resolve().parents[1] / "legacy" / "edith"
 ALLOWED = 111  # Arpit's chat/user id in tests
+
+
+class FastClock:
+    """A legacy module's `time` (module.time = FastClock()) with every sleep capped at 10 ms. Its
+    fixed waits (0.7 s before Enter, 0.5 s loops, 4.5 s typing) shrink; its logic and its output
+    don't change, and everything else (time.time, strftime, and any test patches) is the real one."""
+
+    def __getattr__(self, name):
+        return getattr(time, name)
+
+    @staticmethod
+    def sleep(seconds):
+        time.sleep(min(seconds, 0.01))
 
 
 @contextlib.contextmanager

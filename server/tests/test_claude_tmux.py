@@ -47,7 +47,7 @@ class Harness:
         env.start()
         test.addCleanup(env.stop)
         cfg = {"work_dir": str(self.work_dir), "state_dir": str(self.state_dir), "claude_bin": FAKE_CLAUDE,
-               "chat_key": "111", "ready_timeout": 1, "check_alive_every": 0.2, "stop_grace": 0.5, **config}
+               "chat_key": "111", "ready_timeout": 1, "check_alive_every": 0.05, "stop_grace": 0.1, **config}
         self.agent = ClaudeTmux(cfg, tmux=tmux)
         p = self.agent.paths
         for path in (p.work_dir, p.state_dir, p.perm_dir, p.telegram_dir, p.transcripts, self.agent.launch,
@@ -134,7 +134,7 @@ class MainLaneTest(unittest.TestCase):
         self.assertFalse((h.state_dir / "tmux-run").exists())
 
     def test_not_ready(self):
-        h = Harness(self, ready_timeout=0.3)
+        h = Harness(self, ready_timeout=0.05)
         h.fake.pane = "Loading…"
         h.agent.send("hi", "telegram", "m1")
         failed = h.wait("turn.failed", "m1")
@@ -165,7 +165,7 @@ class MainLaneTest(unittest.TestCase):
         t = time.monotonic()
         h.agent.stop()
         self.assertIsNotNone(h.wait("turn.stopped", "m1", timeout=3))
-        self.assertLess(time.monotonic() - t, 2)  # stop_grace 0.5 s, not a polling interval later
+        self.assertLess(time.monotonic() - t, 1)  # stop_grace 0.1 s, not a polling interval later
 
     def test_crash(self):
         h = Harness(self)
@@ -213,7 +213,7 @@ class SideLaneTest(unittest.TestCase):
         self.assertNotIn("side_notes", h.state())
 
     def test_force_queue_and_lane_limit(self):
-        h = Harness(self, max_side_lanes=1, side_plan=plan(delay=0.3))
+        h = Harness(self, max_side_lanes=1, side_plan=plan(hang=True))
         h.mode = "hang"
         h.agent.send("first", "telegram", "m1")
         h.wait("turn.progress", "m1")
@@ -240,14 +240,14 @@ class SideLaneTest(unittest.TestCase):
         self.assertEqual(h.types("m2"), ["turn.started", "turn.retrying", "turn.started", "turn.progress", "turn.done"])
         self.assertNotIn("111", h.state().get("sessions", {}))
 
-        h.plan_file.write_text(json.dumps(plan(delay=5)))
+        h.plan_file.write_text(json.dumps(plan(hang=True)))
         h.agent.send("slow", "telegram", "m3")
         h.wait("turn.progress", "m3")
         self.assertEqual(h.agent.stop().running, 1)
         self.assertIsNotNone(h.wait("turn.stopped", "m3", timeout=3))
 
     def test_shutdown_leaves_no_process_or_thread(self):
-        h = Harness(self, side_plan=plan(delay=5))
+        h = Harness(self, side_plan=plan(hang=True))
         h.agent.main_busy.set()
         h.agent.send("slow", "telegram", "m1")
         h.wait("turn.progress", "m1")
@@ -316,15 +316,16 @@ class LiveViewTest(unittest.TestCase):
         # A resumed conversation: its history is not replayed, only what comes next.
         (h.transcripts / "s2.jsonl").write_text(json.dumps({"type": "user", "message": {"content": "s2 history"}}) + "\n")
         h.set_session("s2", source="resume")
-        time.sleep(0.2)
+        live = h.agent._live
+        with live.switched:  # it has moved on to s2 (so "new in s2" is really new to it)
+            self.assertTrue(live.switched.wait_for(lambda: live.following == str(h.transcripts / "s2.jsonl"), 5))
         h.transcript_line({"type": "user", "message": {"content": "new in s2"}})
         self.assertEqual(h.wait("message.user").data["text"], "new in s2")
         # A fresh conversation (/clear): read from its start, even if Claude wrote before we noticed.
         (h.transcripts / "s3.jsonl").write_text(json.dumps({"type": "user", "message": {"content": "first in s3"}}) + "\n")
         h.set_session("s3", source="clear")
-        deadline = time.monotonic() + 5
-        while time.monotonic() < deadline and not any(e.data.get("text") == "first in s3" for e in h.events):
-            time.sleep(0.02)
+        with h.cond:
+            h.cond.wait_for(lambda: any(e.data.get("text") == "first in s3" for e in h.events), 5)
         texts = [e.data["text"] for e in h.events if e.type == "message.user"]
         self.assertEqual(texts, ["new in s2", "first in s3"])
 

@@ -23,9 +23,9 @@ from edith.adapters.agents.claude_tmux.backend import ClaudeTmux
 from edith.adapters.agents.claude_tmux.tmux import Tmux
 from edith.core import CommandCall, EventBus, Ports, Registry, load_features
 from edith.ports.agent import RunInfo, StopResult
-from tests.fakes import FakeTelegram, FakeTmux, callback, message
+from tests.fakes import FakeTelegram, FakeTmux, callback, message, run_workers
 from tests.golden import assert_golden
-from tests.legacy import LEGACY, legacy_home, load
+from tests.legacy import LEGACY, FastClock, legacy_home, load
 
 NOW = 1793600000.0
 STAMP = "2026-11-02 10:43 IST"
@@ -82,6 +82,7 @@ class LegacyWorld:
         self.home = home
         build_fixture(home)
         self.bridge = load("bridge/edith_bridge.py")
+        self.bridge.time = FastClock()  # its sleeps (e.g. 0.5 s before /clear's Enter) go fast
         self.tg = self.bridge.tg = FakeTelegram()
         self.tmux = self.bridge.tmux = SwitchingTmux(home)
         self.threads = []
@@ -166,8 +167,7 @@ class NewWorld:
         self.sent = []
         self.agent.send = lambda text, origin, ref, force_queue=False: self.sent.append([text, force_queue])
         self.bus, self.registry = EventBus(), Registry()
-        report = load_features(FEATURES, self.bus, Ports(agent=self.agent), self.registry,
-                               {"sessions": {"idle_wake": 0.01}})
+        report = load_features(FEATURES, self.bus, Ports(agent=self.agent), self.registry, {})
         assert report.loaded == FEATURES, report.failed
         self._calls, self._ids, self._system = [], iter(range(1000, 2000)), {}
         self.bus.subscribe("message.system", self._system_message)
@@ -225,11 +225,7 @@ class NewWorld:
             self._send(111, r)
 
     def settle(self):
-        job = self.registry.jobs["sessions.switch"]
-        sent_before = None
-        while sent_before != len(self._calls) or not self.registry.jobs:  # run until a pass sends nothing
-            sent_before = len(self._calls)
-            job.run()
+        run_workers(self.registry)  # the switch worker's queued switches, here and now
 
     def busy(self):
         self.agent.main_busy.set()

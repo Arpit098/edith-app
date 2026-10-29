@@ -19,6 +19,7 @@ from edith.adapters.frontends import app_api
 from edith.adapters.frontends.app_api import AppApi, check_bind, read_token, ws
 from edith.core import Event, EventBus, Ports, Registry, load_features
 from edith.ports.agent import RunInfo, StopResult, TurnHandle
+from tests.fakes import run_workers
 
 TOKEN = "t" * 40
 
@@ -86,17 +87,23 @@ class Api:
         token.chmod(0o600)
         self.bus, self.registry, self.agent = EventBus(), Registry(), FakeAgent()
         load_features(["sessions", "control", "approvals", "quick_actions"], self.bus, Ports(agent=self.agent),
-                      self.registry, {"sessions": {"idle_wake": 0.05}})
+                      self.registry, {})
         self.audit = os.path.join(self.dir, "audit.jsonl")
         self.api = AppApi({"bind": "tailscale", "port": 0, "token_file": str(token), "audit_log": self.audit},
                           resolve_ip=kw.get("resolve_ip", lambda: "127.0.0.1"), allow_loopback=True,
                           retry_wait=kw.get("retry_wait", 0.05))
         self.api.start(self.bus, self.registry, self.agent)
         test.addCleanup(self.api.stop)
-        deadline = time.monotonic() + 5
-        while self.api.address is None and time.monotonic() < deadline:
-            time.sleep(0.01)
+        assert self.api.listening.wait(5), "the App API did not start"
         self.host, self.port = self.api.address
+
+    def wait(self, predicate, timeout=5):
+        """Wait for the App API to reach a state (it notifies `changed` on each audit line and client)."""
+        with self.api.changed:
+            return self.api.changed.wait_for(predicate, timeout)
+
+    def audit_text(self):
+        return pathlib.Path(self.audit).read_text() if os.path.exists(self.audit) else ""
 
     def call(self, method, path, body=None, token=TOKEN, raw=None, ctype="application/json"):
         data = raw if raw is not None else (json.dumps(body).encode() if body is not None else None)
@@ -277,9 +284,7 @@ class RoutesTest(unittest.TestCase):
         self.a.bus.subscribe("command.reply", lambda ev: replies.append(ev.data))
         status, body = self.a.call("POST", "/v1/sessions/gone/resume", {})
         self.assertEqual((status, body["status"]), (200, "switching"))
-        deadline = time.monotonic() + 5
-        while not replies and time.monotonic() < deadline:
-            self.a.registry.jobs["sessions.switch"].run()
+        run_workers(self.a.registry)  # the queued switch, here and now
         self.assertEqual(replies, [{"ref": body["ref"], "text": "❌ That conversation doesn't exist any more.", "buttons": []}])
 
     def test_messages(self):
@@ -318,19 +323,24 @@ class RoutesTest(unittest.TestCase):
                 s.sendall(("POST /v1/messages HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer " + TOKEN +
                            "\r\nContent-Type: application/json\r\nContent-Length: 999999\r\n\r\n").encode())
                 self.assertTrue(s.recv(100).startswith(b"HTTP/1.1 413"))  # none of the body was read
-            deadline = time.monotonic() + 5  # its audit line marks the end of that request
-            while "413" not in pathlib.Path(self.a.audit).read_text() if os.path.exists(self.a.audit) else True:
-                if time.monotonic() > deadline:
-                    break
-                time.sleep(0.01)
+            # its audit line marks the end of that request (any error log would have come before it)
+            self.assertTrue(self.a.wait(lambda: '"status": 413' in self.a.audit_text()))
+
+    def test_stop_ends_idle_connections_at_once(self):
+        idle = socket.create_connection((self.a.host, self.a.port), timeout=5)  # a keep-alive that says nothing
+        self.addCleanup(idle.close)
+        self.assertTrue(self.a.wait(lambda: self.a.api.server.active))
+        started = time.monotonic()
+        self.a.api.stop()
+        self.assertLess(time.monotonic() - started, 1)  # not the 30 s socket timeout
+        self.assertEqual(self.a.api.server.active, set())
+        self.assertEqual(idle.recv(10), b"")  # closed by the server
 
     def test_audit_log(self):
         self.a.call("POST", "/v1/messages", {"text": "hello there"})
         self.a.call("GET", "/v1/status", token="wrong")
-        deadline = time.monotonic() + 5  # each line is written just after its answer is sent
-        while len(pathlib.Path(self.a.audit).read_text().splitlines()) < 2 and time.monotonic() < deadline:
-            time.sleep(0.01)
-        lines = [json.loads(line) for line in pathlib.Path(self.a.audit).read_text().splitlines()]
+        self.assertTrue(self.a.wait(lambda: len(self.a.audit_text().splitlines()) == 2))  # written after each answer
+        lines = [json.loads(line) for line in self.a.audit_text().splitlines()]
         self.assertEqual([(e["method"], e["path"], e["status"], e["summary"]) for e in lines],
                          [("POST", "/v1/messages", 200, "hello there"), ("GET", "/v1/status", 401, "")])
         self.assertNotIn(TOKEN, pathlib.Path(self.a.audit).read_text())
@@ -346,9 +356,7 @@ class StreamTest(unittest.TestCase):
         self.addCleanup(s.close)
         self.assertTrue(head.startswith("HTTP/1.1 101"), head)
         self.assertIn(f"Sec-WebSocket-Accept: {ws.accept_key(key)}", head)
-        deadline = time.monotonic() + 5
-        while not self.a.api._clients and time.monotonic() < deadline:
-            time.sleep(0.01)
+        self.assertTrue(self.a.wait(lambda: self.a.api._clients))
         self.a.bus.publish(Event("turn.done", {"ref": "r1", "text": "ok"}, origin="telegram", session_id="s1"))
         op, payload = read_frame(s)
         event = json.loads(payload)
@@ -371,9 +379,7 @@ class StreamTest(unittest.TestCase):
         with mock.patch.object(app_api, "CLIENT_BACKLOG", 3):
             s, head, _ = self.a.stream()
             self.addCleanup(s.close)
-            deadline = time.monotonic() + 5
-            while not self.a.api._clients and time.monotonic() < deadline:
-                time.sleep(0.01)
+            self.assertTrue(self.a.wait(lambda: self.a.api._clients))
             client = next(iter(self.a.api._clients))
             frame = ws.encode(ws.OP_TEXT, b'{"type": "tick"}')
             with client.lock:  # fill its backlog without waking its thread (no pipe write)…

@@ -23,7 +23,7 @@ from edith.core import EventBus, Ports, Registry, load_features
 from tests.fakes import FAKE_CLAUDE, FakeTelegram, FakeTmux, callback, message
 from tests.fakes.claude import plan
 from tests.golden import assert_golden
-from tests.legacy import LEGACY, legacy_home, load
+from tests.legacy import LEGACY, FastClock, legacy_home, load
 
 STAMP = "2026-11-02 10:43 IST"
 REF = re.compile(r"\[tg-ref ([0-9a-f]+)\]")
@@ -34,9 +34,9 @@ class SimTmux(FakeTmux):
     """The tmux Claude: each submitted message gets the next scripted action ("reply", text) or
     keeps working ("hang") until finish(); Esc interrupts it."""
 
-    def __init__(self, home):
+    def __init__(self, home, changed):
         super().__init__(on_submit=self._submit, on_key=self._key)
-        self.home, self.script = home, []
+        self.home, self.script, self.changed = home, [], changed
         self.transcript = home / ".claude/projects" / re.sub(r"[^A-Za-z0-9]", "-", str(home / "edith")) / "s1.jsonl"
 
     def _event(self, **ev):
@@ -58,6 +58,8 @@ class SimTmux(FakeTmux):
         action = self.script.pop(0) if self.script else ("hang",)
         if action[0] == "reply":
             self._event(event="stop", text=action[1])
+        with self.changed:  # the test can wait for a submission like for a Telegram call
+            self.changed.notify_all()
 
     def finish(self, text):
         self._event(event="stop", text=text)
@@ -87,8 +89,9 @@ class Legacy:
         self.home = home
         self.tg = FakeTelegram()
         self.bridge = load("bridge/edith_bridge.py")
+        self.bridge.time = FastClock()
         self.bridge.tg, self.bridge.tg_send_file = self.tg, self.tg.send_file
-        self.tmux = self.bridge.tmux = SimTmux(home)
+        self.tmux = self.bridge.tmux = SimTmux(home, self.tg.changed)
         threading.Thread(target=self.bridge.worker, daemon=True).start()
 
     def message(self, m):
@@ -105,11 +108,11 @@ class New:
     def __init__(self, home):
         self.home = home
         self.tg = FakeTelegram()
-        self.tmux = SimTmux(home)
+        self.tmux = SimTmux(home, self.tg.changed)
         self.agent = ClaudeTmux({"chat_key": "111", "claude_bin": FAKE_CLAUDE},
-                                tmux=Tmux(runner=self.tmux, start_service=lambda: None))
+                                tmux=Tmux(runner=self.tmux, start_service=lambda: None, settle_step=0.005))
         self.bus, self.registry = EventBus(), Registry()
-        report = load_features(FEATURES, self.bus, Ports(agent=self.agent), self.registry, {"sessions": {"idle_wake": 0.05}})
+        report = load_features(FEATURES, self.bus, Ports(agent=self.agent), self.registry, {})
         assert report.loaded == FEATURES, report.failed
         self.frontend = TelegramFrontend({"poll": False}, api=self.tg)
         self.agent.start(self.bus)
@@ -128,19 +131,12 @@ class New:
         self.agent.shutdown()
 
 
-def wait(check, timeout=20):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if check():
-            return True
-        time.sleep(0.02)
-    raise AssertionError("timed out waiting")
-
 
 def conversation(w):
     """The scripted conversation. Each step waits until its effect is visible."""
     texts = lambda: w.tg.texts()  # noqa: E731
     edits = lambda: [p["text"] for m, p in w.tg.calls if m == "editMessageText"]  # noqa: E731
+    wait = w.tg.wait  # wakes on every Telegram call and tmux submission: no polling
 
     w.message(message("/help", message_id=1))
     w.tmux.script.append(("reply", f"Here you go.\nREACT: 🎉\nSEND_FILE: {w.home}/report.txt\nSEND_FILE: {w.home}/missing.txt"))
@@ -175,8 +171,7 @@ def conversation(w):
 
     w.message(message("hi", chat_id=999, user_id=999, message_id=10))  # a stranger: ignored
     w.message(message("/status", message_id=11))
-    wait(lambda: any(t.startswith("🖥 tmux session") for t in texts()))
-    time.sleep(0.3)  # let any late reaction land
+    wait(lambda: any(t.startswith("🖥 tmux session") for t in texts()))  # the last call of all
 
 
 def normalize(w):
