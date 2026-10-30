@@ -27,6 +27,7 @@ wait_until() { # <description> <command…>
       echo "::error::timed out waiting for $what"
       ui >"$OUT/timeout-ui.xml" || true
       adb exec-out screencap -p >"$OUT/timeout.png" || true
+      save_logs timeout
       return 1
     fi
     sleep "$delay"
@@ -34,6 +35,19 @@ wait_until() { # <description> <command…>
   done
 }
 
+# The device log since EDITH started (logcat is cleared just before): the whole log, and what
+# matters for a stuck or crashing app (its JS console and errors, React Native, crashes, native
+# aborts), also printed into the job log. Plus whether the app process is still alive.
+save_logs() {
+  local tag=$1
+  adb logcat -d -v time >"$OUT/logcat-$tag-all.txt" 2>&1 || true
+  adb logcat -d -v time ReactNativeJS:V ReactNative:V ReactNativeJNI:V AndroidRuntime:V DEBUG:V libc:F ActivityManager:W '*:S' >"$OUT/logcat-$tag.txt" 2>&1 || true
+  grep -E "FATAL|Exception|Error|crash|$PKG" "$OUT/logcat-$tag-all.txt" | grep -v "uiautomator" | tail -80 >>"$OUT/logcat-$tag.txt" || true
+  echo "EDITH process: $(adb shell pidof "$PKG" || echo 'not running')" | tee -a "$OUT/logcat-$tag.txt"
+  echo "::group::logcat ($tag)"
+  tail -120 "$OUT/logcat-$tag.txt"
+  echo "::endgroup::"
+}
 ui() { adb shell uiautomator dump /sdcard/ui.xml >/dev/null && adb exec-out cat /sdcard/ui.xml; }
 # A CPU-rendered emulator is slow enough that System UI (or another app) sometimes hits an ANR
 # right after boot; its "isn't responding" dialog covers the screen. Answer "Wait" and go on.
@@ -134,6 +148,7 @@ demo battery -e level 100 -e plugged false
 demo network -e wifi show -e level 4
 demo notifications -e visible false
 
+adb logcat -c || true # from here, the log is EDITH's start
 adb shell am start -W -n "$PKG/.MainActivity" >/dev/null
 WAIT_S=90 wait_until "the connect screen" on_screen "Server address"
 shot 00-connect
@@ -217,6 +232,7 @@ for part in screenshots frames recording; do
   if ! "$part"; then
     FAILED+=("$part")
     adb exec-out screencap -p >"$OUT/failed-$part.png" || true
+    save_logs "$part"
     battery_saver off || true
   fi
   echo "::endgroup::"
