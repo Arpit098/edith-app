@@ -433,4 +433,50 @@ describe('wake word model', () => {
     expect(m.store.get().clips.map((c) => c.sha256)).toEqual(['s1']); // nothing dropped on the phone
     expect(m.store.get().error).toMatch(/Couldn’t delete the recordings on edith: busy/);
   });
+
+  const uploaded = (sha: string) => ({ sha256: sha, kind: 'positive_near', uri: null, seconds: 1, status: 'uploaded', error: null });
+
+  it('reconciles with edith when the session was deleted there: uploaded clips go, takes on the phone stay and go up again', async () => {
+    const data = new MemoryData();
+    const clips = [uploaded('u1'), uploaded('u2'), uploaded('u3'), uploaded('u4'), uploaded('u5'), { sha256: 'local', kind: 'noise', uri: 'file:///clips/local.wav', seconds: 30, status: 'failed', error: 'x' }];
+    data.map.set(STORE_KEY, JSON.stringify({ label: 'Phone x', sessionId: '20261030-2002-2b8f', clips }));
+    const { ctx, m } = setup({ data });
+    await flush();
+    expect(m.store.get().clips.filter((c) => c.status === 'uploaded')).toHaveLength(5); // "5 recordings done"
+    ctx.transport
+      .on('GET /v1/wakeword/sessions/20261030-2002-2b8f/manifest', () => {
+        throw new ApiError(404, 'no such session'); // deleted on edith
+      })
+      .on('GET /v1/wakeword/model', { state: 'no_recordings', model: null })
+      .on('POST /v1/wakeword/sessions', { id: 'fresh' })
+      .on('UPLOAD /v1/wakeword/sessions/fresh/clips?kind=noise', clipAnswer('local'));
+    await m.refreshStatus(); // the screen opens (or the app reconnects)
+    await flush();
+    expect(m.store.get().sessionId).toBe('fresh');
+    expect(m.store.get().clips.map((c) => [c.sha256, c.status])).toEqual([['local', 'uploaded']]);
+  });
+
+  it('reconciles a session that lost some clips, keeping the rest', async () => {
+    const data = new MemoryData();
+    data.map.set(STORE_KEY, JSON.stringify({ label: 'Phone x', sessionId: 'sess', clips: [uploaded('u1'), uploaded('u2'), uploaded('u3')] }));
+    const { ctx, m } = setup({ data, online: false });
+    await flush();
+    ctx.transport.on('GET /v1/wakeword/sessions/sess/manifest', { clips: [{ sha256: 'u1' }, { sha256: 'u3' }] }).on('GET /v1/wakeword/model', { state: 'waiting_for_training', model: null });
+    ctx.bus.publish(localEvent('app.connected', { first: false }));
+    await flush();
+    expect(m.store.get().sessionId).toBe('sess');
+    expect(m.store.get().clips.map((c) => c.sha256)).toEqual(['u1', 'u3']);
+  });
+
+  it('keeps everything when edith can’t be asked', async () => {
+    const data = new MemoryData();
+    data.map.set(STORE_KEY, JSON.stringify({ label: 'Phone x', sessionId: 'sess', clips: [uploaded('u1')] }));
+    const { ctx, m } = setup({ data, online: false });
+    await flush();
+    ctx.transport.on('GET /v1/wakeword/sessions/sess/manifest', () => {
+      throw new ApiError(0, 'timed out');
+    });
+    await m.refreshStatus();
+    expect(m.store.get()).toMatchObject({ sessionId: 'sess', clips: [{ sha256: 'u1', status: 'uploaded' }] });
+  });
 });

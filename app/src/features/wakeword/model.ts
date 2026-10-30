@@ -442,6 +442,7 @@ export function createWakewordModel(deps: {
   // ---- model status ----
 
   async function refreshStatus() {
+    await reconcile();
     try {
       const r = await transport.request<Record<string, unknown>>('GET', '/v1/wakeword/model');
       patch({ status: modelStatusFrom(r), server: 'ok' });
@@ -449,6 +450,38 @@ export function createWakewordModel(deps: {
     } catch (e) {
       if (routeMissing(e)) patch({ server: 'needs_update' });
     }
+  }
+
+  /**
+   * Match the phone's list to what edith has (on screen open and reconnect): uploaded clips the
+   * session no longer holds are dropped (a session or clip deleted on edith); takes still on the phone
+   * stay, and go up again into a new session if this one is gone. Only clips already uploaded when the
+   * manifest was asked for can be dropped, so an upload finishing meanwhile is never lost.
+   */
+  async function reconcile() {
+    await ready;
+    const sid = store.get().sessionId;
+    if (!sid || disposed) return;
+    const uploadedBefore = new Set(store.get().clips.filter((c) => c.status === 'uploaded').map((c) => c.sha256));
+    let held: Set<string> | null; // null: the session is gone
+    try {
+      const m = await transport.request<Record<string, unknown>>('GET', `/v1/wakeword/sessions/${encodeURIComponent(sid)}/manifest`);
+      held = new Set((Array.isArray(m.clips) ? m.clips : []).map((c: Record<string, unknown>) => str(c?.sha256)));
+    } catch (e) {
+      if (routeMissing(e)) patch({ server: 'needs_update' });
+      if (!(e instanceof ApiError && e.status === 404 && e.message === 'no such session')) return; // unknown: keep what we have
+      held = null;
+    }
+    const gone = (c: TrainClip) => uploadedBefore.has(c.sha256) && c.status === 'uploaded' && (held === null || !held.has(c.sha256));
+    store.set((s) => {
+      if (s.sessionId !== sid) return s; // a newer session meanwhile
+      const clips = s.clips.filter((c) => !gone(c)).map((c) => (held === null && c.status !== 'uploaded' ? { ...c, status: 'queued' as const, error: null } : c));
+      if (held !== null && clips.length === s.clips.length) return s;
+      const last = s.last;
+      const lastGone = !!last?.kept && !clips.some((c) => c.sha256 === last.sha256);
+      return { ...s, sessionId: held === null ? null : sid, clips, last: lastGone ? null : last };
+    });
+    pump();
   }
 
   // ---- settings ----
@@ -479,7 +512,7 @@ export function createWakewordModel(deps: {
     'wakeword',
   );
 
-  void load();
+  const ready = load();
 
   return {
     store,
