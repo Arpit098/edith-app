@@ -27,7 +27,7 @@ and 2 s, then the push is dropped and logged. Approvals go at ntfy priority 4, c
   write-only token, the phone subscribes with a read-only one. Both live in mode-600 files, never in git.
 - One topic, `edith` by default (`[adapter.ntfy] topic`).
 - The phone subscribes with `GET /<topic>/json?since=<last message id>` (one long-lived stream), so
-  nothing is missed across reconnects. ntfy keeps messages 12 h (`cache-duration`).
+  nothing is missed across reconnects. ntfy keeps messages 1 h (`cache-duration`).
 
 ## Message
 

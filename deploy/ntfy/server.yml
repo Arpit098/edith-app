@@ -12,7 +12,7 @@ enable-login: false
 web-root: "disable"                 # no web app: the phone is the only reader
 
 cache-file: "/home/ubuntu/.local/share/ntfy/cache.db"
-cache-duration: "12h"               # what a phone that was offline gets with ?since=
+cache-duration: "1h"                # what a phone that was offline gets with ?since=
 attachment-cache-dir: ""            # no attachments
 keepalive-interval: "300s"          # one keepalive per 5 min on the phone's stream (default 45 s): battery
 

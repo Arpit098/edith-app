@@ -76,6 +76,15 @@ class FeatureTest(unittest.TestCase):
         _, _, priority, data = self.ntfy.next()
         self.assertEqual((priority, data), ("min", {"v": 1, "tag": "perm:p1", "cancel": True}))
 
+    def test_a_push_that_failed_is_not_marked_sent(self):
+        results = [False, True]
+        notify = self.ntfy.notify
+        self.ntfy.notify = lambda *a: (notify(*a), results.pop(0))[1]
+        self.publish("turn.done", ref="r1", text="first try fails")
+        self.assertEqual(self.data()["tag"], "turn:r1")
+        self.publish("turn.done", ref="r1", text="sent again")
+        self.assertEqual(self.data()["tag"], "turn:r1")  # not deduped: the first never arrived
+
     def test_a_reminder_is_pushed_once_per_due_time(self):
         self.publish("reminder.due", origin="system", id="aa11", text="Pay rent", due=100, late=False, every="monthly")
         self.publish("reminder.due", origin="system", id="aa11", text="Pay rent", due=100, late=False, every="monthly")

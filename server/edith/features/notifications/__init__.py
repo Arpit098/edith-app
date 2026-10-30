@@ -85,11 +85,30 @@ def setup(ctx: Context) -> None:
     pushed: OrderedDict = OrderedDict()  # tag -> None, newest last
     lock = threading.Lock()       # the bus calls handlers from several threads
 
+    pending: set = set()          # tags waiting for the worker: not pushed yet
+
     def send(msg: dict) -> None:
-        priority = "min" if msg.get("cancel") else "high" if msg.get("channel") == "approvals" else "default"
+        tag, cancel = msg["tag"], msg.get("cancel")
+        if not cancel:
+            with lock:
+                if tag not in pending:
+                    return  # answered while it waited: nothing to show
+        priority = "min" if cancel else "high" if msg.get("channel") == "approvals" else "default"
         data = {"v": 1, **msg}
+        delivered = False
         for n in notifiers:
-            n.notify(msg.get("title", ""), msg.get("text", ""), priority, data)
+            delivered = n.notify(msg.get("title", ""), msg.get("text", ""), priority, data) is True or delivered
+        if cancel:
+            return
+        with lock:
+            answered = tag not in pending  # permission.resolved came in while it was being sent
+            pending.discard(tag)
+            if delivered and not answered:
+                pushed[tag] = None  # marked only once a notifier took it
+                while len(pushed) > SEEN_MAX:
+                    pushed.popitem(last=False)
+        if delivered and answered:
+            enqueue({"tag": tag, "cancel": True})
 
     submit = ctx.add_worker("push", send, maxsize=WAITING_MAX)
 
@@ -98,6 +117,9 @@ def setup(ctx: Context) -> None:
             submit(msg)
         except queue.Full:
             ctx.log("push queue full: %s dropped", msg["tag"])
+            if not msg.get("cancel"):
+                with lock:
+                    pending.discard(msg["tag"])  # may be pushed again by a later event
 
     def on_clients(ev: Event) -> None:
         listeners[0] = int(ev.data.get("count") or 0)
@@ -106,6 +128,9 @@ def setup(ctx: Context) -> None:
         if ev.type == "permission.resolved":
             tag = f"perm:{ev.data.get('id')}"
             with lock:
+                if tag in pending:
+                    pending.discard(tag)  # not sent yet: the worker drops it (or cancels it if mid-send)
+                    return
                 if pushed.pop(tag, False) is False:
                     return
             enqueue({"tag": tag, "cancel": True})  # answered or timed out: take it off the phone
@@ -116,11 +141,9 @@ def setup(ctx: Context) -> None:
         if msg is None:
             return
         with lock:
-            if msg["tag"] in pushed:
+            if msg["tag"] in pushed or msg["tag"] in pending:
                 return
-            pushed[msg["tag"]] = None
-            while len(pushed) > SEEN_MAX:
-                pushed.popitem(last=False)
+            pending.add(msg["tag"])
         enqueue(msg)
 
     ctx.subscribe("app.clients", on_clients)
