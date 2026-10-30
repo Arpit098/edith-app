@@ -65,6 +65,10 @@ class Tmux:
         self._settle(before)
         self("send-keys", "-t", self.target, "Enter")
 
+    def clear_input(self):
+        """Empty Claude's input line (Ctrl-U), so a ghost suggestion or a half-typed line isn't sent along."""
+        self("send-keys", "-t", self.target, "C-u")
+
     def interrupt(self):
         self("send-keys", "-t", self.target, "Escape")  # like pressing Esc
 

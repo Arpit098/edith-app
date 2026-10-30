@@ -2,8 +2,9 @@
 
 - A job lists successful build-apk.yml runs on main (gh), downloads only artifacts it has not seen
   (edith-apk, edith-ota; one at a time), verifies every file's SHA-256 and keeps them under
-  <state_dir>/app-updates (store.py). It runs every `interval` seconds (10 min); a failed pass is
-  retried by the job runner with backoff.
+  <state_dir>/app-updates (store.py). It runs every `interval` seconds (2 min); a failed pass is
+  retried by the job runner with backoff. A pass whose run list hasn't changed makes that one gh call
+  and nothing else: no download, no write.
 - Routes: GET /v1/updates/manifest and /v1/updates/assets/{sha256} (Expo Updates protocol v1),
   GET /v1/app/latest and /v1/app/apk/{versionCode} (Range resume). Files are streamed from disk.
 - Only release-signed APKs whose certificate matches the pinned `cert_sha256` are offered.
@@ -32,7 +33,7 @@ OFFERED = ("versionName", "versionCode", "sha", "built_at", "runtimeVersion", "s
 def setup(ctx: Context) -> None:
     cfg = ctx.config
     pin = cfg.get("cert_sha256") or ""
-    interval = float(cfg.get("interval", 600))
+    interval = float(cfg.get("interval", 120))  # an unchanged run list costs one `gh run list` and nothing else
     gh = GitHub(cfg.get("repo", "Arpit098/edith-app"), cfg.get("workflow", "build-apk.yml"), cfg.get("branch", "main"),
                 cfg.get("gh", "gh"))
     root = resolve(cfg).app_updates
