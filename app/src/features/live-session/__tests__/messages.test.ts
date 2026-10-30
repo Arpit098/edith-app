@@ -76,6 +76,45 @@ describe('the lost side-lane message (Arpit, 18:17:53 UTC)', () => {
     m.dispose();
   });
 
+  it('with the live server (p1-live-6): the real event sequence gives one bubble, one answer, the final reaction', async () => {
+    const { ctx, m } = setup();
+    ctx.bus.publish(ev('turn.started', { ref: 'r-main', lane: 'main' }));
+    ctx.transport.on('POST /v1/messages', { ref: 'app:s2', lane: 'side' });
+    await m.send("What's going on?");
+    const app = { origin: 'app' as const };
+    ctx.bus.publish(ev('message.user', { ref: 'app:s2', text: "What's going on?", voice: false, delivery: 'side_lane', lane: 'side', attachments: [], replying_to: null }, app));
+    ctx.bus.publish(ev('message.reaction', { ref: 'app:s2', emoji: '👀' }, app));
+    ctx.bus.publish(ev('message.delivered', { ref: 'app:s2', delivery: 'side_lane', rid: 'ab12' }, app));
+    ctx.bus.publish(ev('turn.started', { ref: 'app:s2', lane: 'side' }, app));
+    ctx.bus.publish(ev('message.reaction', { ref: 'app:s2', emoji: '⚡' }, app));
+    ctx.bus.publish(ev('message.assistant', { ref: 'app:s2', lane: 'side', text: 'Tests are running in the main lane.', files: [] }));
+    ctx.bus.publish(ev('turn.done', { ref: 'app:s2', lane: 'side', text: 'Tests are running in the main lane.\nREACT: 👍', display_text: 'Tests are running in the main lane.' }, app));
+    ctx.bus.publish(ev('message.reaction', { ref: 'app:s2', emoji: '👍' }, app));
+    const s = m.store.get();
+    expect(users(s)).toHaveLength(1);
+    expect(mine(s)).toMatchObject({ echoed: true, delivery: 'side_lane', reaction: '👍' });
+    expect(tickOf(mine(s), s.turns)).toBe('delivered');
+    expect(sendStatus(mine(s), s.turns)).toBe('answered');
+    expect(s.items.filter((x) => x.kind === 'assistant').map((x) => (x.kind === 'assistant' ? x.text : ''))).toEqual(['Tests are running in the main lane.']);
+  });
+
+  it('accepted is ✓, taken in is ✓✓; a mid-turn delivery says it joined the running task', async () => {
+    const { ctx, m } = setup();
+    ctx.transport.on('POST /v1/messages', { ref: 'app:m1', lane: 'main' });
+    await m.send('also check the logs');
+    ctx.bus.publish(ev('message.user', { ref: 'app:m1', text: 'also check the logs', delivery: 'main', lane: 'main' }, { origin: 'app' }));
+    expect(tickOf(mine(m.store.get()), m.store.get().turns)).toBe('sent'); // accepted, not yet taken in
+    ctx.bus.publish(ev('message.delivered', { ref: 'app:m1', delivery: 'mid_turn', rid: 'cd34' }, { origin: 'app' }));
+    const s = m.store.get();
+    expect(tickOf(mine(s), s.turns)).toBe('delivered');
+    expect(sendStatus(mine(s), s.turns)).toBe('folded');
+  });
+
+  it('a side-lane turn.done without message.assistant shows display_text, not the raw REACT line', () => {
+    const s = reduce(initialLive, ev('turn.done', { ref: 'r', lane: 'side', text: 'ok\nREACT: 👍', display_text: 'ok' }));
+    expect(s.items.find((x) => x.kind === 'assistant')).toMatchObject({ text: 'ok' });
+  });
+
   it('shows a side-lane answer once even when the server also sends it as message.assistant', () => {
     const s = [
       ev('turn.done', { ref: 'r1', lane: 'side', text: 'answer' }),
@@ -160,18 +199,19 @@ describe('ticks, reactions and the working row', () => {
     m.dispose();
   });
 
-  it('working row: turn.state first, turn events as a fallback, approvals on top, hidden when idle', () => {
+  it('working row follows the contract mapping: thinking, tool, approval, idle', () => {
     let s = reduce(initialLive, ev('turn.started', { ref: 'r', lane: 'main' }));
     expect(workingLabel(s)).toBe('Thinking');
     s = reduce(s, ev('turn.progress', { ref: 'r', lane: 'main', step: '$ df -h' }));
     expect(workingLabel(s)).toBe('Running $ df -h');
-    s = reduce(s, ev('turn.state', { ref: 'r', state: 'running', tool: 'Bash' }));
-    expect(workingLabel(s)).toBe('Running Bash');
+    s = reduce(s, ev('tool.result', { id: 't1', name: 'Bash', ok: true, summary: '42%' }));
+    expect(workingLabel(s)).toBe('Thinking'); // back to thinking after each result
+    s = reduce(s, ev('tool.call', { id: 't2', name: 'Read', summary: 'Read a.ts' }));
+    expect(workingLabel(s)).toBe('Running Read a.ts');
     s = reduce(s, ev('permission.request', { id: 'p1', tool: 'Bash', detail: 'rm' }));
     expect(workingLabel(s)).toBe('Waiting for your approval');
     s = reduce(s, ev('permission.resolved', { id: 'p1' }));
-    s = reduce(s, ev('turn.state', { ref: 'r', state: 'speaking' }));
-    expect(workingLabel(s)).toBe('Speaking');
+    expect(workingLabel(s)).toBe('Running Read a.ts');
     s = reduce(s, ev('turn.done', { ref: 'r' }));
     expect(workingLabel(s)).toBeNull();
     // A turn whose end was missed is cleared once the lanes are idle.

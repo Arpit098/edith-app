@@ -52,6 +52,7 @@ export interface RunInfo {
   step: string | null;
   steps: number;
   elapsed: number;
+  active: boolean; // a tool is running (turn.progress / tool.call) until its result
 }
 
 /** What happened to a turn, by ref: the state a sent message shows. */
@@ -61,16 +62,8 @@ export interface TurnTrack {
   picked: boolean; // EDITH picked the message up (message.delivered, or the turn started)
 }
 
-/** What EDITH is doing in a turn (turn.state). */
-export interface Activity {
-  state: 'thinking' | 'running' | 'approval' | 'speaking';
-  tool: string | null;
-  lane: Lane;
-}
-
 export interface LiveState {
   items: Item[]; // newest first (the list is drawn inverted)
-  activity: Record<string, Activity>; // by ref, while not idle
   approvals: Record<string, true>; // pending permission request ids
   turns: Record<string, TurnTrack>; // by ref, newest last, at most MAX_TURNS
   calls: Record<string, number>; // tool.call id -> its item id, until the result arrives
@@ -87,7 +80,6 @@ export interface LiveState {
 
 export const initialLive: LiveState = {
   items: [],
-  activity: {},
   approvals: {},
   turns: {},
   calls: {},
@@ -123,13 +115,20 @@ function withoutKey<T>(map: Record<string, T>, key: string): Record<string, T> {
   return rest;
 }
 
-/** A turn ended: drop its run and what it was doing. */
 function withoutRun(s: LiveState, ref: string): LiveState {
-  if (!(ref in s.runs) && !(ref in s.activity)) return s;
-  return { ...s, runs: withoutKey(s.runs, ref), activity: withoutKey(s.activity, ref) };
+  const runs = withoutKey(s.runs, ref);
+  return runs === s.runs ? s : { ...s, runs };
 }
 
-const ACTIVITY_STATES = new Set<Activity['state']>(['thinking', 'running', 'approval', 'speaking']);
+/** Main-lane tool events (transcript: no ref) start or end "running <tool>" on the main run. */
+function setMainTool(s: LiveState, active: boolean, step: string | null): LiveState {
+  const ref = Object.keys(s.runs).find((r) => s.runs[r]!.lane === 'main');
+  if (!ref) return s;
+  const run = s.runs[ref]!;
+  const next = { ...run, active, step: step ?? run.step };
+  if (next.active === run.active && next.step === run.step) return s;
+  return { ...s, runs: { ...s.runs, [ref]: next } };
+}
 
 const asLane = (v: unknown): Lane => (v === 'side' ? 'side' : 'main');
 
@@ -173,7 +172,7 @@ function findOldestUser(s: LiveState, match: (x: Extract<Item, { kind: 'user' }>
 }
 
 /** What a sent message shows, from its local state and its turn. */
-export type SendStatus = 'sending' | 'sent' | 'queued' | 'running' | 'side' | 'answered' | 'failed' | 'stopped';
+export type SendStatus = 'sending' | 'sent' | 'queued' | 'running' | 'side' | 'folded' | 'answered' | 'failed' | 'stopped';
 
 /** WhatsApp-style ticks on Arpit's bubbles: 🕓 not acknowledged yet, ✓ accepted, ✓✓ picked up, ! failed. */
 export type Tick = 'clock' | 'sent' | 'delivered' | 'failed';
@@ -184,31 +183,28 @@ export function tickOf(item: Extract<Item, { kind: 'user' }>, turns: Record<stri
   if (item.local.status === 'failed') return 'failed';
   const t = item.ref ? turns[item.ref] : undefined;
   if (t?.phase === 'failed') return 'failed';
-  return t?.picked || item.echoed ? 'delivered' : 'sent';
+  // message.user means accepted; ✓✓ only once Claude takes it in (message.delivered, or its turn starts).
+  return t?.picked ? 'delivered' : 'sent';
 }
 
-/** The "EDITH is working…" row: what EDITH is doing now, or null when idle. */
+/**
+ * The "EDITH is working…" row, from the working-state mapping in contracts/events.md: waiting for
+ * approval while one is pending; "Running <tool>" from turn.progress/tool.call until the tool's
+ * result; "Thinking" otherwise while a turn runs; null when idle.
+ */
 export function workingLabel(s: LiveState): string | null {
   if (Object.keys(s.approvals).length) return 'Waiting for your approval';
-  const acts = Object.values(s.activity);
-  const a = acts.find((x) => x.lane === 'main') ?? acts[0];
-  if (a) {
-    if (a.state === 'approval') return 'Waiting for your approval';
-    if (a.state === 'speaking') return 'Speaking';
-    if (a.state === 'running' && a.tool) return `Running ${a.tool}`;
-    return 'Thinking';
-  }
-  // Until turn.state exists: what the turn events say.
   const runs = Object.values(s.runs);
   if (!runs.length) return null;
   const r = runs.find((x) => x.lane === 'main') ?? runs[0]!;
-  return r.step ? `Running ${r.step}` : 'Thinking';
+  return r.active && r.step ? `Running ${r.step}` : 'Thinking';
 }
 
 export function sendStatus(item: Extract<Item, { kind: 'user' }>, turns: Record<string, TurnTrack>): SendStatus | null {
   if (!item.local) return null; // not sent from this app
   if (item.local.status === 'sending' || item.local.status === 'waiting') return 'sending';
   if (item.local.status === 'failed') return 'failed';
+  if (item.delivery === 'mid_turn') return 'folded'; // no turn of its own: it joined the running one
   const t = item.ref ? turns[item.ref] : undefined;
   const side = t?.lane === 'side' || item.delivery === 'side_lane';
   if (!t) return item.delivery === 'queued' ? 'queued' : side ? 'side' : 'sent';
@@ -293,18 +289,19 @@ function apply(s: LiveState, e: EdithEvent): LiveState {
       const calls = { ...s.calls, [id]: next.seq };
       const keys = Object.keys(calls);
       if (keys.length > MAX_OPEN_CALLS) delete calls[keys[0]!]; // a call that never got its result
-      return { ...next, calls };
+      return setMainTool({ ...next, calls }, true, str(d.summary) || str(d.name));
     }
     case 'tool.result': {
       const id = str(d.id);
       const itemId = id ? s.calls[id] : undefined;
       const status = bool(d.ok) ? 'ok' : 'error';
       const result = str(d.summary) || null;
-      if (itemId === undefined || !s.items.some((x) => x.id === itemId)) {
-        return push(s, ts, { kind: 'tool', name: str(d.name), summary: '', status, result });
+      const idle = setMainTool(s, false, null); // back to thinking after each result
+      if (itemId === undefined || !idle.items.some((x) => x.id === itemId)) {
+        return push(idle, ts, { kind: 'tool', name: str(d.name), summary: '', status, result });
       }
-      const { [id]: _done, ...calls } = s.calls;
-      return { ...update(s, itemId, (x) => (x.kind === 'tool' ? { ...x, status, result } : x)), calls };
+      const { [id]: _done, ...calls } = idle.calls;
+      return { ...update(idle, itemId, (x) => (x.kind === 'tool' ? { ...x, status, result } : x)), calls };
     }
     case 'file.diff':
       return push(s, ts, { kind: 'diff', path: str(d.path), diff: str(d.diff) });
@@ -312,7 +309,9 @@ function apply(s: LiveState, e: EdithEvent): LiveState {
     case 'turn.progress': {
       const ref = str(d.ref);
       const lane = asLane(d.lane);
-      const run: RunInfo = { lane, step: d.step ? str(d.step) : (s.runs[ref]?.step ?? null), steps: num(d.steps), elapsed: num(d.elapsed) };
+      const step = d.step ? str(d.step) : (s.runs[ref]?.step ?? null);
+      const active = e.type === 'turn.progress' ? !!d.step || !!s.runs[ref]?.active : false;
+      const run: RunInfo = { lane, step, steps: num(d.steps), elapsed: num(d.elapsed), active };
       return track({ ...s, runs: { ...s.runs, [ref]: run }, main: lane === 'main' ? 'busy' : s.main }, ref, { phase: 'running', lane });
     }
     case 'turn.done': {
@@ -321,7 +320,7 @@ function apply(s: LiveState, e: EdithEvent): LiveState {
       let next = track(withoutRun(s, ref), ref, { phase: 'done', lane });
       // A side lane's reply isn't in the conversation's transcript: turn.done carries it, so show it
       // here (once: the server may also send it as message.assistant with lane "side").
-      const text = str(d.text);
+      const text = str(d.display_text) || str(d.text); // display_text: without REACT:/SEND_FILE: lines
       if (lane === 'side' && text && !next.items.some((x) => x.kind === 'assistant' && x.lane === 'side' && x.ref === ref)) {
         next = push(next, ts, { kind: 'assistant', text, lane: 'side', ref });
       }
@@ -345,8 +344,16 @@ function apply(s: LiveState, e: EdithEvent): LiveState {
       // A message sent from here shows "queued" on its own bubble; others get a line.
       return findUser(next, (x) => x.ref === ref) >= 0 ? next : push(next, ts, system(`⏳ Queued (#${num(d.position, 1)})`));
     }
-    case 'message.delivered':
-      return track(s, str(d.ref), { picked: true });
+    case 'message.delivered': {
+      // Claude took it in: as a new turn (main, side_lane) or folded into the running one (mid_turn).
+      const ref = str(d.ref);
+      const next = track(s, ref, { picked: true });
+      const delivery = DELIVERIES.has(d.delivery as Delivery) ? (d.delivery as Delivery) : null;
+      const i = ref && delivery ? findUser(next, (x) => x.ref === ref) : -1;
+      if (i < 0) return next;
+      const item = next.items[i] as Extract<Item, { kind: 'user' }>;
+      return item.delivery === delivery ? next : update(next, item.id, () => ({ ...item, delivery }));
+    }
     case 'message.reaction': {
       const ref = str(d.ref);
       const i = ref ? findUser(s, (x) => x.ref === ref) : -1;
@@ -354,16 +361,6 @@ function apply(s: LiveState, e: EdithEvent): LiveState {
       const item = s.items[i] as Extract<Item, { kind: 'user' }>;
       const reaction = str(d.emoji) || null;
       return item.reaction === reaction ? s : update(s, item.id, () => ({ ...item, reaction }));
-    }
-    case 'turn.state': {
-      const ref = str(d.ref);
-      if (!ref) return s;
-      const state = d.state as Activity['state'];
-      if (!ACTIVITY_STATES.has(state)) return { ...s, activity: withoutKey(s.activity, ref) }; // idle
-      const act: Activity = { state, tool: d.tool ? str(d.tool) : null, lane: asLane(d.lane ?? s.runs[ref]?.lane) };
-      const old = s.activity[ref];
-      if (old && old.state === act.state && old.tool === act.tool && old.lane === act.lane) return s;
-      return track({ ...s, activity: { ...s.activity, [ref]: act } }, ref, { picked: true });
     }
     case 'permission.request': {
       const id = str(d.id);
@@ -376,7 +373,7 @@ function apply(s: LiveState, e: EdithEvent): LiveState {
     case 'lane.status': {
       const next = { ...s, main: d.main === 'busy' ? ('busy' as const) : ('idle' as const), side: num(d.side), queued: num(d.queued) };
       // Nothing running anywhere: no turn can still be "working" (e.g. its end was missed while offline).
-      return next.main === 'idle' && next.side === 0 ? { ...next, runs: {}, activity: {} } : next;
+      return next.main === 'idle' && next.side === 0 ? { ...next, runs: {} } : next;
     }
     case 'session.changed': {
       const title = d.title == null ? null : str(d.title);
@@ -438,7 +435,7 @@ export function withOlder(s: LiveState, page: HistoryPage): LiveState {
 /** Seed the turn state from GET /v1/status (after a (re)connect). */
 export function applyStatus(s: LiveState, st: Status): LiveState {
   const runs: Record<string, RunInfo> = {};
-  for (const r of st.runs) runs[r.ref] = { lane: r.lane, step: r.step, steps: s.runs[r.ref]?.steps ?? 0, elapsed: r.seconds };
+  for (const r of st.runs) runs[r.ref] = { lane: r.lane, step: r.step, steps: s.runs[r.ref]?.steps ?? 0, elapsed: r.seconds, active: s.runs[r.ref]?.active ?? !!r.step };
   return { ...s, main: st.main, queued: st.queued, side: st.runs.filter((r) => r.lane === 'side').length, runs, session: st.session ?? s.session };
 }
 

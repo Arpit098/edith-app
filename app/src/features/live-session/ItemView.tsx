@@ -21,6 +21,7 @@ const TICK_LABEL: Record<Tick, string> = { clock: 'Not sent yet', sent: 'Sent', 
 const STATUS_TEXT: Partial<Record<SendStatus, string>> = {
   queued: 'Queued: EDITH is busy, it runs next',
   side: 'Answering in parallel (the main conversation is busy)',
+  folded: 'Added to the task EDITH was already working on',
   stopped: 'Stopped',
 };
 
