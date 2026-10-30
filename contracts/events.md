@@ -35,6 +35,7 @@ Every event on the bus, and on the app's `/v1/stream` WebSocket, has this shape:
 | `turn.retrying` | `{ref, lane, reason}` | A turn starts over (a side lane whose conversation is gone runs again fresh); frontends drop that turn's status message |
 | `voice.turn` | `{ref}` | The App API accepted a `POST /v1/messages` with `voice: true` (sent before the turn's own events). Origin `app` |
 | `voice.reply` | `{ref, outcome, speak}` | What the app says aloud for that voice turn (see "Voice" below). Origin `app` |
+| `app.clients` | `{count}` | A `/v1/stream` client connects or leaves; `count` is how many are connected now. Origin `system`. Server-side only: not sent on `/v1/stream`. The `notifications` feature pushes only while it is 0 (contracts/push.md) |
 
 Fields the agent adds (new fields only; existing meanings unchanged):
 - `turn.started`, `turn.progress`, `turn.done`, `turn.stopped` and `turn.failed` carry `lane` (`main`

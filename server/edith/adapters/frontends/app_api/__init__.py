@@ -311,6 +311,8 @@ class AppApi:
     # ---- the live stream ----
 
     def _broadcast(self, ev):
+        if ev.type == "app.clients":
+            return  # about the stream itself: for the server's features only (contracts/events.md)
         with self._clients_lock:
             if not self._clients:
                 return
@@ -330,7 +332,9 @@ class AppApi:
                 client.close()
                 return
             self._clients.add(client)
+            count = len(self._clients)
         self._notify()
+        self._clients_changed(count)
         reader = ws.Reader(sock.recv, max_message=4096)
         missed = 0
         try:
@@ -374,8 +378,14 @@ class AppApi:
         finally:
             with self._clients_lock:
                 self._clients.discard(client)
+                count = len(self._clients)
             client.close()
             self._notify()
+            self._clients_changed(count)
+
+    def _clients_changed(self, count):
+        """app.clients {count}: the notifications feature pushes only while no one is listening."""
+        self.bus.publish(Event("app.clients", {"count": count}, origin="system"))
 
     @staticmethod
     def _pong(payload):

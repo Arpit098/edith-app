@@ -1,0 +1,20 @@
+# ntfy push server for the EDITH app (contracts/push.md; set up by deploy/ntfy/README.md).
+# Listens on the Tailscale IP only (server.yml). If tailscale isn't up yet at boot, the bind fails and
+# systemd retries every 10 s until it is.
+[Unit]
+Description=E.D.I.T.H - ntfy push server (Tailscale only)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=%h/opt/ntfy/ntfy serve --config %h/.config/ntfy/server.yml
+Restart=on-failure
+RestartSec=10
+MemoryMax=256M
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=default.target

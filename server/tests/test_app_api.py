@@ -5,6 +5,7 @@ import base64
 import json
 import os
 import pathlib
+import queue
 import shutil
 import socket
 import struct
@@ -413,6 +414,18 @@ class StreamTest(unittest.TestCase):
                 s.sendall(ws.client_frame(ws.OP_TEXT, json.dumps({"type": "ping", "id": i}).encode()))
                 self.assertEqual(json.loads(read_frame(s)[1])["data"], {"id": i})
             self.assertTrue(self.a.api._clients)  # still connected
+
+    def test_clients_joining_and_leaving_are_published_but_not_streamed(self):
+        counts = queue.Queue()
+        self.a.bus.subscribe("app.clients", lambda ev: counts.put((ev.origin, ev.data)))
+        s, _, _ = self.a.stream()
+        self.assertEqual(counts.get(timeout=5), ("system", {"count": 1}))
+        s.sendall(ws.client_frame(ws.OP_PING, b"x"))  # its own app.clients was not sent: the pong is first
+        self.assertEqual(read_frame(s), (ws.OP_PONG, b"x"))
+        s.sendall(ws.client_frame(ws.OP_CLOSE, struct.pack("!H", 1000)))
+        self.assertEqual(read_frame(s)[0], ws.OP_CLOSE)
+        s.close()
+        self.assertEqual(counts.get(timeout=5), ("system", {"count": 0}))
 
     def test_unauthorized_and_bad_handshake(self):
         s, head, _ = self.a.stream(token=None)
