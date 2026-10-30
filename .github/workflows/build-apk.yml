@@ -67,6 +67,10 @@ jobs:
   apk:
     name: Build APK
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read        # release notes: the previous successful main build
+      pull-requests: read  # release notes: the merged PRs' "Release notes" blocks
     timeout-minutes: 45
     env:
       # The release certificate Arpit made (contracts/app-updates.md §6): a release build must carry it.
@@ -193,6 +197,22 @@ jobs:
         if: always()
         run: ccache --show-stats
 
+      # Main builds: the "Release notes" blocks of the PRs merged since the previous successful main
+      # build (scripts/release-notes.js; three GitHub calls). PR builds get empty notes. It never fails
+      # the build: on any problem the notes are empty and the log has a warning.
+      - name: Release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p out
+          if [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF" = refs/heads/main ]; then
+            node scripts/release-notes.js --repo "$GITHUB_REPOSITORY" --sha "$GITHUB_SHA" --out out/release-notes.json || true
+          fi
+          [ -s out/release-notes.json ] || node scripts/release-notes.js --empty --out out/release-notes.json
+          {
+            echo "### Release notes"
+            jq -r '(.new[] | "- New: \(.)"), (.fixes[] | "- Fix: \(.)"), (.changes[] | "- Change: \(.)")' out/release-notes.json
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Verify and describe the APK (apk.json)
         id: apk
         env:
@@ -236,14 +256,16 @@ jobs:
             --arg runtimeVersion "$RUNTIME_VERSION" \
             --argjson size "$(stat -c %s "$apk")" --arg sha256 "$(sha256sum "$apk" | cut -d' ' -f1)" \
             --arg cert_sha256 "$digest" --arg signing "$SIGNING" \
+            --slurpfile notes out/release-notes.json \
             '{versionName: $versionName, versionCode: $versionCode, sha: $sha, run_id: $run_id, built_at: $built_at,
-              runtimeVersion: $runtimeVersion, size: $size, sha256: $sha256, cert_sha256: $cert_sha256, signing: $signing}' \
+              runtimeVersion: $runtimeVersion, size: $size, sha256: $sha256, cert_sha256: $cert_sha256, signing: $signing,
+              release_notes: $notes[0]}' \
             > out/apk/apk.json
           cat out/apk/apk.json
           {
             echo "### APK"
             echo "| | |"; echo "|---|---|"
-            jq -r 'to_entries[] | "| \(.key) | `\(.value)` |"' out/apk/apk.json
+            jq -r 'to_entries[] | select(.key != "release_notes") | "| \(.key) | `\(.value)` |"' out/apk/apk.json
           } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
@@ -269,7 +291,7 @@ jobs:
           node scripts/ota.js --dir out/ota --runtime-version "$RUNTIME_VERSION" \
             --key "$key" --cert certs/updates-certificate.pem \
             --base-url "$UPDATES_BASE_URL" --sha "$GITHUB_SHA" --run-id "$GITHUB_RUN_ID" \
-            --expo-config "$RUNNER_TEMP/expo-config.json"
+            --expo-config "$RUNNER_TEMP/expo-config.json" --release-notes out/release-notes.json
           rm -f "$key"
           echo "OTA update \`$(jq -r .id out/ota/update.json)\` for runtime \`$RUNTIME_VERSION\`" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4

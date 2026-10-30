@@ -77,8 +77,26 @@ export interface AppRelease {
   size: number;
   sha256: string; // hex
   cert_sha256: string;
-  notes: string;
+  notes: string; // plain text (older servers and builds: commit subjects)
+  release_notes: ReleaseNotes | null; // null for builds from before release notes
   url: string; // path on the App API, e.g. /v1/app/apk/1042
+}
+
+/** What a build changed, in plain words (contracts/app-updates.md §2, `release_notes`). */
+export interface ReleaseNotes {
+  new: string[];
+  fixes: string[];
+  changes: string[]; // titles of PRs without a Release notes block
+  details: string[]; // commit subjects, for "Technical details"
+}
+
+const NOTE_LISTS = ['new', 'fixes', 'changes', 'details'] as const;
+
+export function releaseNotes(v: unknown): ReleaseNotes | null {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+  const o = v as Record<string, unknown>;
+  const list = (x: unknown) => (Array.isArray(x) ? x.filter((s): s is string => typeof s === 'string' && s.trim() !== '') : []);
+  return Object.fromEntries(NOTE_LISTS.map((k) => [k, list(o[k])])) as unknown as ReleaseNotes;
 }
 
 /** POST /v1/attachments (contracts/attachments.md). */
@@ -254,6 +272,7 @@ export function createApi(t: Transport) {
         sha256,
         cert_sha256: str(r.cert_sha256),
         notes: str(r.notes),
+        release_notes: releaseNotes(r.release_notes),
         url,
       };
     },

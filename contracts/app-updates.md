@@ -48,11 +48,20 @@ apk.json
   "size": 15432247,              // bytes of edith.apk
   "sha256": "9b1e…",             // hex SHA-256 of edith.apk
   "cert_sha256": "AB:CD:…",      // SHA-256 digest of the signing certificate (apksigner --print-certs)
-  "signing": "release"           // or "debug": the public Expo debug key (see §6)
+  "signing": "release",          // or "debug": the public Expo debug key (see §6)
+  "release_notes": { "new": ["Attach photos and voice notes"], "fixes": ["Messages no longer vanish"],
+                     "changes": [], "details": ["feat: …", "fix: …"] }
 }
 ```
 
 - `versionCode` = `1000 + github.run_number`: it goes up with every run, as Android requires for an update.
+- `release_notes` (main builds; empty lists on PR builds, absent in older builds): what changed, in plain words.
+  - Source: the `## Release notes` block of every PR merged since the previous successful main build
+    (`New: …`, `Fix: …` lines; `Internal: …` lines are left out). See `.github/pull_request_template.md`.
+  - `new` and `fixes` come from those blocks, deduplicated, at most 20 each. `changes` holds the titles of PRs
+    without a block. `details` holds the commit subjects, at most 30, for a collapsed "Technical details".
+  - `app/scripts/release-notes.js` makes them with three GitHub calls. It never fails the build: on a problem
+    the lists are empty.
 
 ### `edith-ota` (only when the OTA signing key is configured in CI; see §6)
 
@@ -78,7 +87,8 @@ dist/…               the `npx expo export --platform android` output (bundle, 
     { "path": "dist/_expo/static/js/android/index-….hbc", "sha256": "…hex…", "size": 1180000,
       "contentType": "application/javascript", "launch": true },
     { "path": "dist/assets/5a29…", "sha256": "…hex…", "size": 1310000, "contentType": "font/ttf" }
-  ]
+  ],
+  "release_notes": { "new": […], "fixes": […], "changes": […], "details": […] }   // as in apk.json
 }
 ```
 
@@ -93,10 +103,13 @@ dist/…               the `npx expo export --platform android` output (bundle, 
                    "url": "http://edith:8787/v1/updates/assets/<sha256 hex>" },
   "assets": [ { "hash": "<base64url sha256>", "key": "<md5 hex>", "contentType": "font/ttf", "fileExtension": ".ttf",
                 "url": "http://edith:8787/v1/updates/assets/<sha256 hex>" } ],
-  "metadata": { "channel": "main", "sha": "8f12b81c…" },
+  "metadata": { "channel": "main", "sha": "8f12b81c…", "release_notes": "{\"new\":[…],\"fixes\":[…],…}" },
   "extra": { "expoClient": { …the app's public Expo config… } }
 }
 ```
+
+- `metadata.release_notes` is the same object as in `update.json`, as a JSON **string**: manifest metadata
+  values stay flat strings for expo-updates. It is signed with the rest of the manifest.
 
 - `hash` is the Base64URL SHA-256 that expo-updates checks. The URL uses the **hex** SHA-256, matching
   `update.json` `files[].sha256`. `key` is the asset's MD5 (the name `expo export` gives it, which is how
@@ -138,7 +151,7 @@ crashing bundle shows up.
 
 | Method | Path | Answer |
 |---|---|---|
-| GET | `/v1/app/latest` | The newest offerable APK: `{versionName, versionCode, sha, built_at, runtimeVersion, size, sha256, cert_sha256, notes, url}`. `url` = `/v1/app/apk/{versionCode}`, `notes` = commit subjects since the previous offered APK (≤ 20 lines). 404 `{"error": "no app build yet"}` if none |
+| GET | `/v1/app/latest` | The newest offerable APK: `{versionName, versionCode, sha, built_at, runtimeVersion, size, sha256, cert_sha256, notes, release_notes, url}`. `url` = `/v1/app/apk/{versionCode}`. `release_notes` = the build's `{new, fixes, changes, details}` (lists of strings), or `null` for builds from before release notes. `notes` = plain text for older apps: `New: …` / `Fix: …` / `Change: …` lines when the build has release notes, else the commit subjects since the previous offered APK (≤ 20 lines). 404 `{"error": "no app build yet"}` if none |
 | GET | `/v1/app/apk/{versionCode}` | `application/vnd.android.package-archive`, `content-length`, `etag: "<sha256>"`, `accept-ranges: bytes`; `Range: bytes=N-` → 206 (resume). 404 if not offered |
 
 **Offerable** = collected from a successful `main` run, `signing == "release"`, and `cert_sha256` equal to

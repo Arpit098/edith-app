@@ -7,6 +7,7 @@ import { useStore } from '../../core/store';
 import { Button } from '../../ui/Button';
 import { colors, space } from '../../ui/theme';
 import { apkAvailable, type AppUpdateModel, type AppUpdateState } from './model';
+import { ReleaseNotes } from './ReleaseNotes';
 
 const selectState = (s: AppUpdateState) => s;
 
@@ -38,7 +39,7 @@ export function UpdateSection({ model }: { model: AppUpdateModel }) {
           <Text style={styles.text}>
             Update available: EDITH {s.latest.versionName} (build {s.latest.versionCode}, {formatBytes(s.latest.size)}, {formatIST(s.latest.built_at)})
           </Text>
-          {s.latest.notes ? <Text style={styles.notes}>{s.latest.notes}</Text> : null}
+          <ReleaseNotes release={s.latest} />
           {s.phase === 'downloading' ? (
             <Text style={styles.dim}>
               Downloading {formatBytes(s.received)} of {formatBytes(s.total)} ({s.total ? Math.floor((100 * s.received) / s.total) : 0}%)
@@ -69,7 +70,6 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', gap: space.s, marginTop: space.s, flexWrap: 'wrap' },
   value: { color: colors.text, fontSize: 16 },
   text: { color: colors.text, fontSize: 14 },
-  notes: { color: colors.textDim, fontSize: 13 },
   dim: { color: colors.textDim, fontSize: 13 },
   error: { color: colors.danger },
 });
