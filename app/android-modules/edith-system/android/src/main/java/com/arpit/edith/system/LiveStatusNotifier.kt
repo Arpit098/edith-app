@@ -53,10 +53,17 @@ class LiveStatusNotifier(private val context: Context) {
   }
 
   /**
-   * A 30 s demo Live Update ("EDITH · Thinking…" with a running timer) under its own id, so Arpit can
-   * check the Live Alerts pill without starting a turn. It never touches the real status.
+   * A 30 s demo Live Update ("EDITH · Thinking…" with a running timer) under its own id, built and
+   * channelled exactly like the real status, so Arpit can check the Live Alerts pill without a turn.
+   * Posted at once on the calling thread (NotificationManager is thread-safe), so a failure comes
+   * back to the app instead of vanishing. The answer says what Arpit will see, or why he won't.
    */
-  fun testIsland() {
+  fun testIsland(): Map<String, Any> {
+    if (!manager.areNotificationsEnabled()) return outcome(false, "Notifications are off for EDITH. Turn them on in Android's settings.")
+    ensureChannel(context)
+    if (manager.getNotificationChannel(CHANNEL_ID)?.importance == NotificationManager.IMPORTANCE_NONE) {
+      return outcome(false, "The \"EDITH live status\" notification category is off. Turn it on in EDITH's notification settings.")
+    }
     val demo = LiveStatus(
       title = "EDITH · Thinking…",
       text = "A test of the Live Alerts pill",
@@ -66,15 +73,19 @@ class LiveStatusNotifier(private val context: Context) {
       link = "edith://live",
       keepAlive = false,
     )
-    val notification = build(demo, timeoutMs = TEST_MS)
-    main.post {
-      try {
-        manager.notify(TEST_ID, notification)
-      } catch (ignored: SecurityException) {
-        // notifications not allowed: Settings says so
-      }
+    try {
+      manager.notify(TEST_ID, build(demo, timeoutMs = TEST_MS))
+    } catch (e: RuntimeException) { // SecurityException and anything a builder rejects
+      return outcome(false, "Android refused the demo: ${e.message ?: e.javaClass.simpleName}")
+    }
+    return when {
+      Build.VERSION.SDK_INT < Build.VERSION_CODES.BAKLAVA -> outcome(true, "Demo in the notification shade for 30 s (the Live Alerts pill needs Android 16).")
+      !canPromote() -> outcome(true, "Demo in the notification shade for 30 s, but Live Updates are off for EDITH, so it can't reach the pill.")
+      else -> outcome(true, "Demo running for 30 s: it's in the notification shade now. Leave the app to see the pill.")
     }
   }
+
+  private fun outcome(ok: Boolean, message: String): Map<String, Any> = mapOf("ok" to ok, "message" to message)
 
   fun clear() {
     main.post {

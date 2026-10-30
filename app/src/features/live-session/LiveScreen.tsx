@@ -1,7 +1,7 @@
 import { memo, useCallback, useMemo, useState } from 'react';
 import { ActivityIndicator, FlatList, StyleSheet, Text, TextInput, View, type LayoutChangeEvent } from 'react-native';
 
-import { shallowEqual, useStore } from '../../core/store';
+import { useStore } from '../../core/store';
 import { colors, radius, space, type, useChrome } from '../../core/theme';
 import { Button } from '../../ui/Button';
 import { Empty } from '../../ui/Empty';
@@ -10,6 +10,7 @@ import { SettleIn } from '../../ui/motion';
 import { toast } from '../../ui/toast';
 import { ItemView } from './ItemView';
 import { sendStatus, summarize, tickOf, type Item, type LiveModel, type LiveState } from './model';
+import { StatusPanel } from './StatusPanel';
 import { WorkingRow } from './WorkingRow';
 import { AttachmentBar, AttachMenu } from './AttachmentBar';
 import type { AttachmentsModel, DraftsState } from './attachments';
@@ -18,7 +19,6 @@ import type { VoiceModel, VoiceState } from './voice';
 
 const selectItems = (s: LiveState) => s.items;
 const selectTurns = (s: LiveState) => s.turns;
-const selectTitle = (s: LiveState) => s.session?.title ?? null;
 const keyOf = (item: Item) => String(item.id);
 
 export function LiveScreen({ model, voice, attach }: { model: LiveModel; voice: VoiceModel; attach: AttachmentsModel }) {
@@ -84,7 +84,7 @@ export function LiveScreen({ model, voice, attach }: { model: LiveModel; voice: 
         <Composer model={model} voice={voice} attach={attach} backdrop={backdrop.tag} />
       </View>
       <View style={[styles.barSlot, { top: chromeInsets.top + space.s }]} pointerEvents="box-none">
-        <TurnBar model={model} backdrop={backdrop.tag} />
+        <StatusPanel model={model} backdrop={backdrop.tag} />
       </View>
     </View>
   );
@@ -99,27 +99,6 @@ const selectLoadingOlder = (s: LiveState) => s.loadingOlder;
 const OlderSpinner = memo(function OlderSpinner({ model }: { model: LiveModel }) {
   const loading = useStore(model.store, selectLoadingOlder);
   return loading ? <ActivityIndicator style={styles.older} color={colors.textDim} /> : null;
-});
-
-/** "Working · $ npm test · 42s" or "Idle", plus the conversation title. */
-const TurnBar = memo(function TurnBar({ model, backdrop }: { model: LiveModel; backdrop: number | null }) {
-  const t = useStore(model.store, summarize, shallowEqual);
-  const title = useStore(model.store, selectTitle);
-  return (
-    <Glass level="thin" backdrop={backdrop} radius={radius.pill} style={styles.bar}>
-      {t.busy ? <ActivityIndicator size="small" color={colors.accent} /> : <View style={styles.idleDot} />}
-      <Text style={styles.barText} numberOfLines={1}>
-        {t.busy ? ['Working', t.step, t.elapsed ? `${t.elapsed}s` : null].filter(Boolean).join(' · ') : 'Idle'}
-        {t.running > 1 ? ` (+${t.running - 1} parallel)` : ''}
-        {t.queued ? ` · ${t.queued} queued` : ''}
-      </Text>
-      {title ? (
-        <Text style={styles.barTitle} numberOfLines={1}>
-          {title}
-        </Text>
-      ) : null}
-    </Glass>
-  );
 });
 
 const selectBusy = (s: LiveState) => summarize(s).busy;
@@ -219,10 +198,6 @@ const styles = StyleSheet.create({
   older: { padding: space.m },
   barSlot: { position: 'absolute', left: space.l, right: space.l },
   composerSlot: { position: 'absolute', left: 0, right: 0 },
-  bar: { flexDirection: 'row', alignItems: 'center', gap: space.s, paddingHorizontal: space.m, paddingVertical: space.s },
-  idleDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.ok, marginHorizontal: 6 },
-  barText: { color: colors.text, fontSize: type.size.small, flex: 1 },
-  barTitle: { color: colors.textDim, fontSize: type.size.caption, maxWidth: '40%' },
   composer: { marginHorizontal: space.m, marginBottom: space.s },
   row: { flexDirection: 'row', alignItems: 'flex-end', gap: space.s, padding: space.s },
   voiceError: { color: colors.danger, fontSize: type.size.small, paddingHorizontal: space.m, paddingTop: space.s },

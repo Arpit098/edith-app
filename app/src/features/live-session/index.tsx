@@ -24,7 +24,7 @@ const liveSession: FeatureModule = {
   screens: [{ name: 'live', title: 'Live', component: Screen, tab: true, icon: 'message-text-outline' }],
   settings: [{ title: 'Voice input', component: Settings }],
   setup: ({ bus, api, ports }) => {
-    const m = createLiveModel(bus, api, ports.data);
+    const m = createLiveModel(bus, api, ports.data, ports.visibility);
     const v = createVoiceModel({ bus, send: (text, o) => m.send(text, o), storage: ports.storage, recorder: ports.recorder, stt: ports.stt });
     const a = createAttachmentsModel({ api, media: ports.media });
     ports.media?.prune(); // old picked files and thumbnails: bounded by age and size

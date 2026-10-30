@@ -15,7 +15,7 @@ interface NativeSystem {
   notificationsEnabled(): boolean;
   canPromote(): boolean;
   openPromotionSettings(): void;
-  testIsland(): void;
+  testIsland(): { ok: boolean; message: string };
 }
 
 const MIN_SDK = 26; // notification channels and foreground-service starts (Android 8); the app's minSdk is 24

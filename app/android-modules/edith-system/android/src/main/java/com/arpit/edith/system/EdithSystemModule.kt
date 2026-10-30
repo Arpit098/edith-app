@@ -63,7 +63,7 @@ class EdithSystemModule : Module() {
     Function("notificationsEnabled") { status.enabled() }
     Function("canPromote") { status.canPromote() }
     Function("openPromotionSettings") { if (SUPPORTED) status.openPromotionSettings() }
-    Function("testIsland") { if (SUPPORTED) status.testIsland() }
+    Function("testIsland") { if (SUPPORTED) status.testIsland() else mapOf("ok" to false, "message" to "Needs Android 8 or newer.") }
     Function("pushEnable") { s: PushRecord -> SUPPORTED && push.enable(s.toSettings()) }
     Function("pushUpdateApi") { apiUrl: String, apiToken: String -> if (SUPPORTED) push.updateApi(apiUrl, apiToken) }
     Function("pushResume") { SUPPORTED && push.resume() }
