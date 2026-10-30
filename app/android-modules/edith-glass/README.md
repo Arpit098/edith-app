@@ -10,6 +10,9 @@ What the module provides: Liquid Glass for the app's chrome (PLAN.md §4.11), ba
   - The backdrop is recorded as a display list into a `RenderNode`, not copied to a bitmap.
   - It redraws only when the backdrop has pending drawing or the glass moves. A pre-draw listener
     checks this, and nothing runs on a timer.
+  - Redraws for a changed backdrop are capped at about 30 a second, with the last one always drawn.
+    Glass that moves itself redraws at once.
+  - Each view compiles the AGSL shader once and then only updates its uniforms.
 - **`sdkInt`, `isPowerSaveMode()`, event `onPowerSaveChanged {on}`:** the `PowerManager` broadcast,
   registered only while JS listens.
 - **`startFrameStats()` / `stopFrameStats()`:** `FrameMetrics` for the window, returning frames,
