@@ -2,12 +2,12 @@
 
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useMemo, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { AccessibilityInfo, StyleSheet, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { createAndroidInstaller } from './adapters/installer/android';
+import { createAndroidGlass, type AndroidGlass } from './adapters/glass/android';
 import { createExpoMediaPicker } from './adapters/media/expo';
-import { createAndroidPower } from './adapters/power/android';
 import { createAndroidRecorder } from './adapters/recorder/android';
 import { createAsyncStorage } from './adapters/storage/async-storage';
 import { createSecureStorage } from './adapters/storage/secure-store';
@@ -18,12 +18,9 @@ import { createApi } from './core/api';
 import { Connection } from './core/connection';
 import { EventBus } from './core/events';
 import { loadFeatures } from './core/feature';
-import type { DevicePower } from './core/ports';
-import { colors, GlassContext } from './core/theme';
+import { colors, GlassContext, glassMode, type GlassSettings } from './core/theme';
 import { features } from './features';
 import { Shell } from './shell/Shell';
-
-const BLUR_MIN_SDK = 31; // RenderEffect blur: Android 12+
 
 function boot() {
   const transport = createEdithApiTransport();
@@ -37,14 +34,21 @@ function boot() {
   const api = createApi(transport);
   const connection = new Connection(transport, storage, bus);
   const loaded = loadFeatures(features, { bus, ports: { transport, storage, data, installer, ota, recorder, stt, media: createExpoMediaPicker() }, api, connection });
-  return { connection, loaded, power: createAndroidPower() };
+  return { connection, loaded, glass: createAndroidGlass() };
 }
 
-/** Real blur only where it's cheap and possible: Android 12+, and not in battery saver. */
-function useBlur(power: DevicePower | null): boolean {
-  const [saving, setSaving] = useState(() => power?.powerSave() ?? false);
-  useEffect(() => power?.onPowerSaveChange(setSaving), [power]);
-  return !!power && power.sdkInt >= BLUR_MIN_SDK && !saving;
+/** Real glass only where it's cheap and possible (glassMode), and motion as Android's settings say. */
+function useGlassSettings(native: AndroidGlass | null): GlassSettings {
+  const [saving, setSaving] = useState(() => native?.power.powerSave() ?? false);
+  useEffect(() => native?.power.onPowerSaveChange(setSaving), [native]);
+  const [reduceMotion, setReduceMotion] = useState(false);
+  useEffect(() => {
+    void AccessibilityInfo.isReduceMotionEnabled().then(setReduceMotion, () => {});
+    const sub = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduceMotion);
+    return () => sub.remove();
+  }, []);
+  const mode = glassMode(native ? native.power.sdkInt : null, saving);
+  return useMemo(() => ({ mode, View: native?.View ?? null, reduceMotion }), [mode, native, reduceMotion]);
 }
 
 export default function App() {
@@ -56,14 +60,13 @@ export default function App() {
       app.loaded.cleanup();
     };
   }, [app]);
-  const blur = useBlur(app.power);
-  const glass = useMemo(() => ({ blur }), [blur]);
+  const glass = useGlassSettings(app.glass);
   return (
     <SafeAreaProvider>
       <StatusBar style="light" />
       <GlassContext.Provider value={glass}>
         <View style={styles.root}>
-          <Shell loaded={app.loaded} connection={app.connection} />
+          <Shell loaded={app.loaded} connection={app.connection} meter={app.glass?.meter ?? null} />
         </View>
       </GlassContext.Provider>
     </SafeAreaProvider>

@@ -43,34 +43,69 @@ export const colors = {
 
 export type GlassLevel = 'thin' | 'regular' | 'thick';
 
-/**
- * Glass surfaces. `tint` is laid over the blur (or used alone in the flat fallback, hence the
- * separate `flat` value, a little more opaque); `edge` is the gradient light edge from the top-left;
- * `highlight` the inner glow along the top.
- */
-export const glass: Record<GlassLevel, { blur: number; tint: string; flat: string; edge: readonly [string, string]; highlight: string }> = {
+export interface GlassStyle {
+  blur: number; // blur radius, dp
+  tint: string; // laid over the blurred backdrop
+  flat: string; // the fallback without blur: the tint alone, a little more opaque
+  edge: readonly [string, string]; // the gradient light edge, top-left → bottom-right
+  highlight: string; // the inner glow along the top
+  // The lens (Android 13+, edith-glass's AGSL shader):
+  refraction: number; // how far the rim bends the backdrop, dp
+  bezel: number; // how wide the refracting rim is, dp
+  dispersion: number; // colour fringe at the rim, 0..1
+  saturation: number; // 1 = unchanged; glass lifts colour a little
+  specular: number; // rim highlight from the top-left, 0..1
+}
+
+/** Glass surfaces, from the lightest (small pills) to the heaviest (the header). */
+export const glass: Record<GlassLevel, GlassStyle> = {
   thin: {
-    blur: 24,
+    blur: 14,
     tint: 'rgba(28, 32, 38, 0.38)',
     flat: 'rgba(30, 34, 40, 0.78)',
     edge: ['rgba(255, 255, 255, 0.22)', 'rgba(255, 255, 255, 0.04)'],
     highlight: 'rgba(255, 255, 255, 0.06)',
+    refraction: 10,
+    bezel: 12,
+    dispersion: 0.25,
+    saturation: 1.35,
+    specular: 0.35,
   },
   regular: {
-    blur: 40,
+    blur: 20,
     tint: 'rgba(24, 28, 34, 0.52)',
     flat: 'rgba(26, 30, 36, 0.88)',
     edge: ['rgba(255, 255, 255, 0.26)', 'rgba(255, 255, 255, 0.05)'],
     highlight: 'rgba(255, 255, 255, 0.08)',
+    refraction: 14,
+    bezel: 16,
+    dispersion: 0.3,
+    saturation: 1.4,
+    specular: 0.4,
   },
   thick: {
-    blur: 60,
+    blur: 28,
     tint: 'rgba(18, 21, 26, 0.66)',
     flat: 'rgba(20, 23, 28, 0.94)',
     edge: ['rgba(255, 255, 255, 0.30)', 'rgba(255, 255, 255, 0.06)'],
     highlight: 'rgba(255, 255, 255, 0.10)',
+    refraction: 12,
+    bezel: 18,
+    dispersion: 0.2,
+    saturation: 1.3,
+    specular: 0.3,
   },
 };
+
+/** 'rgba(r, g, b, a)' → [r, g, b, a] in 0..1, the form the native glass view takes. */
+export function rgbaOf(css: string): number[] {
+  const m = /^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*(?:,\s*([\d.]+)\s*)?\)$/.exec(css);
+  if (!m) return [0, 0, 0, 0];
+  return [Number(m[1]) / 255, Number(m[2]) / 255, Number(m[3]) / 255, m[4] === undefined ? 1 : Number(m[4])];
+}
+
+/** Each level's tint for the native view, parsed once. */
+export const glassTint: Record<GlassLevel, number[]> = { thin: rgbaOf(glass.thin.tint), regular: rgbaOf(glass.regular.tint), thick: rgbaOf(glass.thick.tint) };
 
 export const radius = { s: 8, m: 14, l: 22, pill: 999 } as const;
 

@@ -20,7 +20,6 @@
     "@react-native-async-storage/async-storage": "2.2.0",
     "expo": "57.0.31",
     "expo-asset": "57.0.20",
-    "expo-blur": "57.0.3",
     "expo-constants": "57.0.22",
     "expo-document-picker": "57.0.3",
     "expo-file-system": "57.0.7",

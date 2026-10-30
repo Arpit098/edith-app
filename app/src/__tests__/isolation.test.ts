@@ -41,7 +41,7 @@ function violations(extra: { file: string; text: string }[] = []): string[] {
         const allowed =
           layer === 'adapters' ||
           ['react', 'react-native', '@expo/vector-icons/MaterialCommunityIcons', 'react-native-safe-area-context'].includes(spec) ||
-          (layer === 'ui' && ['expo-blur', 'expo-linear-gradient', 'react-native-svg'].includes(spec));
+          (layer === 'ui' && ['expo-linear-gradient', 'react-native-svg'].includes(spec));
         const coreOk = layer === 'core' || layer === 'common' ? spec === 'react' : true;
         if (!allowed || !coreOk) out.push(`${rel}: imports library ${spec}`);
         continue;

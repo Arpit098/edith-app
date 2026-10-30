@@ -1,16 +1,16 @@
 // App frame: connect gate, header, banner panels, the current screen and the bottom tab bar.
 
-import { BlurTargetView } from 'expo-blur';
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type RefObject } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from 'react';
 import { ActivityIndicator, BackHandler, Keyboard, KeyboardAvoidingView, Linking, Pressable, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import type { Connection, ConnectionState } from '../core/connection';
 import type { LoadedFeatures } from '../core/feature';
+import type { FrameMeter } from '../core/ports';
 import { useStore } from '../core/store';
 import { ChromeContext, chrome, colors, radius, space, type } from '../core/theme';
 import { Ambient } from '../ui/Ambient';
-import { Glass } from '../ui/Glass';
+import { Glass, useBackdrop } from '../ui/Glass';
 import { Icon } from '../ui/Icon';
 import { ConnectionPill } from './ConnectionPill';
 import { ConnectScreen } from './ConnectScreen';
@@ -27,7 +27,7 @@ interface Route {
 
 const selectLink = (s: ConnectionState) => s.link;
 
-export function Shell({ loaded, connection }: { loaded: LoadedFeatures; connection: Connection }) {
+export function Shell({ loaded, connection, meter }: { loaded: LoadedFeatures; connection: Connection; meter: FrameMeter | null }) {
   const link = useStore(connection.store, selectLink);
   if (link === 'loading') {
     return (
@@ -37,10 +37,10 @@ export function Shell({ loaded, connection }: { loaded: LoadedFeatures; connecti
     );
   }
   if (link === 'unconfigured') return <ConnectScreen connection={connection} />;
-  return <Main loaded={loaded} connection={connection} />;
+  return <Main loaded={loaded} connection={connection} meter={meter} />;
 }
 
-function Main({ loaded, connection }: { loaded: LoadedFeatures; connection: Connection }) {
+function Main({ loaded, connection, meter }: { loaded: LoadedFeatures; connection: Connection; meter: FrameMeter | null }) {
   const insets = useSafeAreaInsets();
   const tabNames = useMemo(() => new Set([...loaded.screens.filter((s) => s.tab).map((s) => s.name), 'tools', 'settings']), [loaded]);
   const [nav, setNav] = useState<NavState>(() => ({ tab: loaded.screens.find((s) => s.tab)?.name ?? 'tools', stack: [] }));
@@ -52,13 +52,13 @@ function Main({ loaded, connection }: { loaded: LoadedFeatures; connection: Conn
   const { tabs, routes, home } = useMemo(() => {
     const own: Route[] = [
       { name: 'tools', title: 'Tools', icon: 'view-grid-outline', component: () => <ToolsScreen tools={loaded.tools} open={go} /> },
-      { name: 'settings', title: 'Settings', icon: 'cog-outline', component: () => <SettingsScreen connection={connection} sections={loaded.settings} /> },
+      { name: 'settings', title: 'Settings', icon: 'cog-outline', component: () => <SettingsScreen connection={connection} sections={loaded.settings} meter={meter} /> },
     ];
     const featureRoutes: Route[] = loaded.screens.map((s) => ({ name: s.name, title: s.title, icon: s.icon ?? 'circle-outline', component: s.component }));
     const all = [...featureRoutes, ...own];
     const tabList = all.filter((r) => tabNames.has(r.name));
     return { tabs: tabList, routes: new Map(all.map((r) => [r.name, r])), home: tabList[0]!.name };
-  }, [loaded, connection, go, tabNames]);
+  }, [loaded, connection, go, tabNames, meter]);
 
   // Links from the live status notification: edith://live, edith://approvals. Approvals show in the
   // banner on every screen, so both land on the home (Live) tab.
@@ -90,8 +90,8 @@ function Main({ loaded, connection }: { loaded: LoadedFeatures; connection: Conn
   const stacked = nav.stack.length > 0;
   const Stacked = stacked ? route?.component : undefined;
 
-  // The header and the tab bar float over the content as glass and blur what scrolls under them.
-  const target = useRef<View>(null);
+  // The header and the tab bar float over the content as glass, bending what scrolls under them.
+  const backdrop = useBackdrop();
   const [headerHeight, setHeaderHeight] = useState(insets.top + chrome.headerHeight);
   const onHeaderLayout = useCallback((e: LayoutChangeEvent) => setHeaderHeight(Math.round(e.nativeEvent.layout.height)), []);
   const tabBarSpace = keyboard ? 0 : chrome.tabBarHeight + space.s * 2;
@@ -99,9 +99,10 @@ function Main({ loaded, connection }: { loaded: LoadedFeatures; connection: Conn
 
   return (
     <KeyboardAvoidingView style={styles.flex} behavior="padding">
-      <Ambient />
       <ChromeContext.Provider value={chromeInsets}>
-        <BlurTargetView ref={target} style={styles.flex}>
+        {/* The glass's backdrop: the glow and the screens (never the chrome itself). */}
+        <View ref={backdrop.ref} collapsable={false} style={styles.flex}>
+          <Ambient />
           {/* Tabs stay mounted once visited (keeps scroll position and input); hidden ones don't draw. */}
           {tabs
             .filter((t) => visited.has(t.name))
@@ -115,10 +116,10 @@ function Main({ loaded, connection }: { loaded: LoadedFeatures; connection: Conn
               <Stacked />
             </View>
           ) : null}
-        </BlurTargetView>
+        </View>
       </ChromeContext.Provider>
 
-      <Glass level="thick" blurTarget={target} radius={0} edges={{ bottom: true }} style={styles.header}>
+      <Glass level="thick" backdrop={backdrop.tag} radius={0} edges={{ bottom: true }} style={styles.header}>
         <View onLayout={onHeaderLayout} style={{ paddingTop: insets.top }}>
           <View style={styles.headerRow}>
             {stacked ? (
@@ -139,7 +140,7 @@ function Main({ loaded, connection }: { loaded: LoadedFeatures; connection: Conn
         </View>
       </Glass>
 
-      {keyboard ? null : <TabBar tabs={tabs} active={stacked ? null : nav.tab} onSelect={go} bottom={insets.bottom} target={target} />}
+      {keyboard ? null : <TabBar tabs={tabs} active={stacked ? null : nav.tab} onSelect={go} bottom={insets.bottom} backdrop={backdrop.tag} />}
     </KeyboardAvoidingView>
   );
 }
@@ -149,13 +150,13 @@ interface TabBarProps {
   active: string | null;
   onSelect: (name: string) => void;
   bottom: number;
-  target: RefObject<View | null>;
+  backdrop: number | null;
 }
 
 /** A floating glass pill above the gesture area. */
-const TabBar = memo(function TabBar({ tabs, active, onSelect, bottom, target }: TabBarProps) {
+const TabBar = memo(function TabBar({ tabs, active, onSelect, bottom, backdrop }: TabBarProps) {
   return (
-    <Glass level="regular" blurTarget={target} radius={radius.pill} style={[styles.tabBar, { bottom: bottom + space.s }]}>
+    <Glass level="regular" backdrop={backdrop} radius={radius.pill} style={[styles.tabBar, { bottom: bottom + space.s }]}>
       <View style={styles.tabRow} accessibilityRole="tablist">
         {tabs.map((t) => {
           const on = t.name === active;

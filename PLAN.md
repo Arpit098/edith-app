@@ -257,6 +257,35 @@ show in the phone's "dynamic island".
     Screens use the tokens and no raw colours, so each feature keeps its own look in step.
   - Blur only on a few large surfaces (header, tab bar, cards, sheets), never in lists, to keep
     scrolling at 60 fps and spare the battery.
+- **Real Liquid Glass (asked for 2026-10-30):** a native `GlassView` in our module
+  `android-modules/edith-glass`, by Android version:
+  - **Android 13+:** `RenderEffect.createRuntimeShaderEffect` with an AGSL shader of our own over
+    the blurred backdrop. The shader does lens refraction (the backdrop bends towards the rim of the
+    rounded shape), chromatic dispersion at the rim, a specular highlight from the top-left, and
+    blur plus a little extra saturation inside.
+  - **Android 12:** blur and saturation only (`createBlurEffect` chained with a colour matrix).
+  - **Below 12, or in battery saver:** the flat translucent fallback.
+  - Where it goes: chrome surfaces only (tab bar, header, composer, sheets, the floating mic),
+    never list rows or bubbles.
+  - How it works: the backdrop is the screen content's display list, recorded into a `RenderNode`
+    (no bitmap copies). The glass redraws only when the content draws (a pre-draw listener), never
+    on a timer.
+  - The same module reports battery saver (`PowerManager`, plus its change broadcast).
+  - Any open-source shader code we use is credited in the module's README with its MIT or Apache
+    licence. The shader we use now is our own.
+- **Liquid motion (Reanimated, all on the UI thread):**
+  - the tab bar's selection is a glass droplet that stretches and settles as it moves;
+  - sheets grow out of the control that opened them;
+  - controls squish slightly when pressed;
+  - new bubbles settle in on a spring;
+  - the "working" indicator is a morphing glass blob.
+  - With Android's "Remove animations" setting on, everything jumps straight to its end state.
+- **Performance:** frame times are measured by the module (`FrameMetrics`: p50/p95/p99, janky
+  frames) while scrolling and switching tabs, with the glass on and off. The target is 60–120 fps
+  (the 13R's 120 Hz) with no extra janky frames from the glass. Numbers from an emulator are labelled
+  as such, and device numbers come from a readout in Settings → About.
+- **Before merge:** screenshots of the main screens and a short screen recording (tab switch,
+  scrolling under the glass, a sheet) go to Arpit for approval.
 - **Logo:** Arpit's image (`app/assets/brand/edith-logo-source.jpg`: glowing blue and white glass rings
   on near-black) becomes the launcher icon (adaptive foreground and background, plus a monochrome
   version for themed icons) and the splash screen. The source is 838 px, which is enough for
