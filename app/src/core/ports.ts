@@ -26,7 +26,7 @@ export interface RequestOptions {
 export interface Transport {
   /** Set or clear the server. The stream (if anyone listens) reconnects to the new one. */
   configure(server: ServerConfig | null): void;
-  request<T>(method: 'GET' | 'POST' | 'PATCH', path: string, body?: unknown, opts?: RequestOptions): Promise<T>;
+  request<T>(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: string, body?: unknown, opts?: RequestOptions): Promise<T>;
   /**
    * Live /v1/stream over one shared WebSocket (reconnects with backoff on its own).
    * Returns an unsubscribe function; the socket closes when nobody listens.
@@ -45,7 +45,7 @@ export interface Transport {
   uploadRaw<T>(
     path: string,
     file: { uri: string; mime: string; name: string },
-    opts?: RequestOptions & { onProgress?: (sent: number, total: number) => void; signal?: AbortSignal },
+    opts?: RequestOptions & { onProgress?: (sent: number, total: number) => void; signal?: AbortSignal; headers?: Record<string, string> },
   ): Promise<T>;
   /**
    * Keep the stream connected in the background (normally it closes after a minute there, for
@@ -191,6 +191,16 @@ export interface RecordedAudio {
   uri: string; // file:// in the app's cache
   mime: string; // audio/wav: 16 kHz mono 16-bit
   durationMs: number;
+  analysis?: AudioAnalysis; // where the recorder measures the take (the Android one does)
+}
+
+/** A take's level, measured while recording (dBFS: dB relative to full scale; silence is -120). */
+export interface AudioAnalysis {
+  peakDbfs: number;
+  rmsDbfs: number;
+  clipped: number; // samples at full scale
+  sha256: string; // of the whole file, lowercase hex
+  bytes: number;
 }
 
 export type RecorderEvent = { kind: 'progress'; elapsedMs: number; level: number } | { kind: 'capped'; elapsedMs: number };
@@ -199,14 +209,19 @@ export type RecorderEvent = { kind: 'progress'; elapsedMs: number; level: number
 export interface Recorder {
   /** Ask for the microphone permission if needed; true when it's granted. */
   ensurePermission(): Promise<boolean>;
-  /** Start recording; it stops by itself at `maxMs` (a 'capped' event). */
-  start(opts: { maxMs: number }): Promise<void>;
+  /**
+   * Start recording; it stops by itself at `maxMs` (a 'capped' event). `keep`: the file stays until
+   * discard() (e.g. a training clip uploaded later); otherwise the next recording replaces it.
+   */
+  start(opts: { maxMs: number; keep?: boolean }): Promise<void>;
   /** Progress (elapsed, level 0..1) about 10 times a second while recording. */
   onEvent(handler: (e: RecorderEvent) => void): () => void;
   /** Finish and return the file, or null if nothing was recording. */
   stop(): Promise<RecordedAudio | null>;
   /** Stop and throw the recording away. */
   cancel(): Promise<void>;
+  /** Delete a file this recorder made (nothing for any other path). */
+  discard?(uri: string): Promise<void>;
 }
 
 export interface WakeWord {
@@ -215,6 +230,8 @@ export interface WakeWord {
   disable(): Promise<void>;
   isEnabled(): Promise<boolean>;
   onDetected(handler: () => void): () => void;
+  /** The "Hey Edith" model this app version bundles (wakeword/models/hey_edith.json), or null. */
+  model(): { version: string } | null;
 }
 
 /** Android Keystore-backed storage for the token and server address. */

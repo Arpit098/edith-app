@@ -6,8 +6,9 @@ import { PermissionsAndroid } from 'react-native';
 import type { Recorder, RecorderEvent } from '../../../core/ports';
 
 interface NativeRecorder {
-  start(maxMs: number): Promise<void>;
-  stop(): Promise<{ uri: string; durationMs: number; bytes: number } | null>;
+  start(maxMs: number, keep: boolean): Promise<void>;
+  stop(): Promise<{ uri: string; durationMs: number; bytes: number; peakDbfs: number; rmsDbfs: number; clipped: number; sha256: string } | null>;
+  discard(uri: string): Promise<boolean>;
   cancel(): Promise<void>;
   addListener(event: 'onRecording', listener: (e: { elapsedMs: number; level: number; capped?: boolean }) => void): { remove(): void };
 }
@@ -22,7 +23,7 @@ export function createAndroidRecorder(): Recorder | null {
       if (await PermissionsAndroid.check(mic)) return true;
       return (await PermissionsAndroid.request(mic)) === PermissionsAndroid.RESULTS.GRANTED;
     },
-    start: ({ maxMs }) => native.start(Math.round(maxMs)),
+    start: ({ maxMs, keep }) => native.start(Math.round(maxMs), keep ?? false),
     onEvent(handler) {
       const sub = native.addListener('onRecording', (e) =>
         handler((e.capped ? { kind: 'capped', elapsedMs: e.elapsedMs } : { kind: 'progress', elapsedMs: e.elapsedMs, level: e.level }) satisfies RecorderEvent),
@@ -31,7 +32,12 @@ export function createAndroidRecorder(): Recorder | null {
     },
     async stop() {
       const r = await native.stop();
-      return r ? { uri: r.uri, mime: 'audio/wav', durationMs: r.durationMs } : null;
+      if (!r) return null;
+      const analysis = { peakDbfs: r.peakDbfs, rmsDbfs: r.rmsDbfs, clipped: r.clipped, sha256: r.sha256, bytes: r.bytes };
+      return { uri: r.uri, mime: 'audio/wav', durationMs: r.durationMs, analysis };
+    },
+    async discard(uri) {
+      await native.discard(uri);
     },
     cancel: () => native.cancel(),
   };
