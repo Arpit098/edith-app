@@ -7,11 +7,13 @@ import { Empty } from '../../ui/Empty';
 import { colors, radius, space } from '../../ui/theme';
 import { toast } from '../../ui/toast';
 import { ItemView } from './ItemView';
-import { summarize, type Item, type LiveModel, type LiveState } from './model';
+import { sendStatus, summarize, tickOf, type Item, type LiveModel, type LiveState } from './model';
+import { WorkingRow } from './WorkingRow';
 import { VoiceBar } from './VoiceBar';
 import type { VoiceModel, VoiceState } from './voice';
 
 const selectItems = (s: LiveState) => s.items;
+const selectTurns = (s: LiveState) => s.turns;
 const selectTitle = (s: LiveState) => s.session?.title ?? null;
 const keyOf = (item: Item) => String(item.id);
 
@@ -22,7 +24,17 @@ export function LiveScreen({ model, voice }: { model: LiveModel; voice: VoiceMod
       model.press(id, action).then(toast, (e: unknown) => toast(`Couldn't press it: ${e instanceof Error ? e.message : String(e)}`)),
     [model],
   );
-  const renderItem = useCallback(({ item }: { item: Item }) => <ItemView item={item} onPress={onPress} />, [onPress]);
+  const turns = useStore(model.store, selectTurns); // changes only when a turn changes phase (not per progress event)
+  const onRetry = useCallback((key: string) => void model.retry(key), [model]);
+  const renderItem = useCallback(
+    ({ item }: { item: Item }) =>
+      item.kind === 'user' ? (
+        <ItemView item={item} onPress={onPress} tick={tickOf(item, turns)} status={sendStatus(item, turns)} onRetry={onRetry} />
+      ) : (
+        <ItemView item={item} onPress={onPress} />
+      ),
+    [onPress, onRetry, turns],
+  );
   const loadOlder = useCallback(() => void model.loadOlder(), [model]);
   return (
     <View style={styles.screen}>
@@ -42,6 +54,7 @@ export function LiveScreen({ model, voice }: { model: LiveModel; voice: VoiceMod
           onEndReached={loadOlder} // the "end" of an inverted list is the top: older history
           onEndReachedThreshold={0.5}
           ListFooterComponent={<OlderSpinner model={model} />}
+          ListHeaderComponent={<WorkingRow model={model} />} // an inverted list's header sits at the bottom
         />
       ) : (
         // Outside the list: an inverted list would draw its empty component upside down.
@@ -93,7 +106,6 @@ const Composer = memo(function Composer({ model, voice }: { model: LiveModel; vo
   const canTalk = useStore(voice.store, selectVoiceAvailable);
   const [text, setText] = useState('');
   const [fromVoice, setFromVoice] = useState(false); // the box holds words Arpit said: send them as voice
-  const [sending, setSending] = useState(false);
   const [stopping, setStopping] = useState(false);
 
   const edit = (t: string) => {
@@ -102,15 +114,11 @@ const Composer = memo(function Composer({ model, voice }: { model: LiveModel; vo
   };
   const send = () => {
     const t = text.trim();
-    if (!t || sending) return;
-    setSending(true);
-    model.send(t, { voice: fromVoice }).then(
-      () => {
-        setText('');
-        setFromVoice(false);
-      },
-      (e: unknown) => toast(`Not sent: ${e instanceof Error ? e.message : String(e)}`),
-    ).finally(() => setSending(false));
+    if (!t) return;
+    // The message shows at once with its ticks; a failure stays on its bubble with Retry.
+    setText('');
+    setFromVoice(false);
+    void model.send(t, { voice: fromVoice });
   };
   const stop = () => {
     setStopping(true);
@@ -147,7 +155,7 @@ const Composer = memo(function Composer({ model, voice }: { model: LiveModel; vo
           <Button icon="microphone" variant="secondary" onPress={() => void voice.start()} busy={voicePhase === 'starting'} accessibilityLabel="Talk to EDITH" />
         ) : null}
         {!talking && (text.trim() || !canTalk) ? (
-          <Button icon="send" variant="primary" onPress={send} busy={sending} disabled={!text.trim()} accessibilityLabel="Send" />
+          <Button icon="send" variant="primary" onPress={send} disabled={!text.trim()} accessibilityLabel="Send" />
         ) : null}
       </View>
     </View>

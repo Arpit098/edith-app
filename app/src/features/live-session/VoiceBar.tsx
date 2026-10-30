@@ -20,11 +20,11 @@ export const VoiceBar = memo(function VoiceBar({ voice, onStop }: { voice: Voice
   const phase = useStore(voice.store, selectPhase);
   const seconds = useStore(voice.store, selectElapsed);
   const level = useStore(voice.store, selectLevel);
-  if (phase === 'transcribing' || phase === 'sending') {
+  if (phase === 'transcribing') {
     return (
       <View style={styles.bar}>
         <ActivityIndicator color={colors.accent} />
-        <Text style={styles.label}>{phase === 'sending' ? 'Sending…' : 'Transcribing on edith…'}</Text>
+        <Text style={styles.label}>Transcribing on edith…</Text>
       </View>
     );
   }

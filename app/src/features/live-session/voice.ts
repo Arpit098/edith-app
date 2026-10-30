@@ -2,7 +2,7 @@
 // POST /v1/stt → the text, either into the box to edit (default) or sent straight away as a voice
 // message (POST /v1/messages {voice: true}).
 
-import { ApiError, type Api } from '../../core/api';
+import { ApiError } from '../../core/api';
 import { localEvent, type EventBus } from '../../core/events';
 import type { Recorder, SecureStorage, SpeechToText } from '../../core/ports';
 import { createStore, type Store } from '../../core/store';
@@ -10,7 +10,7 @@ import { createStore, type Store } from '../../core/store';
 export const MAX_RECORDING_MS = 55_000; // edith takes up to 60 s; a little margin
 const AUTO_SEND_KEY = 'edith.voice.autoSend';
 
-export type VoicePhase = 'idle' | 'starting' | 'recording' | 'transcribing' | 'sending';
+export type VoicePhase = 'idle' | 'starting' | 'recording' | 'transcribing';
 
 export interface VoiceState {
   available: boolean; // false without a recorder or speech-to-text (e.g. web, tests)
@@ -58,12 +58,13 @@ export function sttError(e: unknown): string {
 
 export function createVoiceModel(deps: {
   bus: EventBus;
-  api: Api;
+  /** The live session's send (LiveModel.send): shows the message and tracks it. */
+  send: (text: string, opts: { voice: boolean }) => Promise<void>;
   storage: SecureStorage;
   recorder?: Recorder;
   stt?: SpeechToText;
 }): VoiceModel {
-  const { bus, api, storage, recorder, stt } = deps;
+  const { bus, send, storage, recorder, stt } = deps;
   const store = createStore<VoiceState>({ available: !!(recorder && stt), phase: 'idle', elapsedMs: 0, level: 0, error: null, autoSend: false });
   let stopping: Promise<string | null> | null = null;
   let autoSendChosen = false; // set once Arpit changes it: a slower load must not undo that
@@ -128,16 +129,10 @@ export function createVoiceModel(deps: {
           store.set((s) => ({ ...s, phase: 'idle' }));
           return text;
         }
-        store.set((s) => ({ ...s, phase: 'sending' }));
-        try {
-          await api.send(text, { voice: true });
-          store.set((s) => ({ ...s, phase: 'idle' }));
-          return null;
-        } catch (e) {
-          // Keep the words: they go into the box so nothing Arpit said is lost.
-          fail(`Not sent: ${e instanceof Error ? e.message : String(e)}`);
-          return text;
-        }
+        // Sent like a typed message: it shows at once with its state, and a failure keeps it with Retry.
+        store.set((s) => ({ ...s, phase: 'idle' }));
+        void send(text, { voice: true });
+        return null;
       })().finally(() => {
         stopping = null;
       });
