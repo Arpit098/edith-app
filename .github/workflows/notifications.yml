@@ -45,6 +45,15 @@ jobs:
       CMAKE_C_COMPILER_LAUNCHER: ccache
       CMAKE_CXX_COMPILER_LAUNCHER: ccache
     steps:
+      # The build plus the Android 16 system image don't fit the runner's free disk: drop preinstalled
+      # toolchains this job never uses (.NET, GHC, CodeQL, Boost, Swift, docker images).
+      - name: Free disk space
+        working-directory: .
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/share/swift
+          sudo docker image prune --all --force >/dev/null || true
+          df -h /
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
@@ -78,7 +87,12 @@ jobs:
       # Debug: it carries the DebugNotificationsReceiver the script drives (src/debug, never in release).
       - name: Gradle assembleDebug (x86_64)
         working-directory: app/android
-        run: ./gradlew assembleDebug --no-daemon --build-cache -PreactNativeArchitectures=x86_64 "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g"
+        run: |
+          ./gradlew assembleDebug --no-daemon --build-cache -PreactNativeArchitectures=x86_64 "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g"
+          # Keep the APK, drop the build intermediates (several GB) before the emulator image lands.
+          cp app/build/outputs/apk/debug/app-debug.apk "$RUNNER_TEMP/edith-debug.apk"
+          rm -rf app/build ../node_modules/*/android/build ../node_modules/@*/*/android/build ../android-modules/*/android/build
+          df -h /
 
       - name: KVM for the emulator
         working-directory: .
@@ -98,7 +112,7 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           working-directory: app
-          script: ./scripts/emulator/post-states.sh android/app/build/outputs/apk/debug/app-debug.apk scripts/emulator/states.json out/screenshots "$RUNNER_TEMP/api.log"
+          script: ./scripts/emulator/post-states.sh "$RUNNER_TEMP/edith-debug.apk" scripts/emulator/states.json out/screenshots "$RUNNER_TEMP/api.log"
       - name: Screenshots in the summary
         if: always()
         run: |
