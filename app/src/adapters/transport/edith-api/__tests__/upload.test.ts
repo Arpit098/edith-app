@@ -37,7 +37,7 @@ describe('uploadRaw', () => {
     expect(progress).toEqual([[10, 40]]);
   });
 
-  it('adds the caller's headers, which never override the transport's own', async () => {
+  it('adds the caller’s headers, which never override the transport’s own', async () => {
     const { create, seen } = task(async () => ({ status: 200, body: '{}' }));
     await uploadRaw(SERVER, '/v1/wakeword/sessions/s/clips?kind=noise', FILE, { timeoutMs: 1000, headers: { 'x-clip-sha256': 'ab', Authorization: 'Bearer evil' } }, create);
     expect(seen.options?.headers).toMatchObject({ 'x-clip-sha256': 'ab', Authorization: 'Bearer t0k' });
