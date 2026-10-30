@@ -8,7 +8,7 @@ import { formatIST } from '../../common/format';
 import { shallowEqual, useStore } from '../../core/store';
 import { Button } from '../../ui/Button';
 import { Icon } from '../../ui/Icon';
-import { colors, radius, space } from '../../ui/theme';
+import { colors, radius, space } from '../../core/theme';
 import type { TrainClip, WakewordModel, WakewordState } from './model';
 import { STEPS, stepOf, type ClipKind, type Step } from './plan';
 
@@ -181,7 +181,7 @@ function Bar({ value, tone = 'ok' }: { value: number; tone?: 'ok' | 'accent' }) 
 
 const styles = StyleSheet.create({
   body: { padding: space.m, gap: space.m },
-  card: { backgroundColor: colors.surface, borderRadius: radius.m, padding: space.m, gap: space.s },
+  card: { backgroundColor: colors.card, borderRadius: radius.m, padding: space.m, gap: space.s },
   cardOpen: { borderWidth: 1, borderColor: colors.accent },
   row: { flexDirection: 'row', alignItems: 'center', gap: space.s },
   flex: { flex: 1 },
@@ -195,6 +195,6 @@ const styles = StyleSheet.create({
   error: { color: colors.danger, fontSize: 14 },
   model: { gap: space.xs, marginTop: space.xs },
   recorder: { gap: space.m, marginTop: space.xs },
-  track: { height: 4, borderRadius: 2, backgroundColor: colors.border, overflow: 'hidden' },
+  track: { height: 4, borderRadius: 2, backgroundColor: colors.hairline, overflow: 'hidden' },
   fill: { height: 4 },
 });
