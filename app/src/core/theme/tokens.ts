@@ -116,12 +116,23 @@ export const type = {
   size: { caption: 11, small: 13, body: 15, title: 17, heading: 22 },
 } as const;
 
-/** Motion: short, soft, no bounce on content (springs are for sheets in Phase 3). */
+/**
+ * Motion (PLAN.md §4.11 "liquid motion"): durations for fades, and springs for anything that moves.
+ * All run on the UI thread (Reanimated); with "Remove animations" on they jump to the end.
+ */
 export const motion = {
   fast: 120,
   normal: 220,
   slow: 360,
   spring: { damping: 18, stiffness: 180, mass: 1 },
+  press: { damping: 15, stiffness: 420, mass: 0.6 }, // squish on press: quick in, a small rebound out
+  settle: { damping: 16, stiffness: 220, mass: 1 }, // a new bubble settling into place
+  grow: { damping: 17, stiffness: 260, mass: 0.9 }, // a sheet growing out of its trigger
+  // The tab droplet: the leading edge leaps, the trailing edge follows softer, so it stretches and settles.
+  dropletLead: { damping: 20, stiffness: 420, mass: 0.8 },
+  dropletTrail: { damping: 22, stiffness: 170, mass: 1 },
+  pressScale: 0.95,
+  blobMs: 2400, // one breath of the working blob
 } as const;
 
 /** Chrome sizes the shell lays over the content (screens pad by these; see useChrome()). */
