@@ -18,7 +18,7 @@ with it. Tokens are copied file to file only; they never reach the API, logs, th
 | POST | `/v1/accounts/login` | | `{id, url}`: a sign-in started (any earlier unfinished one is cancelled). 502 `{error}` if Claude's login gave no link |
 | POST | `/v1/accounts/login/{login}` | `{code, label?}` | `{account}`, the saved account (the same account signed in again updates its profile). 400 `{error}` with Claude's own message for a wrong or expired code (the sign-in is then over; a code that doesn't even look like one keeps it open), 404 if it has expired |
 | DELETE | `/v1/accounts/login/{login}` | | `{cancelled: bool}` |
-| DELETE | `/v1/accounts/{id}` | | `{removed: id}`; 409 for the account in use, 404 for an unknown id |
+| DELETE | `/v1/accounts/{id}` | | `{removed: id}`; 409 for the account in use or while a switch runs, 404 for an unknown id |
 
 `account`: `{id, label, email, plan, active}`. `id` is 8 hex characters; `label` is what Arpit typed
 when adding it, else the account's name; `plan` is Claude's subscription type (`pro`, `max`, …) or
@@ -37,16 +37,25 @@ tmux pane on the default socket) and EDITH herself (edith-claude). The chat drop
 
 **Only when idle.** Otherwise 409 with `error` saying why, e.g. `Can't switch while edith-dev is
 busy; 2 messages queued`. The reasons: EDITH is working on a task, parallel tasks are running, messages
-are queued, an approval is waiting, an agent is busy or waiting for approval (each named), another
-Claude is running outside tmux, a switch is already running, or the account is already in use. An
-agent that only hit its usage limit doesn't block.
+are queued, an approval is waiting, an agent is busy or waiting for approval (each named), EDITH's own
+Claude is busy with background work, another Claude is running outside tmux, a switch is already
+running, or the account is already in use. Busy is read from each Claude's own session file
+(`~/.claude/sessions/<pid>.json`): anything but `idle` counts as busy, background subagents and shells
+included. An agent that only hit its usage limit doesn't block. The switch checks all of this again
+right before it stops anything, and ends `failed` (nothing changed) if it no longer holds.
+
+**While it runs** EDITH takes no new work: messages from the app and Telegram wait in her queue (each
+gets `turn.queued`) and run in order once the switch has ended, however it ended.
 
 **Steps** (`step`), in order: `starting` (accepted), `stopping` (every agent's Claude, then
 edith-claude), `saving` (the old account's refreshed credentials back into its profile), `installing`,
-`starting_agents` (each pane again in its folder, resuming its conversation), `starting_edith`
-(edith-claude, resuming hers), `checking` (Claude reports the new account, and every Claude reaches
-its input box without a login error, within 90 s). If installing or anything after fails, it does
-`rolling_back`: everything is stopped and started again on the old account.
+`starting_edith` (edith-claude alone, resuming her conversation, until her input box shows: if the
+token needs a refresh, she does it on her own, and it is saved), `starting_agents` (each pane again
+in its folder, resuming its conversation; one with no known conversation starts a fresh one),
+`checking` (the live credentials are still the account's, Claude reports the new account, and every
+Claude reaches its input box without a login error, within 90 s). If installing or anything after
+fails, it does `rolling_back`: everything is stopped and started again on the old account. Whatever
+happens, edith-claude is started again and every stopped agent restarted at the end.
 
 The switch runs on its own (a transient systemd unit), so it finishes even though it restarts
 EDITH's Claude, and even if the bridge restarts. The app's stream drops while it runs; after

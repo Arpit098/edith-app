@@ -199,6 +199,43 @@ class MainLaneTest(unittest.TestCase):
         self.assertLess(len(has_session), 5)  # legacy ran it every 0.5 s
 
 
+class HoldTest(unittest.TestCase):
+    """While a Claude account switch runs, the agent starts nothing (accounts feature, contracts/accounts.md)."""
+
+    def test_hold_queues_everything_and_never_starts_the_tmux_claude(self):
+        h = Harness(self)
+        starts = []
+        h.agent.tmux._start_service = lambda: starts.append(1)
+        h.fake.alive = False  # the switch stopped edith-claude
+        h.agent.hold()
+        self.assertTrue(h.agent.held())
+        self.assertEqual(h.agent.send("one", "telegram", "m1").lane, "queued")
+        self.assertEqual(h.agent.send("two", "app", "m2").lane, "queued")  # not a side lane either
+        self.assertEqual([h.wait("turn.queued", r).data["position"] for r in ("m1", "m2")], [1, 2])
+        self.assertEqual(h.agent.resume("s2"), "busy")
+        self.assertEqual(h.agent.new_session(), "busy")
+        self.assertEqual(h.agent.compact()[0], "busy")
+        time.sleep(0.2)  # nothing may happen while held: give a wrong start the chance to show
+        self.assertEqual(starts, [])
+        self.assertEqual(h.types("m1"), ["turn.queued"])
+        self.assertEqual(h.agent.status(), ([], 2))  # both wait
+        h.fake.alive = True  # the switch started her again
+        h.agent.release()
+        self.assertIsNotNone(h.wait("turn.done", "m1"))
+        self.assertIsNotNone(h.wait("turn.done", "m2"))
+
+    def test_stop_drops_what_waits_for_a_hold(self):
+        h = Harness(self)
+        h.agent.hold()
+        h.agent.send("one", "telegram", "m1")
+        h.agent.send("two", "telegram", "m2")
+        h.wait("turn.queued", "m2")
+        self.assertEqual(sorted(h.agent.stop().dropped), ["m1", "m2"])
+        h.agent.release()
+        self.assertEqual(h.types("m1"), ["turn.queued", "turn.stopped"])
+        self.assertFalse(h.agent.busy())
+
+
 class SideLaneTest(unittest.TestCase):
     def test_busy_main_lane_sends_to_a_side_lane_and_hands_over_notes(self):
         h = Harness(self)

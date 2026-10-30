@@ -204,19 +204,39 @@ class Profiles:
 
     def install(self, pid: str) -> None:
         """Make `pid` Claude Code's login: its credentials file, and its oauthAccount in ~/.claude.json
-        (the rest of that file is kept). Only while no Claude runs, or one could write the old one back."""
+        (the rest of that file is kept). Only while no Claude runs, or one could write the old one back.
+        Both new files are built before either is written, so a problem leaves both as they were."""
         with self.locked():
             info = self.get(pid)
             with open(os.path.join(self._dir(pid), "credentials.json"), "rb") as f:
                 data = f.read()
             check_credentials(data)
-            os.makedirs(self.claude_dir, mode=0o700, exist_ok=True)
-            write_private(self.credentials, data)
-            config = read_json(self.claude_json)
-            config = config if isinstance(config, dict) else {}
-            config["oauthAccount"] = info["oauth_account"]
             try:
+                with open(self.claude_json, "rb") as f:
+                    raw = f.read()
                 mode = os.stat(self.claude_json).st_mode & 0o777
             except FileNotFoundError:
-                mode = 0o600
-            write_private(self.claude_json, json.dumps(config, indent=2, ensure_ascii=False).encode(), mode)
+                raw, mode = None, 0o600
+            try:
+                config = json.loads(raw) if raw is not None else {}
+            except ValueError:
+                config = None
+            if not isinstance(config, dict):
+                raise ProfileError(f"{self.claude_json} isn't a JSON object; not changing it")
+            config["oauthAccount"] = info["oauth_account"]
+            new_config = json.dumps(config, indent=2, ensure_ascii=False).encode()
+            os.makedirs(self.claude_dir, mode=0o700, exist_ok=True)
+            write_private(self.credentials, data)
+            write_private(self.claude_json, new_config, mode)
+
+    def matches_live(self, pid: str) -> bool:
+        """Whether Claude's live credentials are the ones saved in `pid`'s profile (same tokens; the
+        JSON is compared, not its spacing)."""
+        try:
+            with open(self.credentials, "rb") as f:
+                live = json.loads(f.read())
+            with open(os.path.join(self._dir(pid), "credentials.json"), "rb") as f:
+                saved = json.loads(f.read())
+        except (OSError, ValueError):
+            return False
+        return live == saved

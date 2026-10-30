@@ -4,13 +4,17 @@ herself (edith-claude) to the chosen account.
 
 - profiles.py keeps the logins (~/.config/edith/claude-accounts, mode 700/600). The API only ever
   shows id, label, email, plan and which one is active: never a token.
-- A switch only starts when everything is idle: no turn, queued message or approval, no agent busy
-  or waiting for approval, no other Claude running. Otherwise it is refused, saying who is busy.
+- A switch only starts when everything is idle: no turn, queued message or approval, and every
+  Claude's session file says `idle` (agents and EDITH's own, so background work counts), no agent
+  waiting for approval, no other Claude running. Otherwise it is refused, saying who is busy.
 - The switch runs as a transient unit (`systemd-run --user`, runner.py), so it finishes on its own
-  while it restarts EDITH's Claude, and even if the bridge goes down. Its steps come back as
-  `accounts.switch` events (a datagram per step to <state_dir>/accounts.sock, listened to only
-  while a switch runs) and stay in <state_dir>/accounts-switch.json for GET /v1/accounts.
-- Add runs `claude auth login` headless in a private folder (login.py).
+  while it restarts EDITH's Claude, and even if the bridge goes down. The agent port is held from
+  the start until the switch reports its end: messages queue up, and the bridge doesn't start
+  edith-claude on the old login. Its steps come back as `accounts.switch` events (a datagram per step
+  to <state_dir>/accounts/switch.sock, listened to only while a switch runs) and stay in
+  <state_dir>/accounts/switch.json for GET /v1/accounts. That folder is private (700).
+- Add runs `claude auth login` headless in a private folder (login.py); folders of sign-ins older
+  than login_ttl are swept at startup.
 
 Config [features.accounts]: root, claude_dir, claude_json, claude, service, edith_socket,
 edith_target, agents_socket, systemd_run, ready_timeout, login_ttl.
@@ -21,6 +25,7 @@ import os
 import pathlib
 import secrets
 import select
+import shutil
 import socket
 import subprocess
 import sys
@@ -39,6 +44,7 @@ log = logging.getLogger("edith.feature.accounts")
 SERVER_DIR = str(pathlib.Path(__file__).resolve().parents[3])  # where `python3 -m edith…` runs from
 KEEP_RESULT = 3600     # a finished switch stays in GET /v1/accounts this long (seconds)
 LISTEN_LIMIT = 1800    # the longest a switch is listened to (seconds)
+QUIET_CHECK = 30       # seconds without a report before the status file is checked
 
 
 def unit_active(unit: str | None) -> bool:
@@ -66,8 +72,9 @@ def setup(ctx: Context) -> None:
     claude_dir = at_home(cfg.get("claude_dir", "~/.claude"))
     claude_json = at_home(cfg.get("claude_json", "~/.claude.json"))
     claude = cfg.get("claude") or os.path.join(home, ".local/bin/claude")
-    status_file = os.path.join(paths.state_dir, "accounts-switch.json")
-    sock_path = os.path.join(paths.state_dir, "accounts.sock")
+    private = os.path.join(paths.state_dir, "accounts")  # 700: the socket, the status and plan files
+    status_file = os.path.join(private, "switch.json")
+    sock_path = os.path.join(private, "switch.sock")
     login_ttl = float(cfg.get("login_ttl", 600))
     profiles = Profiles(root, claude_dir, claude_json)
     panes = Panes(claude_dir, socket=cfg.get("agents_socket"), edith_socket=cfg.get("edith_socket", "edith"))
@@ -76,6 +83,35 @@ def setup(ctx: Context) -> None:
     lock = threading.Lock()  # one switch start / login change at a time
     logins: dict[str, Login] = {}
     listening = threading.Event()
+
+    def private_dir():
+        os.makedirs(private, mode=0o700, exist_ok=True)
+        os.chmod(private, 0o700)
+        return private
+
+    def hold():
+        if agent:
+            agent.hold()
+
+    def release():
+        if agent:
+            agent.release()
+
+    def sweep_logins():
+        """Remove the folders of sign-ins left by an earlier run (only ones older than a sign-in can live)."""
+        try:
+            names = os.listdir(root)
+        except OSError:
+            return
+        for name in names:
+            folder = os.path.join(root, name)
+            try:
+                if name.startswith(".login-") and time.time() - os.stat(folder).st_mtime > login_ttl:
+                    shutil.rmtree(folder, ignore_errors=True)
+            except OSError:
+                pass
+
+    sweep_logins()
 
     def on_permission(ev: Event) -> None:
         pid = str(ev.data.get("id") or "")
@@ -101,11 +137,19 @@ def setup(ctx: Context) -> None:
         return st
 
     def listen(sock):
-        """Turn the runner's datagrams into events until it reports its end (bounded by LISTEN_LIMIT)."""
+        """Turn the runner's datagrams into events until it reports its end (bounded by LISTEN_LIMIT),
+        then end the agent's hold."""
         deadline = time.monotonic() + LISTEN_LIMIT
         try:
             while (left := deadline - time.monotonic()) > 0:
-                if not select.select([sock], [], [], left)[0]:
+                if not select.select([sock], [], [], min(left, QUIET_CHECK))[0]:
+                    # Quiet for a while: a datagram may have been missed (sent while the bridge
+                    # restarted), so the status file and the unit say whether the switch is still on.
+                    st = current_switch()
+                    if st and st.get("state") == "running":
+                        continue
+                    if st:
+                        ctx.bus.publish(Event("accounts.switch", st, origin="system"))
                     break
                 try:
                     data = json.loads(sock.recv(65536))
@@ -124,31 +168,39 @@ def setup(ctx: Context) -> None:
             except OSError:
                 pass
             listening.clear()
+            release()
 
     def start_listening():
         if listening.is_set():
             return
-        os.makedirs(paths.state_dir, exist_ok=True)
+        private_dir()
         try:
             os.unlink(sock_path)
         except FileNotFoundError:
             pass
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
-        old = os.umask(0o177)
-        try:
-            sock.bind(sock_path)  # mode 600: only this user can report
-        finally:
-            os.umask(old)
+        sock.bind(sock_path)  # in the 700 folder: only this user can report
         listening.set()
         threading.Thread(target=listen, args=(sock,), name="accounts-switch", daemon=True).start()
 
+    def tell_listener(data: bytes):
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        try:
+            sock.sendto(data, sock_path)
+        except OSError:
+            release()
+        finally:
+            sock.close()
+
     st = read_json(status_file)  # the bridge restarted during a switch: carry on listening to it
     if isinstance(st, dict) and st.get("state") == "running" and unit_active(st.get("unit")):
+        hold()
         start_listening()
 
     # ---- refusals ----
 
-    def blockers(agents) -> list[str]:
+    def blockers() -> tuple[list[dict], list[str]]:
+        """The agents, and why a switch can't start now (empty when it can)."""
         why = []
         if agent:
             runs, queued = agent.status()
@@ -161,14 +213,8 @@ def setup(ctx: Context) -> None:
                 why.append(f"{queued} message{'s' if queued > 1 else ''} queued")
         if approvals:
             why.append("an approval is waiting")
-        for a in agents:
-            if a["blocked"] == "permission":
-                why.append(f"{a['name']} is waiting for approval")
-            elif a["state"] == "busy":
-                why.append(f"{a['name']} is busy")
-        for o in panes.others({a["pid"] for a in agents}):
-            why.append(f"another Claude is running (pid {o['pid']}{', in ' + o['cwd'] if o.get('cwd') else ''})")
-        return why
+        agents, busy = panes.blockers()
+        return agents, why + busy
 
     # ---- routes ----
 
@@ -193,26 +239,25 @@ def setup(ctx: Context) -> None:
                 raise ApiError(409, "a switch is already running")
             if profiles.active() == target:
                 raise ApiError(409, f"{info.get('label') or info.get('email')} is already in use")
-            agents = panes.agents()
-            why = blockers(agents)
+            agents, why = blockers()
             if why:
                 raise ApiError(409, "Can't switch while " + "; ".join(why))
             run = secrets.token_hex(4)
             unit = f"edith-accounts-switch-{run}"
             plan = {"run": run, "unit": unit, "target": target, "root": root, "claude_dir": claude_dir,
                     "claude_json": claude_json, "claude": claude, "home": home, "path": os.environ.get("PATH", ""),
-                    "agents": [{k: a[k] for k in ("name", "pane", "pid", "cwd", "session_id")} for a in agents],
+                    "agents": [{k: a[k] for k in ("name", "pane", "pid", "proc_start", "cwd", "session_id")} for a in agents],
                     "agents_socket": cfg.get("agents_socket"), "edith_socket": cfg.get("edith_socket", "edith"),
                     "edith_target": cfg.get("edith_target", "edith"), "service": cfg.get("service", "edith-claude"),
                     "ready_timeout": float(cfg.get("ready_timeout", 90)), "status_file": status_file,
                     "socket": sock_path}
-            os.makedirs(paths.state_dir, exist_ok=True)
-            plan_file = os.path.join(paths.state_dir, f"accounts-plan-{run}.json")
+            plan_file = os.path.join(private_dir(), f"plan-{run}.json")
             write_private(plan_file, json.dumps(plan).encode())
             first = {"run": run, "unit": unit, "target": target, "previous": profiles.active(), "state": "running",
                      "step": "starting", "detail": None, "started": time.time(), "ts": time.time(),
                      "agents": [a["name"] for a in agents]}
             write_private(status_file, json.dumps(first).encode())
+            hold()  # from here until the switch reports its end: nothing starts on the old login
             start_listening()
             cmd = [cfg.get("systemd_run", "systemd-run"), "--user", "--unit", unit, "--collect", "--quiet",
                    "--working-directory", SERVER_DIR, f"--setenv=PATH={plan['path']}", f"--setenv=HOME={home}",
@@ -224,8 +269,10 @@ def setup(ctx: Context) -> None:
                 ok = False
             if not ok:
                 log.warning("accounts: systemd-run failed for %s", unit)
-                write_private(status_file, json.dumps(dict(first, state="failed", detail="couldn't start the switch")).encode())
+                failed = json.dumps(dict(first, state="failed", detail="couldn't start the switch")).encode()
+                write_private(status_file, failed)
                 os.unlink(plan_file)
+                tell_listener(failed)  # it publishes the failure, stops and ends the hold
                 raise ApiError(503, "couldn't start the switch")
             log.info("accounts: switching to %s (%s), restarting %d agent(s) and EDITH", target, unit, len(agents))
             first.pop("unit")
@@ -233,10 +280,14 @@ def setup(ctx: Context) -> None:
             return {"status": "switching", "run": run}
 
     def api_remove(req):
-        try:
-            profiles.remove(req["params"]["id"])
-        except ProfileError as e:
-            raise ApiError(409 if "in use" in str(e) else 404, str(e)) from None
+        with lock:
+            running = current_switch()
+            if running and running.get("state") == "running":
+                raise ApiError(409, "a switch is running; try again when it's done")
+            try:
+                profiles.remove(req["params"]["id"])
+            except ProfileError as e:
+                raise ApiError(409 if "in use" in str(e) else 404, str(e)) from None
         return {"removed": req["params"]["id"]}
 
     def api_login_start(req):

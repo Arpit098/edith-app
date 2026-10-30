@@ -116,10 +116,16 @@ class Login:
 
     def cancel(self) -> None:
         """Stop the process (if it runs) and remove its folder."""
-        if self._proc and self._proc.poll() is None:
-            self._proc.kill()
-            try:
-                self._proc.wait(5)
-            except subprocess.TimeoutExpired:
-                pass
+        if self._proc:
+            if self._proc.poll() is None:
+                self._proc.kill()
+                try:
+                    self._proc.wait(5)
+                except subprocess.TimeoutExpired:
+                    pass
+            for pipe in (self._proc.stdin, self._proc.stdout):
+                try:
+                    pipe.close()
+                except (OSError, ValueError):
+                    pass
         shutil.rmtree(self.dir, ignore_errors=True)

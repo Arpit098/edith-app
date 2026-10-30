@@ -17,7 +17,7 @@ from edith.core import ApiError, Event, EventBus, Ports, Registry
 from edith.core.registry import load_features
 from edith.features import accounts
 from edith.features.accounts.login import Login, LoginError, failure_line
-from edith.features.accounts.panes import Panes
+from edith.features.accounts.panes import Panes, is_claude, proc_stat
 from edith.features.accounts.profiles import ProfileError, Profiles
 from edith.features.accounts.runner import Switch
 from edith.ports.agent import RunInfo
@@ -52,6 +52,14 @@ class Home:
             f.write(creds(n, plan))
         with open(self.claude_json, "w") as f:
             json.dump({"numStartups": 7, "oauthAccount": oauth(n), "projects": {"/x": {}}}, f)
+
+    def write_live_creds(self, text):
+        with open(os.path.join(self.claude_dir, ".credentials.json"), "w") as f:
+            f.write(text)
+
+    def live_token(self):
+        with open(os.path.join(self.claude_dir, ".credentials.json")) as f:
+            return json.load(f)["claudeAiOauth"]["refreshToken"]
 
     def live(self):
         with open(os.path.join(self.claude_dir, ".credentials.json")) as f:
@@ -204,6 +212,33 @@ BUSY_SCREEN = "● Running tests…\n\n✻ Thinking… (esc to interrupt)\n❯ \
 APPROVAL_SCREEN = "Do you want to proceed?\n❯ 1. Yes\n  2. No\n"
 
 
+class ClaudeJsonTest(unittest.TestCase):
+    """install() never wipes ~/.claude.json, and never leaves it out of step with the credentials."""
+
+    def setUp(self):
+        self.h = Home()
+        self.addCleanup(self.h.cleanup)
+        self.p = self.h.profiles
+        self.p.list()
+        self.second = self.p.add(self.h.login_dir(2))
+
+    def test_a_broken_claude_json_is_left_alone(self):
+        for broken in ("[]", "{not json", ""):
+            with open(self.h.claude_json, "w") as f:
+                f.write(broken)
+            with self.assertRaisesRegex(ProfileError, "isn't a JSON object"):
+                self.p.install(self.second)
+            with open(self.h.claude_json) as f:
+                self.assertEqual(f.read(), broken)
+            self.assertEqual(self.h.live_token(), f"{TOKENS[1]}-1")  # the credentials weren't changed either
+
+    def test_a_missing_claude_json_is_created(self):
+        os.unlink(self.h.claude_json)
+        self.p.install(self.second)
+        self.assertEqual(self.h.live()[1], {"oauthAccount": oauth(2)})
+        self.assertEqual(mode(self.h.claude_json), 0o600)
+
+
 class FakeTmux:
     """tmux on the default socket: panes -> (session, pane_pid, cwd, screen)."""
 
@@ -222,9 +257,20 @@ class FakeTmux:
         return SimpleNamespace(returncode=1, stdout="")
 
 
-def session_file(claude_dir, pid, sid, cwd):
+def session_file(claude_dir, pid, sid, cwd, status="idle"):
     with open(os.path.join(claude_dir, "sessions", f"{pid}.json"), "w") as f:
-        json.dump({"pid": pid, "sessionId": sid, "cwd": cwd, "kind": "interactive"}, f)
+        json.dump({"pid": pid, "sessionId": sid, "cwd": cwd, "kind": "interactive", "procStart": f"{pid}000",
+                   "status": status}, f)
+
+
+def fake_stat(dead=(), reused=()):
+    """/proc/<pid>/stat as Claude's: start time "<pid>000"; `dead` pids are gone, `reused` belong to
+    another process now."""
+    def stat(pid):
+        if pid in dead:
+            return None
+        return ("bash", "1") if pid in reused else ("claude", f"{pid}000")
+    return stat
 
 
 SID = "7e35e50b-3c6c-4b2b-afaa-51c9e88303ef"
@@ -243,25 +289,57 @@ class PanesTest(unittest.TestCase):
         session_file(self.h.claude_dir, 901, SID, "/home/x/edith")       # EDITH's, under -L edith
         session_file(self.h.claude_dir, 555, SID, "/elsewhere")          # some other Claude
         session_file(self.h.claude_dir, 556, SID, "/gone")               # ended (stale file)
+        session_file(self.h.claude_dir, 557, SID, "/reused")             # its pid is another process now
         p = Panes(self.h.claude_dir, run=tmux, children=lambda pid: {200: [201], 900: [901]}.get(pid, []),
-                  alive=lambda pid: pid != 556)
+                  stat=fake_stat(dead={556}, reused={557}))
         agents_ = p.agents()
-        self.assertEqual([(a["name"], a["pane"], a["pid"], a["cwd"], a["session_id"], a["state"]) for a in agents_],
-                         [("edith-app", "%2", 201, "/w/app", None, "busy"), ("edith-dev", "%1", 101, "/w/dev", SID, "idle")])
+        self.assertEqual([(a["name"], a["pane"], a["pid"], a["proc_start"], a["cwd"], a["session_id"], a["state"]) for a in agents_],
+                         [("edith-app", "%2", 201, "201000", "/w/app", None, "busy"),
+                          ("edith-dev", "%1", 101, "101000", "/w/dev", SID, "idle")])
         self.assertEqual(p.others({a["pid"] for a in agents_}), [{"pid": 555, "cwd": "/elsewhere"}])
+        self.assertEqual(p.edith(), [{"pid": 901, "status": "idle"}])
         self.assertFalse(any("send-keys" in c for c in tmux.calls))
+
+    def test_busy_is_anything_but_idle_in_the_session_file(self):
+        tmux = FakeTmux({"%1": ("edith-dev", 101, "/w/dev", IDLE_SCREEN), "%2": ("edith-app", 201, "/w/app", IDLE_SCREEN)})
+        session_file(self.h.claude_dir, 101, SID, "/w/dev", status="busy")      # a background subagent: idle screen
+        session_file(self.h.claude_dir, 201, SID, "/w/app", status="thinking")  # a value we don't know
+        session_file(self.h.claude_dir, 900, SID, "/home/x/edith", status="shell")
+        p = Panes(self.h.claude_dir, run=tmux, children=lambda pid: [], stat=fake_stat())
+        self.assertEqual(p.blockers()[1], ["edith-app is busy", "edith-dev is busy", "EDITH's Claude is busy (background work)"])
+        for pid, cwd in ((101, "/w/dev"), (201, "/w/app"), (900, "/home/x/edith")):
+            session_file(self.h.claude_dir, pid, SID, cwd)
+        self.assertEqual(p.blockers()[1], [])
+
+    def test_proc_stat_and_is_claude(self):
+        comm, start = proc_stat(os.getpid())
+        self.assertTrue(start.isdigit())
+        self.assertFalse(is_claude(os.getpid(), start))  # this is python, not claude
+        self.assertIsNone(proc_stat(2 ** 22 + 12345))     # no such pid
+        self.assertTrue(is_claude(7, "7000", stat=fake_stat()))
+        self.assertFalse(is_claude(7, "6999", stat=fake_stat()))  # the pid was reused since
+
+
+class FakePanes:
+    def __init__(self, agents, why=()):
+        self.agents, self.why = agents, list(why)
+
+    def blockers(self):
+        return [dict(a) for a in self.agents], list(self.why)
 
 
 class FakeSystem:
-    """The runner's machine: records every command; Claude processes stop on SIGTERM."""
+    """The runner's machine: records every command; Claude processes stop on SIGTERM. `on_run(cmd)`
+    may act on the files (a Claude refreshing its token)."""
 
-    def __init__(self, home, auth_email, screens=None):
+    def __init__(self, home, auth_email, screens=None, on_run=None, not_claude=()):
         self.home, self.auth_email, self.calls, self.t = home, auth_email, [], 0.0
-        self.screens = screens or {}
-        self.on_install = None
+        self.screens, self.on_run, self.not_claude = screens or {}, on_run, set(not_claude)
 
     def run(self, cmd, timeout=30.0, env=None):
         self.calls.append(("run", tuple(cmd)))
+        if self.on_run:
+            self.on_run(cmd)
         if cmd[1:3] == ["auth", "status"]:
             return SimpleNamespace(returncode=0, stdout=json.dumps({"loggedIn": True, "email": self.auth_email()}))
         if "capture-pane" in cmd:
@@ -271,11 +349,21 @@ class FakeSystem:
             return SimpleNamespace(returncode=0, stdout="0 4242\n")
         return SimpleNamespace(returncode=0, stdout="")
 
-    def kill(self, pid, sig):
-        self.calls.append(("kill", pid, int(sig)))
+    def open_claude(self, pid, proc_start):
+        self.calls.append(("open", pid, proc_start))
+        return None if pid in self.not_claude else pid
 
-    def wait_exit(self, pid, timeout):
+    def signal(self, fd, sig):
+        self.calls.append(("kill", fd, int(sig)))
+
+    def wait(self, fd, timeout):
         return True
+
+    def close(self, fd):
+        pass
+
+    def proc_start(self, pid):
+        return f"{pid}000"
 
     def monotonic(self):
         return self.t
@@ -287,6 +375,10 @@ class FakeSystem:
         return 1000.0
 
 
+EDITH_RESTART = ("run", ("systemctl", "--user", "restart", "edith-claude"))
+EDITH_START = ("run", ("systemctl", "--user", "start", "edith-claude"))
+
+
 class SwitchTest(unittest.TestCase):
     def setUp(self):
         self.h = Home()
@@ -295,22 +387,33 @@ class SwitchTest(unittest.TestCase):
         self.second = self.h.profiles.add(self.h.login_dir(2))
         self.state = os.path.join(self.h.home, "state")
         os.makedirs(self.state)
-        self.sock_path = os.path.join(self.state, "accounts.sock")
+        self.sock_path = os.path.join(self.state, "switch.sock")
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
         self.sock.bind(self.sock_path)
         self.sock.setblocking(False)
         self.addCleanup(self.sock.close)
+        out = mock.patch("builtins.print")  # the runner's journal lines
+        out.start()
+        self.addCleanup(out.stop)
+
+    AGENTS = [{"name": "edith-dev", "pane": "%1", "pid": 101, "proc_start": "101000", "cwd": "/w/dev", "session_id": SID},
+              {"name": "edith-app", "pane": "%2", "pid": 201, "proc_start": "201000", "cwd": "/w/app", "session_id": None}]
 
     def plan(self, target):
         return {"run": "r1", "unit": "u1", "target": target, "root": self.h.root, "claude_dir": self.h.claude_dir,
                 "claude_json": self.h.claude_json, "claude": "claude", "home": self.h.home, "path": "/bin",
-                "agents": [{"name": "edith-dev", "pane": "%1", "pid": 101, "cwd": "/w/dev", "session_id": SID},
-                           {"name": "edith-app", "pane": "%2", "pid": 201, "cwd": "/w/app", "session_id": None}],
-                "status_file": os.path.join(self.state, "accounts-switch.json"), "socket": self.sock_path,
-                "ready_timeout": 10}
+                "agents": [dict(a) for a in self.AGENTS],
+                "status_file": os.path.join(self.state, "switch.json"), "socket": self.sock_path, "ready_timeout": 10}
+
+    def switch(self, system, panes=None, target=None):
+        return Switch(self.plan(target or self.second), system, panes=panes or FakePanes(self.AGENTS)).run()
 
     def email_now(self):
         return self.h.live()[1]["oauthAccount"]["emailAddress"]
+
+    def saved_token(self, pid):
+        with open(os.path.join(self.h.root, pid, "credentials.json")) as f:
+            return json.load(f)["claudeAiOauth"]["refreshToken"]
 
     def events(self):
         out = []
@@ -322,50 +425,84 @@ class SwitchTest(unittest.TestCase):
 
     def test_switch_order_and_progress(self):
         system = FakeSystem(self.h.home, self.email_now)
-        self.assertEqual(Switch(self.plan(self.second), system).run(), "done")
+        self.assertEqual(self.switch(system), "done")
         self.assertEqual(self.h.live()[1]["oauthAccount"]["accountUuid"], "uuid-2")
         calls = system.calls
         kills = [i for i, c in enumerate(calls) if c[0] == "kill"]
         stop = calls.index(("run", ("systemctl", "--user", "stop", "edith-claude")))
-        restart = calls.index(("run", ("systemctl", "--user", "restart", "edith-claude")))
+        restart = calls.index(EDITH_RESTART)
         respawns = [i for i, c in enumerate(calls) if c[0] == "run" and "respawn-pane" in c[1]]
         self.assertEqual([calls[i][1:] for i in kills], [(101, 15), (201, 15)])
-        self.assertTrue(max(kills) < stop < min(respawns) and max(respawns) < restart)  # everyone stops first, EDITH starts last
+        self.assertEqual([c[1:] for c in calls if c[0] == "open"][:2], [(101, "101000"), (201, "201000")])
+        self.assertTrue(max(kills) < stop < restart < min(respawns))  # everyone stops first; EDITH starts alone, first
+        edith_ready = next(i for i, c in enumerate(calls) if i > restart and c[0] == "run" and "capture-pane" in c[1])
+        self.assertLess(edith_ready, min(respawns))  # and is up before the agents start
         dev = calls[respawns[0]][1]
         self.assertEqual(dev[dev.index("-c") + 1], "/w/dev")
         self.assertTrue(dev[-1].endswith(f"exec claude --resume {SID}"))
-        self.assertTrue(calls[respawns[1]][1][-1].endswith("exec claude --continue"))
+        self.assertTrue(calls[respawns[1]][1][-1].endswith("exec claude"))  # no session id: no resume, no --continue
         remain = [c[1] for c in calls if c[0] == "run" and "remain-on-exit" in c[1]]
         self.assertEqual(len(remain), 4)  # kept while stopped, unset once respawned
         steps = [(e["state"], e["step"]) for e in self.events()]
         self.assertEqual(steps, [("running", "stopping"), ("running", "saving"), ("running", "installing"),
-                                 ("running", "starting_agents"), ("running", "starting_edith"), ("running", "checking"),
+                                 ("running", "starting_edith"), ("running", "starting_agents"), ("running", "checking"),
                                  ("done", "checking")])
         with open(self.plan(self.second)["status_file"]) as f:
             final = json.load(f)
         self.assertEqual((final["state"], final["previous"], final["agents"]), ("done", self.first, ["edith-dev", "edith-app"]))
         self.assertNotIn("sk-ant", json.dumps(final))
 
-    def test_rolls_back_when_the_new_login_fails(self):
+    def test_rechecks_before_stopping_anything(self):
+        for panes, why in ((FakePanes(self.AGENTS, ["edith-dev is busy"]), "Can't switch now: edith-dev is busy"),
+                           (FakePanes(self.AGENTS[:1]), "the coding agents changed")):
+            system = FakeSystem(self.h.home, self.email_now)
+            self.assertEqual(self.switch(system, panes), "failed")
+            self.assertIn(why, self.events()[-1]["detail"])
+            self.assertFalse([c for c in system.calls if c[0] in ("open", "kill")])
+            self.assertNotIn(("run", ("systemctl", "--user", "stop", "edith-claude")), system.calls)
+            self.assertEqual(self.h.live()[1]["oauthAccount"]["accountUuid"], "uuid-1")
+
+    def test_edith_refreshes_alone_and_the_refresh_is_saved(self):
+        def on_run(cmd):  # EDITH's token had expired: she refreshes it (rotating the refresh token) as she starts
+            if tuple(cmd) == EDITH_RESTART[1] and self.email_now() == "user2@example.com":
+                self.h.write_live_creds(creds("2r"))
+        self.assertEqual(self.switch(FakeSystem(self.h.home, self.email_now, on_run=on_run)), "done")
+        self.assertEqual(self.saved_token(self.second), f"{TOKENS[1]}-2r")  # the agents started on it, and it's kept
+
+    def test_rollback_keeps_the_new_accounts_rotated_token(self):
+        def on_run(cmd):
+            if tuple(cmd) == EDITH_RESTART[1] and self.email_now() == "user2@example.com":
+                self.h.write_live_creds(creds("2r"))
+
         def screens():  # the new account's login is broken: edith-dev says so
             return {"%1": "Invalid API key · Please run /login\n❯ \n"} if self.email_now() == "user2@example.com" else {}
-        system = FakeSystem(self.h.home, self.email_now, screens=screens)
-        self.assertEqual(Switch(self.plan(self.second), system).run(), "rolled_back")
+        system = FakeSystem(self.h.home, self.email_now, screens=screens, on_run=on_run)
+        self.assertEqual(self.switch(system), "rolled_back")
         self.assertEqual(self.h.live()[1]["oauthAccount"]["accountUuid"], "uuid-1")
+        self.assertEqual(self.saved_token(self.second), f"{TOKENS[1]}-2r")
         events = self.events()
         self.assertIn(("running", "rolling_back"), [(e["state"], e["step"]) for e in events])
         self.assertEqual(events[-1]["state"], "rolled_back")
         self.assertIn("edith-dev", events[-1]["detail"])
 
+    def test_credentials_overwritten_while_starting_are_caught(self):
+        def on_run(cmd):  # something on the old login writes its token over the new one as the agents start
+            if "respawn-pane" in cmd and "%2" in cmd and self.email_now() == "user2@example.com":
+                self.h.write_live_creds(creds("1x"))
+        self.assertEqual(self.switch(FakeSystem(self.h.home, self.email_now, on_run=on_run)), "rolled_back")
+        self.assertIn("the login changed", self.events()[-1]["detail"])
+        self.assertEqual(self.saved_token(self.second), f"{TOKENS[1]}-2")  # the stray token isn't saved as account 2's
+        self.assertEqual(self.h.live_token(), f"{TOKENS[1]}-1")
+
     def test_wrong_account_after_restart(self):
         system = FakeSystem(self.h.home, lambda: "someone@else.com")
-        self.assertEqual(Switch(self.plan(self.second), system).run(), "failed")  # and going back fails the same check
+        self.assertEqual(self.switch(system), "failed")  # and going back fails the same check
         self.assertIn("different account", self.events()[-1]["detail"])
+        self.assertIn(EDITH_START, system.calls)
 
     def test_a_stuck_start_times_out(self):
         system = FakeSystem(self.h.home, self.email_now, screens={"edith": "Starting…\n"})
-        plan = self.plan(self.second)
-        self.assertEqual(Switch(plan, system).run(), "failed")
+        self.assertEqual(self.switch(system), "failed")
         self.assertIn("EDITH's Claude didn't come back up", self.events()[-1]["detail"])
 
     def test_nothing_changes_when_stopping_fails(self):
@@ -378,19 +515,55 @@ class SwitchTest(unittest.TestCase):
                 return SimpleNamespace(returncode=1, stdout="")
             return real(cmd, timeout, env)
         system.run = run
-        self.assertEqual(Switch(self.plan(self.second), system).run(), "failed")
+        self.assertEqual(self.switch(system), "failed")
         self.assertEqual(self.h.live()[1]["oauthAccount"]["accountUuid"], "uuid-1")
-        self.assertTrue(any(c[0] == "run" and "respawn-pane" in c[1] for c in system.calls))  # agents brought back
+        self.assertEqual(len([c for c in system.calls if c[0] == "run" and "respawn-pane" in c[1]]), 2)  # agents back
+        self.assertIn(EDITH_START, system.calls)
+
+    def test_everyone_comes_back_whatever_fails(self):
+        # No previous account to go back to, and an unexpected error while starting EDITH.
+        system = FakeSystem(self.h.home, self.email_now)
+        real = system.run
+
+        def run(cmd, timeout=30.0, env=None):
+            if tuple(cmd) == EDITH_RESTART[1]:
+                raise RuntimeError("dbus went away")
+            return real(cmd, timeout, env)
+        system.run = run
+        with mock.patch.object(Profiles, "save_current", return_value=None):
+            self.assertEqual(self.switch(system), "failed")
+        self.assertIn("no previous account", self.events()[-1]["detail"])
+        self.assertEqual(len([c for c in system.calls if c[0] == "run" and "respawn-pane" in c[1]]), 2)
+        self.assertIn(EDITH_START, system.calls)
+
+        # An error the steps don't expect at all.
+        system = FakeSystem(self.h.home, self.email_now)
+        with mock.patch.object(Switch, "_switch", side_effect=KeyError("boom")):
+            self.assertEqual(self.switch(system), "failed")
+        self.assertIn("unexpected error", self.events()[-1]["detail"])
+        self.assertIn(EDITH_START, system.calls)
+
+    def test_only_a_verified_claude_is_signalled(self):
+        system = FakeSystem(self.h.home, self.email_now, not_claude={201})  # 201's pid now belongs to something else
+        self.assertEqual(self.switch(system), "done")
+        self.assertEqual([c[1:] for c in system.calls if c[0] == "kill"][:1], [(101, 15)])
+        self.assertNotIn(("kill", 201, 15), system.calls)
 
 
 class FakeAgent:
     max_side_lanes = 2
 
     def __init__(self):
-        self.runs, self.queued = [], 0
+        self.runs, self.queued, self.holds = [], 0, []
 
     def status(self):
         return list(self.runs), self.queued
+
+    def hold(self):
+        self.holds.append("hold")
+
+    def release(self):
+        self.holds.append("release")
 
 
 class RoutesTest(unittest.TestCase):
@@ -400,25 +573,28 @@ class RoutesTest(unittest.TestCase):
         self.agent = FakeAgent()
         self.tmux = FakeTmux({"%1": ("edith-dev", 101, "/w/dev", IDLE_SCREEN)})
         session_file(self.h.claude_dir, 101, SID, "/w/dev")
-        self.panes = Panes(self.h.claude_dir, run=self.tmux, children=lambda pid: [], alive=lambda pid: True)
+        self.panes = Panes(self.h.claude_dir, run=self.tmux, children=lambda pid: [], stat=fake_stat())
         self.launched = []
+        self.active_units = set()
         patches = [mock.patch.object(accounts, "Panes", lambda *a, **k: self.panes),
-                   mock.patch.object(accounts, "launch", self.launch),
+                   mock.patch.object(accounts, "launch", lambda cmd: self.launch(cmd)),
                    mock.patch.object(accounts, "unit_active", lambda unit: unit in self.active_units)]
         for p in patches:
             p.start()
             self.addCleanup(p.stop)
-        self.active_units = set()
+        self.state = os.path.join(self.h.home, "state")
+        self.load()
+
+    def load(self):
         self.bus, registry = EventBus(), Registry()
         self.events = []
         self.bus.subscribe("accounts.*", self.events.append, owner="test")
         cfg = {"root": self.h.root, "claude_dir": self.h.claude_dir, "claude_json": self.h.claude_json,
-               "claude": fake_claude(self.h.home), "state_dir": os.path.join(self.h.home, "state")}
+               "claude": fake_claude(self.h.home), "state_dir": self.state}
         with mock.patch.dict(os.environ, {"HOME": self.h.home}):
             report = load_features(["accounts"], self.bus, Ports(agent=self.agent), registry, {"accounts": cfg})
         self.assertEqual(report.loaded, ["accounts"], report.failed)
         self.routes = registry.routes
-        self.state = cfg["state_dir"]
 
     def launch(self, cmd):
         self.launched.append(cmd)
@@ -428,6 +604,12 @@ class RoutesTest(unittest.TestCase):
     def call(self, method, path, params=None, body=None):
         return self.routes[(method, path)].handler({"body": body, "params": params or {}, "query": {}, "headers": {},
                                                      "origin": "app"})
+
+    def wait_for(self, check, timeout=5):
+        deadline = time.monotonic() + timeout  # the listener thread publishes and releases
+        while not check() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        return check()
 
     def test_list_add_and_remove(self):
         listed = self.call("GET", "/v1/accounts")
@@ -460,6 +642,15 @@ class RoutesTest(unittest.TestCase):
         self.assertEqual(e.exception.status, 404)
         self.assertEqual([n for n in os.listdir(self.h.root) if n.startswith(".login-")], [])
 
+    def test_stale_sign_in_folders_are_swept_at_startup(self):
+        os.makedirs(self.h.root, exist_ok=True)
+        old, new = os.path.join(self.h.root, ".login-old"), os.path.join(self.h.root, ".login-new")
+        for folder in (old, new):
+            os.makedirs(os.path.join(folder, "x"))
+        os.utime(old, (time.time() - 3600, time.time() - 3600))
+        self.load()
+        self.assertEqual((os.path.exists(old), os.path.exists(new)), (False, True))  # a live sign-in's folder stays
+
     def second(self):
         return self.h.profiles.add(self.h.login_dir(2))
 
@@ -476,6 +667,12 @@ class RoutesTest(unittest.TestCase):
         self.tmux.panes["%1"] = ("edith-dev", 101, "/w/dev", APPROVAL_SCREEN)
         self.assertIn("edith-dev is waiting for approval", self.refused(target))
         self.tmux.panes["%1"] = ("edith-dev", 101, "/w/dev", IDLE_SCREEN)
+        session_file(self.h.claude_dir, 101, SID, "/w/dev", status="busy")  # a background subagent; the screen looks idle
+        self.assertIn("edith-dev is busy", self.refused(target))
+        session_file(self.h.claude_dir, 101, SID, "/w/dev")
+        session_file(self.h.claude_dir, 900, SID, "/home/x/edith", status="shell")  # EDITH's own Claude
+        self.assertIn("EDITH's Claude is busy (background work)", self.refused(target))
+        session_file(self.h.claude_dir, 900, SID, "/home/x/edith")
         self.agent.runs, self.agent.queued = [RunInfo("r1", "main", 1.0, None)], 2
         self.assertEqual(self.refused(target), "Can't switch while EDITH is working on a task; 2 messages queued")
         self.agent.runs, self.agent.queued = [], 0
@@ -486,53 +683,81 @@ class RoutesTest(unittest.TestCase):
         self.assertIn("another Claude is running (pid 777, in /somewhere)", self.refused(target))
         os.unlink(os.path.join(self.h.claude_dir, "sessions", "777.json"))
         self.assertIn("already in use", self.refused(self.h.profiles.active()))
-        self.assertEqual(self.launched, [])
+        self.assertEqual((self.launched, self.agent.holds), ([], []))
 
-    def test_switch_starts_a_transient_unit(self):
+    def test_switch_holds_the_agent_and_starts_a_transient_unit(self):
         target = self.second()
         answer = self.call("POST", "/v1/accounts/{id}/switch", {"id": target})
         self.assertEqual(answer["status"], "switching")
+        self.assertEqual(self.agent.holds, ["hold"])
         cmd = self.launched[0]
         self.assertEqual(cmd[:3], ["systemd-run", "--user", "--unit"])
         self.assertEqual(cmd[-3:-1], ["-m", "edith.features.accounts.runner"])
         plan_file = cmd[-1]
-        self.assertEqual(mode(plan_file), 0o600)
+        self.assertEqual((mode(os.path.dirname(plan_file)), mode(plan_file)), (0o700, 0o600))
         with open(plan_file) as f:
             plan = json.load(f)
         self.assertNotIn("sk-ant", json.dumps(plan))
-        self.assertEqual((plan["target"], [a["session_id"] for a in plan["agents"]]), (target, [SID]))
+        self.assertEqual(os.path.dirname(plan["socket"]), os.path.dirname(plan_file))  # the private folder
+        self.assertEqual((plan["target"], [(a["session_id"], a["proc_start"]) for a in plan["agents"]]), (target, [(SID, "101000")]))
         self.assertEqual(self.events[-1].data["step"], "starting")
         self.assertIn("a switch is already running", self.refused(target))
+        with self.assertRaises(ApiError) as e:  # nor can an account be removed meanwhile
+            self.call("DELETE", "/v1/accounts/{id}", {"id": target})
+        self.assertEqual((e.exception.status, e.exception.message), (409, "a switch is running; try again when it's done"))
         listed = self.call("GET", "/v1/accounts")
         self.assertEqual((listed["switch"]["state"], listed["switch"]["target"]), ("running", target))
         self.assertNotIn("unit", listed["switch"])
 
-        # The runner's progress arrives as events, from its socket.
+        # The runner's progress arrives as events, from its socket; its end ends the hold.
         sent = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
         for state, step in (("running", "stopping"), ("done", "checking")):
             sent.sendto(json.dumps({"run": answer["run"], "unit": "u", "state": state, "step": step}).encode(),
                         plan["socket"])
         sent.close()
-        deadline = time.monotonic() + 5  # the listener thread publishes them
-        while self.events[-1].data.get("state") != "done" and time.monotonic() < deadline:
-            time.sleep(0.02)
+        self.assertTrue(self.wait_for(lambda: self.agent.holds == ["hold", "release"]))
         self.assertEqual([(e.data["state"], e.data["step"]) for e in self.events[-2:]], [("running", "stopping"), ("done", "checking")])
         self.assertNotIn("unit", self.events[-1].data)
 
+    def test_a_missed_end_still_ends_the_hold(self):
+        target = self.second()
+        with mock.patch.object(accounts, "QUIET_CHECK", 0.05):
+            answer = self.call("POST", "/v1/accounts/{id}/switch", {"id": target})
+            self.active_units.clear()  # the unit ended while the bridge wasn't listening
+            with open(os.path.join(self.state, "accounts", "switch.json"), "w") as f:
+                json.dump({"run": answer["run"], "unit": "u", "state": "done", "step": "checking", "ts": time.time()}, f)
+            self.assertTrue(self.wait_for(lambda: self.agent.holds == ["hold", "release"]))
+        self.assertEqual(self.events[-1].data["state"], "done")
+
+    def test_a_restarted_bridge_holds_again_during_a_switch(self):
+        os.makedirs(os.path.join(self.state, "accounts"), mode=0o700)
+        with open(os.path.join(self.state, "accounts", "switch.json"), "w") as f:
+            json.dump({"run": "r", "unit": "u-live", "state": "running", "step": "starting_edith", "ts": time.time()}, f)
+        self.active_units.add("u-live")
+        self.agent.holds.clear()
+        self.load()
+        self.assertEqual(self.agent.holds, ["hold"])
+        sent = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        sent.sendto(json.dumps({"run": "r", "state": "done", "step": "checking"}).encode(),
+                    os.path.join(self.state, "accounts", "switch.sock"))
+        sent.close()
+        self.assertTrue(self.wait_for(lambda: self.agent.holds == ["hold", "release"]))
+
     def test_an_interrupted_switch_is_reported_failed(self):
-        os.makedirs(self.state, exist_ok=True)
-        with open(os.path.join(self.state, "accounts-switch.json"), "w") as f:
+        os.makedirs(os.path.join(self.state, "accounts"), exist_ok=True)
+        with open(os.path.join(self.state, "accounts", "switch.json"), "w") as f:
             json.dump({"run": "r", "unit": "gone", "state": "running", "step": "checking", "ts": 1.0}, f)
         self.assertEqual(self.call("GET", "/v1/accounts")["switch"]["state"], "failed")
 
     def test_systemd_run_failing(self):
         target = self.second()
         self.launch = lambda cmd: SimpleNamespace(returncode=1, stdout="", stderr="no bus")
-        with mock.patch.object(accounts, "launch", self.launch):
-            with self.assertRaises(ApiError) as e:
-                self.call("POST", "/v1/accounts/{id}/switch", {"id": target})
+        with self.assertRaises(ApiError) as e:
+            self.call("POST", "/v1/accounts/{id}/switch", {"id": target})
         self.assertEqual(e.exception.status, 503)
         self.assertEqual(self.call("GET", "/v1/accounts")["switch"]["state"], "failed")
+        self.assertTrue(self.wait_for(lambda: self.agent.holds == ["hold", "release"]))
+        self.assertEqual(self.events[-1].data["state"], "failed")
 
 
 class RunnerMainTest(unittest.TestCase):

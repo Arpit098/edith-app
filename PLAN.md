@@ -321,12 +321,14 @@ server (EDITH and every coding agent) to another from the app, instead of loggin
 - **Profiles:** each login is a copy of Claude Code's credentials file plus its `oauthAccount`, in
   `~/.config/edith/claude-accounts/<id>/` (700/600). Tokens never leave those files: not in the API,
   logs, the audit log, tmux or git.
-- **Switch:** only when everything is idle (no turn, queue, approval, busy agent or other Claude);
-  otherwise it is refused, naming who is busy. It runs as a transient `systemd-run --user` unit, so it
-  finishes on its own: stop every agent's Claude and edith-claude, save the old login back (Claude
-  refreshes it), install the new one, respawn each agent pane with `claude --resume <its session>` in
-  its folder, restart edith-claude last, then check that each Claude is up on the new account. If it
-  doesn't come up, it rolls back to the old one. Steps arrive as `accounts.switch` events, and stay in
+- **Switch:** only when everything is idle (no turn, queue or approval, and every Claude's session
+  file says idle, EDITH's included; no other Claude); otherwise it is refused, naming who is busy. EDITH
+  takes no new work while it runs (messages queue). It runs as a transient `systemd-run --user` unit,
+  so it finishes on its own: check again, stop every agent's Claude and edith-claude, save the old
+  login back (Claude refreshes it), install the new one, start edith-claude alone first (any token
+  refresh happens once), then respawn each agent pane with `claude --resume <its session>` in its
+  folder, and check that each Claude is up on the new account with the credentials unchanged. If it
+  doesn't come up, it rolls back to the old one; whatever happens, everyone is started again. Steps arrive as `accounts.switch` events, and stay in
   `GET /v1/accounts` for an app that reconnects afterwards.
 - **Add:** Claude's own `claude auth login` runs headless with a private config folder. The app shows
   the sign-in link, Arpit signs in on the phone and pastes the code back, and the server saves the login.
