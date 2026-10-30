@@ -2,7 +2,7 @@
 // checked on the phone, kept takes uploaded as they come, and the model's status on edith.
 
 import { memo, useEffect, useState } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { formatIST } from '../../common/format';
 import { shallowEqual, useStore } from '../../core/store';
@@ -61,6 +61,7 @@ export function TrainScreen({ model }: { model: WakewordModel }) {
         </View>
       ))}
       {error ? <Text style={styles.error}>{error}</Text> : null}
+      <DeleteAll model={model} />
     </ScrollView>
   );
 }
@@ -101,6 +102,28 @@ const StatusPanel = memo(function StatusPanel({ model, clips }: { model: Wakewor
     </View>
   );
 });
+
+/** Deletes every recording session on edith and every take on the phone, after a confirm. */
+function DeleteAll({ model }: { model: WakewordModel }) {
+  const [busy, setBusy] = useState(false);
+  const confirm = () =>
+    Alert.alert('Delete all recordings?', 'This deletes every wake word recording on edith and the takes waiting on this phone. A trained model stays.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete all',
+        style: 'destructive',
+        onPress: () => {
+          setBusy(true);
+          void model.deleteAll().finally(() => setBusy(false));
+        },
+      },
+    ]);
+  return (
+    <View style={styles.row}>
+      <Button small variant="danger" icon="delete-forever-outline" label="Delete all recordings" busy={busy} onPress={confirm} />
+    </View>
+  );
+}
 
 function StepCard({ step, count, expanded, onOpen, children }: { step: Step; count: number; expanded: boolean; onOpen: () => void; children?: React.ReactNode }) {
   const complete = count >= step.target;

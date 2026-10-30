@@ -44,7 +44,7 @@ function states(): State[] {
       canPromote: () => true,
       openPromotionSettings: () => {},
       liveUpdates: true,
-      testIsland: () => {},
+      testIsland: () => ({ ok: true, message: '' }),
     };
     const notifier: Notifier = { post: (payload) => posted.push({ name, kind: 'notify', payload }), cancel: () => {}, active: async () => [], ensurePermission: async () => true };
     const ctx = fakeContext();

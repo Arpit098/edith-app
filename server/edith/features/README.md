@@ -16,6 +16,7 @@ One folder per feature, each exposing `FEATURE = Feature(name, setup)`. Turn a f
 | `app_updates` | Collects app builds from GitHub (`gh`); serves OTA updates and APKs (`/v1/updates/…`, `/v1/app/…`; contracts/app-updates.md) | 3 |
 | `message_log` | What happened to each message (accepted, delivered, reactions for the app), a log per conversation, and `GET /v1/sessions/{id}/history` merged with it | 2 |
 | `wakeword` | "Hey Edith" recording sessions (streamed WAV uploads, checked), downloads for the Mac trainer, model status (`/v1/wakeword/…`; contracts/wakeword.md) | 4 |
+| `status` | `GET /v1/status/details`: the app's status panel (main lane, lanes, conversation, coding agents in tmux, live tag; contracts/status.md) | 2 |
 | `notifications` | "Task done" / "approval needed" pushes through the notifier ports | 5 |
 
 The Phase 1 features were migrated from the legacy bridge one at a time, so Telegram behaved the same at every step; tests hold them to its recorded output (`server/tests/golden/`).

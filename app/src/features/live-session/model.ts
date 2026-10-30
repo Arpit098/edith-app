@@ -1,10 +1,10 @@
 // Live session: the transcript and turn state, reduced from stream events and filled from history.
 
 import { backoffDelay, type Backoff } from '../../common/backoff';
-import { ApiError, isRetryable, type Api, type HistoryPage, type Reply, type Status } from '../../core/api';
+import { ApiError, isRetryable, type Api, type HistoryPage, type Reply, type Status, type StatusDetails } from '../../core/api';
 import { cursorOf, type ButtonRows, type EdithEvent, type EventBus, type Lane, type Origin } from '../../core/events';
 import { bool, buttonRows, num, str } from '../../core/guards';
-import type { KeyValueStore } from '../../core/ports';
+import type { AppVisibility, KeyValueStore } from '../../core/ports';
 import { createStore, type Store } from '../../core/store';
 import { ID_LIFETIME_S, type SentAttachment } from './attachments';
 
@@ -538,6 +538,10 @@ export interface LiveModel {
   /** Send a failed message again. */
   retry(key: string): Promise<void>;
   stop(): Promise<string>;
+  /** The status panel's details (GET /v1/status/details); asked only while the panel is open. */
+  details(): Promise<StatusDetails>;
+  /** Whether EDITH is on screen (the visibility port); undefined where there is none (always on screen). */
+  visibility?: AppVisibility;
   press(itemId: number, action: string): Promise<string | null>;
   /** Load the page before the oldest shown (scrolling up). */
   loadOlder(): Promise<void>;
@@ -621,7 +625,7 @@ function undelivered(e: unknown): boolean {
   return isRetryable(e) && !(e instanceof ApiError && e.message === 'timed out'); // a timeout may have arrived
 }
 
-export function createLiveModel(bus: EventBus, api: Api, storage?: KeyValueStore): LiveModel {
+export function createLiveModel(bus: EventBus, api: Api, storage?: KeyValueStore, visibility?: AppVisibility): LiveModel {
   const store = createStore(initialLive);
   const myRefs = new Set<string>(); // presses whose later replies (command.reply) belong in this view
   let localSeq = Date.now(); // keys stay unique across restarts
@@ -836,6 +840,8 @@ export function createLiveModel(bus: EventBus, api: Api, storage?: KeyValueStore
       const n = r.running + r.dropped.length;
       return n ? `Stopped ${n} task${n === 1 ? '' : 's'}` : 'Nothing was running';
     },
+    details: () => api.statusDetails(),
+    visibility,
     async press(itemId, action) {
       const r = await api.press(action);
       if (r.ref) {
