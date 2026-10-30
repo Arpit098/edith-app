@@ -7,7 +7,8 @@
 //   seen, 2.5 heartbeats with nothing inbound force a reconnect. (Before the first pong the watchdog
 //   stays off, so an older server that ignores pings isn't mistaken for a dead one.)
 // - Battery: after `backgroundGraceMs` in the background the socket closes; coming back to the
-//   foreground reconnects at once (and listeners resync on the "open" status).
+//   foreground reconnects at once (and listeners resync on the "open" status). While someone holds
+//   it open (holdOpen(): the live status during a task or an approval), it stays connected.
 
 import { toEvent, type EdithEvent } from '../../../core/events';
 import type { ServerConfig, StreamStatus } from '../../../core/ports';
@@ -79,6 +80,8 @@ export class EventStream {
   private heartbeat: ReturnType<typeof setInterval> | null = null;
   private graceTimer: ReturnType<typeof setTimeout> | null = null;
   private appStateSub: { remove(): void } | null = null;
+  private holds = 0;
+  private inBackground = false;
 
   constructor(private readonly opts: StreamOptions) {}
 
@@ -211,20 +214,43 @@ export class EventStream {
     }
   }
 
+  /** Keep the socket in the background while held (e.g. the live status shows a running task). */
+  holdOpen(): () => void {
+    this.holds++;
+    this.clearGrace();
+    if (this.paused) {
+      this.paused = false;
+      this.reconnect();
+    }
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.holds--;
+      if (!this.holds && this.inBackground) this.startGrace();
+    };
+  }
+
   private onAppState(state: string): void {
+    this.inBackground = state === 'background';
     if (state === 'active') {
       this.clearGrace();
       if (this.paused || this.status.state === 'closed') {
         this.paused = false;
         this.reconnect();
       }
-    } else if (state === 'background' && !this.graceTimer && !this.paused) {
-      this.graceTimer = setTimeout(() => {
-        this.graceTimer = null;
-        this.paused = true;
-        this.restart();
-      }, this.opts.backgroundGraceMs);
+    } else if (state === 'background' && !this.holds) {
+      this.startGrace();
     }
+  }
+
+  private startGrace(): void {
+    if (this.graceTimer || this.paused) return;
+    this.graceTimer = setTimeout(() => {
+      this.graceTimer = null;
+      this.paused = true;
+      this.restart();
+    }, this.opts.backgroundGraceMs);
   }
 
   private clearGrace(): void {

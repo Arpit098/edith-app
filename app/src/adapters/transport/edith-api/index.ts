@@ -44,6 +44,7 @@ export function createEdithApiTransport(opts: EdithApiOptions = {}): Transport {
     },
     stream: (onEvent, onStatus) => stream.listen({ onEvent, onStatus }),
     reconnect: () => stream.reconnect(),
+    holdOpen: () => stream.holdOpen(),
     authorized: (path) => (server ? { url: server.baseUrl + path, headers: { Authorization: `Bearer ${server.token}` } } : null),
     upload: <T,>(path: string, file: { uri: string; mime: string; name: string }, uopts: RequestOptions & { field?: string } = {}) =>
       httpUpload<T>(server, path, file, uopts.field ?? 'file', uopts.timeoutMs ?? http.timeoutMs, http.fetch),
