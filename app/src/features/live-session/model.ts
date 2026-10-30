@@ -1,7 +1,7 @@
 // Live session: the transcript and turn state, reduced from stream events and filled from history.
 
 import { backoffDelay, type Backoff } from '../../common/backoff';
-import { ApiError, isRetryable, type Api, type HistoryPage, type Reply, type Status } from '../../core/api';
+import { ApiError, isRetryable, type Api, type HistoryPage, type Reply, type Status, type StatusDetails } from '../../core/api';
 import { cursorOf, type ButtonRows, type EdithEvent, type EventBus, type Lane, type Origin } from '../../core/events';
 import { bool, buttonRows, num, str } from '../../core/guards';
 import type { KeyValueStore } from '../../core/ports';
@@ -538,6 +538,8 @@ export interface LiveModel {
   /** Send a failed message again. */
   retry(key: string): Promise<void>;
   stop(): Promise<string>;
+  /** The status panel's details (GET /v1/status/details); asked only while the panel is open. */
+  details(): Promise<StatusDetails>;
   press(itemId: number, action: string): Promise<string | null>;
   /** Load the page before the oldest shown (scrolling up). */
   loadOlder(): Promise<void>;
@@ -836,6 +838,7 @@ export function createLiveModel(bus: EventBus, api: Api, storage?: KeyValueStore
       const n = r.running + r.dropped.length;
       return n ? `Stopped ${n} task${n === 1 ? '' : 's'}` : 'Nothing was running';
     },
+    details: () => api.statusDetails(),
     async press(itemId, action) {
       const r = await api.press(action);
       if (r.ref) {

@@ -1,13 +1,14 @@
 import { memo, useCallback, useState } from 'react';
 import { ActivityIndicator, FlatList, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { shallowEqual, useStore } from '../../core/store';
+import { useStore } from '../../core/store';
 import { Button } from '../../ui/Button';
 import { Empty } from '../../ui/Empty';
 import { colors, radius, space } from '../../ui/theme';
 import { toast } from '../../ui/toast';
 import { ItemView } from './ItemView';
 import { sendStatus, summarize, tickOf, type Item, type LiveModel, type LiveState } from './model';
+import { StatusPanel } from './StatusPanel';
 import { WorkingRow } from './WorkingRow';
 import { AttachmentBar, AttachMenu } from './AttachmentBar';
 import type { AttachmentsModel, DraftsState } from './attachments';
@@ -16,7 +17,6 @@ import type { VoiceModel, VoiceState } from './voice';
 
 const selectItems = (s: LiveState) => s.items;
 const selectTurns = (s: LiveState) => s.turns;
-const selectTitle = (s: LiveState) => s.session?.title ?? null;
 const keyOf = (item: Item) => String(item.id);
 
 export function LiveScreen({ model, voice, attach }: { model: LiveModel; voice: VoiceModel; attach: AttachmentsModel }) {
@@ -40,7 +40,7 @@ export function LiveScreen({ model, voice, attach }: { model: LiveModel; voice: 
   const loadOlder = useCallback(() => void model.loadOlder(), [model]);
   return (
     <View style={styles.screen}>
-      <TurnBar model={model} />
+      <StatusPanel model={model} />
       {items.length ? (
         <FlatList
           data={items}
@@ -72,27 +72,6 @@ const selectLoadingOlder = (s: LiveState) => s.loadingOlder;
 const OlderSpinner = memo(function OlderSpinner({ model }: { model: LiveModel }) {
   const loading = useStore(model.store, selectLoadingOlder);
   return loading ? <ActivityIndicator style={styles.older} color={colors.textDim} /> : null;
-});
-
-/** "Working · $ npm test · 42s" or "Idle", plus the conversation title. */
-const TurnBar = memo(function TurnBar({ model }: { model: LiveModel }) {
-  const t = useStore(model.store, summarize, shallowEqual);
-  const title = useStore(model.store, selectTitle);
-  return (
-    <View style={styles.bar}>
-      {t.busy ? <ActivityIndicator size="small" color={colors.warn} /> : <View style={styles.idleDot} />}
-      <Text style={styles.barText} numberOfLines={1}>
-        {t.busy ? ['Working', t.step, t.elapsed ? `${t.elapsed}s` : null].filter(Boolean).join(' · ') : 'Idle'}
-        {t.running > 1 ? ` (+${t.running - 1} parallel)` : ''}
-        {t.queued ? ` · ${t.queued} queued` : ''}
-      </Text>
-      {title ? (
-        <Text style={styles.barTitle} numberOfLines={1}>
-          {title}
-        </Text>
-      ) : null}
-    </View>
-  );
 });
 
 const selectBusy = (s: LiveState) => summarize(s).busy;
@@ -190,10 +169,6 @@ const styles = StyleSheet.create({
   screen: { flex: 1 },
   list: { paddingHorizontal: space.m, paddingVertical: space.s, flexGrow: 1 },
   older: { padding: space.m },
-  bar: { flexDirection: 'row', alignItems: 'center', gap: space.s, paddingHorizontal: space.m, paddingVertical: space.s, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
-  idleDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: colors.ok, marginHorizontal: 5 },
-  barText: { color: colors.text, fontSize: 13, flex: 1 },
-  barTitle: { color: colors.textDim, fontSize: 12, maxWidth: '40%' },
   composer: { flexDirection: 'row', alignItems: 'flex-end', gap: space.s, padding: space.s, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
   voiceError: { color: colors.danger, fontSize: 13, paddingHorizontal: space.m, paddingTop: space.s },
   input: { flex: 1, color: colors.text, backgroundColor: colors.surface, borderRadius: radius.m, paddingHorizontal: space.m, paddingVertical: space.s, fontSize: 15, maxHeight: 140, minHeight: 44 },
