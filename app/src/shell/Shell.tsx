@@ -5,12 +5,14 @@ import { ActivityIndicator, BackHandler, Keyboard, KeyboardAvoidingView, Pressab
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import type { Connection, ConnectionState } from '../core/connection';
+import { localEvent } from '../core/events';
 import type { LoadedFeatures } from '../core/feature';
 import { useStore } from '../core/store';
 import { Icon } from '../ui/Icon';
 import { colors, space } from '../ui/theme';
 import { ConnectionPill } from './ConnectionPill';
 import { ConnectScreen } from './ConnectScreen';
+import { linkScreen, useDeepLinks } from './links';
 import { back, current, navigate, type NavState } from './navigation';
 import { SettingsScreen } from './SettingsScreen';
 import { ToolsScreen } from './ToolsScreen';
@@ -67,6 +69,12 @@ function Main({ loaded, connection }: { loaded: LoadedFeatures; connection: Conn
     return () => sub.remove();
   }, [home]);
 
+  // A tapped notification or Live Alerts pill: edith://live, edith://approvals.
+  useDeepLinks((url) => {
+    const screen = linkScreen(url, (name) => routes.has(name), home);
+    if (screen) go(screen);
+  });
+
   const keyboard = useKeyboardVisible();
   const [visited, setVisited] = useState<ReadonlySet<string>>(() => new Set([nav.tab]));
   useEffect(() => setVisited((v) => (v.has(nav.tab) ? v : new Set([...v, nav.tab]))), [nav.tab]);
@@ -75,6 +83,7 @@ function Main({ loaded, connection }: { loaded: LoadedFeatures; connection: Conn
   const route = routes.get(top);
   const stacked = nav.stack.length > 0;
   const Stacked = stacked ? route?.component : undefined;
+  useEffect(() => connection.bus.publish(localEvent('app.screen', { name: top })), [connection, top]);
 
   return (
     <KeyboardAvoidingView style={styles.flex} behavior="padding">

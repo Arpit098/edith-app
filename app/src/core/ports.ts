@@ -47,6 +47,11 @@ export interface Transport {
     file: { uri: string; mime: string; name: string },
     opts?: RequestOptions & { onProgress?: (sent: number, total: number) => void; signal?: AbortSignal },
   ): Promise<T>;
+  /**
+   * Keep the stream connected in the background (normally it closes after a minute there, for
+   * battery), e.g. while the live status shows a running task. Returns the release function.
+   */
+  holdOpen(): () => void;
 }
 
 /** A file Arpit picked to attach. */
@@ -72,6 +77,62 @@ export interface MediaPicker {
   discard(uri: string): void;
   /** Delete old picked files, bounded by age and total size. Run once at startup. */
   prune(): void;
+}
+
+/** What EDITH's live status shows (Live Alerts on the phone). The wording is the feature's. */
+export interface OngoingStatusView {
+  title: string;
+  text: string;
+  chip: string; // a word or two for the status-bar chip / Live Alerts pill
+  startedAt: number | null; // unix ms (phone clock): a running timer, without per-second updates
+  progress: boolean; // indeterminate progress
+  link: string; // opened on tap, e.g. edith://approvals
+  keepAlive: boolean; // a turn runs or an approval waits: keep EDITH running (a foreground service)
+}
+
+/** A persistent status notification: an Android 16 Live Update, an ongoing notification before. */
+export interface OngoingStatus {
+  show(view: OngoingStatusView): void;
+  clear(): void;
+  /** Ask once for permission to post notifications (Android 13+). */
+  ensurePermission(): Promise<boolean>;
+  /** Android 16: whether the status may be promoted to the chip / Live Alerts. */
+  canPromote(): boolean;
+  openPromotionSettings(): void;
+}
+
+export type NotificationChannel = 'replies' | 'approvals' | 'reminders' | 'errors';
+
+/** A notification button that calls the App API in the background, without opening the app. */
+export interface NotificationAction {
+  label: string;
+  request: { method: 'POST'; url: string; headers: Record<string, string>; body: unknown };
+  done: string; // shown once the request succeeded, e.g. "Allowed"
+}
+
+export interface LocalNotification {
+  channel: NotificationChannel;
+  tag: string; // one notification per tag: posting the same tag again replaces it
+  title: string;
+  text: string;
+  link: string; // opened on tap, e.g. edith://live
+  actions?: NotificationAction[];
+}
+
+/** One-off notifications (replies, approvals, reminders, errors), posted while EDITH is connected. */
+export interface Notifier {
+  post(n: LocalNotification): void;
+  cancel(tag: string): void;
+  /** Tags of EDITH's notifications Android shows now (some may be from before a restart). */
+  active(): Promise<string[]>;
+  /** Ask once for permission to post notifications (Android 13+). */
+  ensurePermission(): Promise<boolean>;
+}
+
+/** Whether EDITH is on screen (Android's foreground) and changes to it. */
+export interface AppVisibility {
+  active(): boolean;
+  onChange(handler: (active: boolean) => void): () => void;
 }
 
 export type InstallStatus = 'pending' | 'success' | 'cancelled' | 'incompatible' | 'failed';
@@ -176,6 +237,9 @@ export interface Ports {
   stt?: SpeechToText; // push-to-talk (and Phase 3 voice)
   recorder?: Recorder;
   media?: MediaPicker; // attachments
+  status?: OngoingStatus;
+  notifier?: Notifier;
+  visibility?: AppVisibility;
   // Built in later phases (PLAN.md §6); absent until then.
   tts?: TextToSpeech; // Phase 3
   wakeWord?: WakeWord; // Phase 4

@@ -11,8 +11,10 @@ import { createAndroidRecorder } from './adapters/recorder/android';
 import { createAsyncStorage } from './adapters/storage/async-storage';
 import { createSecureStorage } from './adapters/storage/secure-store';
 import { createServerWhisper } from './adapters/stt/server-whisper';
+import { createAndroidSystem } from './adapters/system/android';
 import { createExpoOtaUpdates } from './adapters/updates/expo-updates';
 import { createEdithApiTransport } from './adapters/transport/edith-api';
+import { createAppStateVisibility } from './adapters/visibility/react-native';
 import { createApi } from './core/api';
 import { Connection } from './core/connection';
 import { EventBus } from './core/events';
@@ -29,10 +31,12 @@ function boot() {
   const ota = createExpoOtaUpdates();
   const recorder = createAndroidRecorder() ?? undefined;
   const stt = createServerWhisper(transport);
+  const system = createAndroidSystem();
+  const visibility = createAppStateVisibility();
   const bus = new EventBus();
   const api = createApi(transport);
   const connection = new Connection(transport, storage, bus);
-  const loaded = loadFeatures(features, { bus, ports: { transport, storage, data, installer, ota, recorder, stt, media: createExpoMediaPicker() }, api, connection });
+  const loaded = loadFeatures(features, { bus, ports: { transport, storage, data, installer, ota, recorder, stt, media: createExpoMediaPicker(), status: system?.status, notifier: system?.notifier, visibility }, api, connection });
   return { connection, loaded };
 }
 

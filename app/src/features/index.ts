@@ -6,6 +6,8 @@ import appUpdate from './app-update';
 import approvals from './approvals';
 import commands from './commands';
 import liveSession from './live-session';
+import liveStatus from './live-status';
+import notifications from './notifications';
 import sessions from './sessions';
 
 export const features: FeatureModule[] = [
@@ -14,6 +16,8 @@ export const features: FeatureModule[] = [
   approvals,
   commands,
   appUpdate,
+  liveStatus,
+  notifications,
   // Phase 3: voice, assistant, widget
   // Phase 4: wakeword
 ];

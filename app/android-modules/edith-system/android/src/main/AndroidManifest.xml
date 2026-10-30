@@ -1,0 +1,33 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <!-- EDITH's live status and notifications: Android 13+ asks once. -->
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+  <!-- Android 16 Live Updates: lets the ongoing status be promoted to the status-bar chip
+       (OxygenOS shows these in the Live Alerts pill). A normal permission, granted at install. -->
+  <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
+  <!-- EdithSessionService, below. Normal permissions, granted at install. -->
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+
+  <application>
+    <!--
+      Why a foreground service, and why "specialUse": while EDITH (Claude Code on Arpit's server)
+      runs a task he started from this app, or waits for his approval, the app keeps its live
+      connection to that server open so the task's progress, the approval prompt and the reply reach
+      the phone (Live Alerts status and notifications) with the app in the background. No other
+      foreground service type fits a user-started remote agent session: it isn't dataSync (nothing is
+      transferred or synced), mediaPlayback, location or any of the others. It runs only while a turn
+      is in progress or an approval is waiting, and stops the moment that's over; the user sees it as
+      the live status notification the whole time.
+    -->
+    <service
+      android:name="com.arpit.edith.system.EdithSessionService"
+      android:exported="false"
+      android:foregroundServiceType="specialUse">
+      <property
+        android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+        android:value="Keeps the connection to the user's own remote assistant session open while a task the user started is running or waits for the user's approval; stops when it ends." />
+    </service>
+    <!-- Allow / Deny on a notification: sends the answer without opening the app. -->
+    <receiver android:name="com.arpit.edith.system.NotificationActionReceiver" android:exported="false" />
+  </application>
+</manifest>

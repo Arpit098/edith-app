@@ -1,0 +1,142 @@
+{
+  "t0": 1800000000000,
+  "states": [
+    {
+      "name": "status-thinking",
+      "kind": "status",
+      "payload": {
+        "startedAt": 1800000000000,
+        "link": "edith://live",
+        "keepAlive": true,
+        "title": "EDITH is thinking",
+        "text": "Working out what to do",
+        "chip": "Thinking",
+        "progress": true
+      }
+    },
+    {
+      "name": "status-running-tool",
+      "kind": "status",
+      "payload": {
+        "startedAt": 1799999961000,
+        "link": "edith://live",
+        "keepAlive": true,
+        "title": "Running Bash",
+        "text": "$ npm test · step 3",
+        "chip": "Bash",
+        "progress": true
+      }
+    },
+    {
+      "name": "status-approval",
+      "kind": "status",
+      "payload": {
+        "title": "Waiting for your approval",
+        "text": "Bash: rm -rf app/build",
+        "chip": "Approve?",
+        "startedAt": 1799999964000,
+        "progress": false,
+        "link": "edith://approvals",
+        "keepAlive": true
+      }
+    },
+    {
+      "name": "status-speaking",
+      "kind": "status",
+      "payload": {
+        "startedAt": null,
+        "link": "edith://live",
+        "keepAlive": false,
+        "title": "EDITH is speaking",
+        "text": "Reading the answer aloud",
+        "chip": "Speaking",
+        "progress": false
+      }
+    },
+    {
+      "name": "notify-reply",
+      "kind": "notify",
+      "payload": {
+        "channel": "replies",
+        "tag": "turn:r1",
+        "title": "EDITH replied",
+        "text": "All 42 tests pass, and the build is clean.",
+        "link": "edith://live"
+      }
+    },
+    {
+      "name": "notify-side-reply",
+      "kind": "notify",
+      "payload": {
+        "channel": "replies",
+        "tag": "turn:s1",
+        "title": "EDITH · parallel task done",
+        "text": "The disk is 41% full (82 GB free).",
+        "link": "edith://live"
+      }
+    },
+    {
+      "name": "notify-reminder",
+      "kind": "notify",
+      "payload": {
+        "channel": "reminders",
+        "tag": "rem:ab12:1800000000",
+        "title": "Reminder",
+        "text": "Renew the domain",
+        "link": "edith://live"
+      }
+    },
+    {
+      "name": "notify-error",
+      "kind": "notify",
+      "payload": {
+        "channel": "errors",
+        "tag": "turn:r2",
+        "title": "EDITH couldn't finish",
+        "text": "Claude exited with code 1",
+        "link": "edith://live"
+      }
+    },
+    {
+      "name": "notify-approval",
+      "kind": "notify",
+      "payload": {
+        "channel": "approvals",
+        "tag": "perm:p2",
+        "title": "Approve Bash?",
+        "text": "git push origin notify-island",
+        "link": "edith://approvals",
+        "actions": [
+          {
+            "label": "Deny",
+            "request": {
+              "method": "POST",
+              "url": "http://10.0.2.2:8787/v1/permissions/p2",
+              "headers": {
+                "Authorization": "Bearer ci-token"
+              },
+              "body": {
+                "allow": false
+              }
+            },
+            "done": "Denied"
+          },
+          {
+            "label": "Allow",
+            "request": {
+              "method": "POST",
+              "url": "http://10.0.2.2:8787/v1/permissions/p2",
+              "headers": {
+                "Authorization": "Bearer ci-token"
+              },
+              "body": {
+                "allow": true
+              }
+            },
+            "done": "Allowed"
+          }
+        ]
+      }
+    }
+  ]
+}

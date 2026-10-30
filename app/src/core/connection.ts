@@ -45,7 +45,7 @@ export class Connection {
   constructor(
     private readonly transport: Transport,
     private readonly storage: SecureStorage,
-    private readonly bus: EventBus,
+    readonly bus: EventBus, // the shell publishes app-local events (app.screen) on it
   ) {}
 
   /** Restore the saved server at startup and start streaming from it. */

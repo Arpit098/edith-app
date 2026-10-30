@@ -50,6 +50,16 @@ export class FakeTransport implements Transport {
     return handler(file) as T;
   }
 
+  holds = 0;
+  holdOpen() {
+    this.holds++;
+    let released = false;
+    return () => {
+      if (!released) this.holds--;
+      released = true;
+    };
+  }
+
   async uploadRaw<T>(
     path: string,
     file: { uri: string; mime: string; name: string },

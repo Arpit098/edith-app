@@ -51,6 +51,7 @@ export interface EventDataMap {
   // App-local events (never sent by the server):
   'app.connected': { first: boolean }; // core/connection.ts: the stream (re)opened; resync what may be missed
   'app.voice': { state: 'listening' | 'speaking' | 'idle' }; // the voice feature (Phase 3): mic or TTS active
+  'app.screen': { name: string }; // shell/: the screen now on top (e.g. "live", "approvals")
 }
 
 export type EventType = keyof EventDataMap;
