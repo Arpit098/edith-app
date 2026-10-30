@@ -2,7 +2,7 @@
 // With Android's "Remove animations" on (GlassSettings.reduceMotion) everything is at its end state.
 
 import { memo, useEffect, useState, type ReactNode } from 'react';
-import { Pressable, type PressableProps, type StyleProp, type ViewStyle } from 'react-native';
+import { AppState, Pressable, type PressableProps, type StyleProp, type ViewStyle } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
 
 import { motion, useGlass } from '../core/theme';
@@ -58,10 +58,20 @@ export const GrowIn = memo(function GrowIn({ origin = 'left bottom', style, chil
 /**
  * Settles into place from a little below on mount, when `animate` (a new message, not history or a
  * row scrolled back into view). Decided once at mount: a row that doesn't animate gets no wrapper.
+ *
+ * Only while EDITH is on screen: the spring runs on the UI thread's frames, which stop in the
+ * background, and a row left part-way stays transparent (a reply that came in during a call was
+ * there, selectable, but invisible). So a row that mounts in the background doesn't animate, and
+ * one still settling when the app leaves or comes back drops its wrapper and shows as it is.
  */
 export function SettleIn({ animate, children }: { animate: boolean; children: ReactNode }) {
   const reduce = useReduceMotion();
-  const [run] = useState(animate && !reduce);
+  const [run, setRun] = useState(() => animate && !reduce && AppState.currentState === 'active');
+  useEffect(() => {
+    if (!run) return;
+    const sub = AppState.addEventListener('change', () => setRun(false));
+    return () => sub.remove();
+  }, [run]);
   return run ? <Settling>{children}</Settling> : <>{children}</>;
 }
 
