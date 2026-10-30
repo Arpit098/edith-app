@@ -18,7 +18,7 @@ export interface Screen {
   name: string; // unique route name, e.g. "sessions"
   title: string;
   component: ComponentType;
-  tab?: boolean; // show in the bottom tab bar (it fits about 5)
+  tab?: boolean; // a main screen: listed in the navigation menu (keep it to a handful)
   icon?: string; // tab icon: a MaterialCommunityIcons name, e.g. "history"
 }
 
@@ -27,7 +27,7 @@ export interface SettingsSection {
   component: ComponentType;
 }
 
-/** A tile in the Tools launcher grid. Most features are tools; the bottom tab bar fits only ~5. */
+/** A tile in the Tools launcher grid. Most features are tools; the navigation menu lists only a handful of main screens. */
 export interface Tool {
   title: string; // tile label, e.g. "Reminders"
   icon: string; // a MaterialCommunityIcons name, e.g. "alarm"

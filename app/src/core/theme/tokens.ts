@@ -130,12 +130,9 @@ export const motion = {
   press: { damping: 15, stiffness: 420, mass: 0.6 }, // squish on press: quick in, a small rebound out
   settle: { damping: 16, stiffness: 220, mass: 1 }, // a new bubble settling into place
   grow: { damping: 17, stiffness: 260, mass: 0.9 }, // a sheet growing out of its trigger
-  // The tab droplet: the leading edge leaps, the trailing edge follows softer, so it stretches and settles.
-  dropletLead: { damping: 20, stiffness: 420, mass: 0.8 },
-  dropletTrail: { damping: 22, stiffness: 170, mass: 1 },
   pressScale: 0.95,
   blobMs: 2400, // one breath of the working blob
 } as const;
 
-/** Chrome sizes the shell lays over the content (screens pad by these; see useChrome()). */
-export const chrome = { headerHeight: 52, tabBarHeight: 60 } as const;
+/** The header the shell lays over the content (screens pad by it; see useChrome()). */
+export const chrome = { headerHeight: 52 } as const;

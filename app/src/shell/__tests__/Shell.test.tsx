@@ -5,9 +5,11 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { BackHandler, Text } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
+import { localEvent } from '../../core/events';
 import { loadFeatures } from '../../core/feature';
 import { features } from '../../features';
 import { ev, fakeContext, flush } from '../../testing/fakes';
+import { Squish } from '../../ui/motion';
 import { Shell } from '../Shell';
 
 jest.mock('../../ui/toast', () => ({ toast: jest.fn() }));
@@ -66,9 +68,8 @@ describe('Shell', () => {
     expect(t).toContain('Live');
     expect(t).toContain('Idle');
     expect(t).toContain('from history');
-    expect(t).toContain('Sessions');
-    expect(t).toContain('Tools');
-    expect(t).toContain('Settings');
+    expect(t).not.toContain('Sessions'); // no tab bar: the other screens are in the menu
+    expect(r.root.findAll((n) => n.props.accessibilityLabel === 'Menu' && typeof n.props.onPress === 'function')).not.toHaveLength(0);
 
     await act(async () => {
       ctx.transport.emit(ev('message.user', { text: 'check the disk' }, { origin: 'telegram' }));
@@ -90,8 +91,7 @@ describe('Shell', () => {
   it('opens a tool from the grid and goes back with the Android back button', async () => {
     const { ctx, r, loaded } = await mount();
     const back = jest.spyOn(BackHandler, 'addEventListener');
-    process.stderr.write("C\n");     await act(() => ctx.connection.connect('edith', 'x'.repeat(40)));
-    process.stderr.write("D\n");
+    await act(() => ctx.connection.connect('edith', 'x'.repeat(40)));
     await act(async () => ctx.transport.status({ state: 'open' }));
 
     const press = async (label: string) => {
@@ -102,11 +102,13 @@ describe('Shell', () => {
         await flush();
       });
     };
+    const shellBack = back.mock.calls.at(-1)![1] as () => boolean; // registered before the menu's
+    await press('Menu');
     await press('Tools');
     await press('Commands');
     expect(texts(r)).toContain('/today');
 
-    const handler = back.mock.calls.at(-1)![1] as () => boolean;
+    const handler = shellBack;
     let handled = false;
     await act(async () => {
       handled = handler();
@@ -115,5 +117,81 @@ describe('Shell', () => {
     expect(texts(r)).not.toContain('/today');
     act(() => r.unmount());
     loaded.cleanup();
+  });
+
+  describe('navigation menu (top right)', () => {
+    async function connected() {
+      const m = await mount();
+      let screen = '';
+      m.ctx.bus.on('app.screen', (e) => void (screen = String(e.data.name)), 'test'); // what the shell shows
+      await act(() => m.ctx.connection.connect('edith', 'x'.repeat(40)));
+      await act(async () => m.ctx.transport.status({ state: 'open' }));
+      const find = (label: string) => m.r.root.findAll((n) => n.props.accessibilityLabel === label && typeof n.props.onPress === 'function')[0];
+      const press = async (label: string) => {
+        const target = find(label);
+        if (!target) throw new Error(`no ${label}`);
+        await act(async () => {
+          target.props.onPress();
+          await flush();
+        });
+      };
+      // Squish is memo(): a test instance's type is the function inside it.
+      const squish = (Squish as unknown as { type: unknown }).type;
+      const items = () => m.r.root.findAll((n) => n.type === squish && n.props.accessibilityRole === 'menuitem');
+      const title = () => screen;
+      return { ...m, find, press, items, title };
+    }
+
+    it('lists the main screens with the current one marked, and goes where you pick', async () => {
+      const { r, loaded, press, items, find, title } = await connected();
+      expect(items()).toHaveLength(0); // closed: not even mounted
+      await press('Menu');
+      expect(items().map((n) => n.props.accessibilityLabel)).toEqual(['Live, current screen', 'Sessions', 'Tools', 'Settings']);
+      expect(items()[0]!.props.accessibilityState).toEqual({ selected: true });
+      expect(find('Close the menu')).toBeTruthy(); // the button says it closes now
+
+      await press('Sessions');
+      expect(title()).toBe('sessions');
+      expect(items()).toHaveLength(0); // closed after picking
+
+      await press('Menu');
+      expect(items().find((n) => n.props.accessibilityState?.selected)?.props.accessibilityLabel).toBe('Sessions, current screen');
+      act(() => r.unmount());
+      loaded.cleanup();
+    });
+
+    it('closes on a tap outside and on Android back, without navigating', async () => {
+      const { r, loaded, press, items, title } = await connected();
+      const back = jest.spyOn(BackHandler, 'addEventListener');
+      await press('Menu');
+      const outside = r.root.findAll((n) => n.props.accessibilityLabel === 'Close the menu' && n.props.importantForAccessibility === 'no' && typeof n.props.onPress === 'function')[0]!;
+      await act(async () => outside.props.onPress());
+      expect(items()).toHaveLength(0);
+
+      await press('Menu');
+      const menuBack = back.mock.calls.at(-1)![1] as () => boolean;
+      let handled = false;
+      await act(async () => {
+        handled = menuBack();
+      });
+      expect(handled).toBe(true);
+      expect(items()).toHaveLength(0);
+      expect(title()).toBe('live'); // still where it was
+      act(() => r.unmount());
+      loaded.cleanup();
+    });
+
+    it('a deep link (a tapped notification) still navigates, and closes an open menu', async () => {
+      const { ctx, r, loaded, press, items, title } = await connected();
+      await press('Menu');
+      await act(async () => {
+        ctx.bus.publish(localEvent('app.open', { screen: 'settings' }));
+        await flush();
+      });
+      expect(title()).toBe('settings');
+      expect(items()).toHaveLength(0);
+      act(() => r.unmount());
+      loaded.cleanup();
+    });
   });
 });

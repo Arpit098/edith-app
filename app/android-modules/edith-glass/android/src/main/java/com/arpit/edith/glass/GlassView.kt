@@ -150,6 +150,11 @@ class GlassView(context: Context, appContext: AppContext) : ExpoView(context, ap
     removeCallbacks(redraw)
     redrawQueued = false
     node?.discardDisplayList()
+    // The compiled lens goes back to the pool for the next glass view (a menu opened again).
+    lensShader?.let { releaseShader(it) }
+    lensShader = null
+    effect = null
+    paramsDirty = true
     super.onDetachedFromWindow()
   }
 
@@ -270,7 +275,7 @@ class GlassView(context: Context, appContext: AppContext) : ExpoView(context, ap
 
   @RequiresApi(Build.VERSION_CODES.TIRAMISU)
   private fun lens(blur: RenderEffect, margin: Int): RenderEffect {
-    val s = lensShader ?: RuntimeShader(GLASS_AGSL).also { lensShader = it }
+    val s = lensShader ?: takeShader().also { lensShader = it }
     s.setFloatUniform("origin", margin.toFloat(), margin.toFloat())
     s.setFloatUniform("size", width.toFloat(), height.toFloat())
     s.setFloatUniform("radius", (cornerRadiusDp * density).coerceAtMost(minOf(width, height) / 2f))
@@ -290,6 +295,29 @@ class GlassView(context: Context, appContext: AppContext) : ExpoView(context, ap
 
     /** The lens shader failed to compile once: no view tries again (UI thread only). */
     internal var shaderBroken = false
+
+    // Compiled lens shaders not in use: a view that detaches gives its shader back and a new view
+    // takes one, so mounting glass (the navigation menu's sheet, each time it opens) doesn't compile
+    // the AGSL again. Each shader belongs to one view at a time (its uniforms are that view's).
+    // The first compile also makes one spare, for the first glass mounted later. UI thread only.
+    private const val POOL_MAX = 4
+    private val pool = ArrayDeque<Any>() // RuntimeShader (typed Any: the class exists from Android 13)
+    private var spareMade = false
+
+    @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+    private fun takeShader(): RuntimeShader {
+      (pool.removeLastOrNull() as RuntimeShader?)?.let { return it }
+      val s = RuntimeShader(GLASS_AGSL) // throws IllegalArgumentException if the AGSL doesn't compile
+      if (!spareMade) {
+        spareMade = true
+        pool.addLast(RuntimeShader(GLASS_AGSL))
+      }
+      return s
+    }
+
+    private fun releaseShader(s: Any) {
+      if (pool.size < POOL_MAX) pool.addLast(s)
+    }
 
     private const val TAG = "EdithGlass"
     private const val MIN_REDRAW_MS = 33L
