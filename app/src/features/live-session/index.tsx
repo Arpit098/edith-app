@@ -27,12 +27,14 @@ const liveSession: FeatureModule = {
     const m = createLiveModel(bus, api, ports.data);
     const v = createVoiceModel({ bus, send: (text, o) => m.send(text, o), storage: ports.storage, recorder: ports.recorder, stt: ports.stt });
     const a = createAttachmentsModel({ api, media: ports.media });
+    ports.media?.prune(); // old picked files and thumbnails: bounded by age and size
     model = m;
     voice = v;
     attach = a;
     return () => {
       m.dispose();
       v.dispose();
+      a.dispose();
       if (model === m) model = null;
       if (voice === v) voice = null;
       if (attach === a) attach = null;

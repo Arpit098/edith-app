@@ -23,10 +23,11 @@ export async function uploadRaw<T>(
   server: ServerConfig | null,
   path: string,
   file: { uri: string; mime: string; name: string },
-  opts: { timeoutMs: number; onProgress?: (sent: number, total: number) => void },
+  opts: { timeoutMs: number; onProgress?: (sent: number, total: number) => void; signal?: AbortSignal },
   createTask: CreateUploadTask,
 ): Promise<T> {
   if (!server) throw new ApiError(0, 'Not connected to a server');
+  if (opts.signal?.aborted) throw new ApiError(0, 'cancelled');
   const task = createTask(
     server.baseUrl + path,
     file.uri,
@@ -42,20 +43,26 @@ export async function uploadRaw<T>(
     },
     (p) => opts.onProgress?.(p.totalBytesSent, p.totalBytesExpectedToSend),
   );
-  let timedOut = false;
-  const timer = setTimeout(() => {
-    timedOut = true;
+  // A timeout or an abort (the attachment was removed) cancels the native task: no bytes keep flowing.
+  let ended: 'timed out' | 'cancelled' | null = null;
+  const cancel = (why: 'timed out' | 'cancelled') => {
+    if (ended) return;
+    ended = why;
     void task.cancelAsync();
-  }, opts.timeoutMs);
+  };
+  const timer = setTimeout(() => cancel('timed out'), opts.timeoutMs);
+  const onAbort = () => cancel('cancelled');
+  opts.signal?.addEventListener('abort', onAbort);
   let res: { status: number; body: string } | undefined | null;
   try {
     res = await task.uploadAsync();
   } catch (e) {
-    throw new ApiError(0, timedOut ? 'timed out' : e instanceof Error ? e.message : String(e));
+    throw new ApiError(0, ended ?? (e instanceof Error ? e.message : String(e)));
   } finally {
     clearTimeout(timer);
+    opts.signal?.removeEventListener('abort', onAbort);
   }
-  if (!res) throw new ApiError(0, timedOut ? 'timed out' : 'upload cancelled');
+  if (ended || !res) throw new ApiError(0, ended ?? 'cancelled');
   let payload: unknown = null;
   try {
     payload = JSON.parse(res.body);

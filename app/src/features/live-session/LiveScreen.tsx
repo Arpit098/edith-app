@@ -125,12 +125,17 @@ const Composer = memo(function Composer({ model, voice, attach }: { model: LiveM
   };
   const send = () => {
     if (!canSend) return;
+    // The model decides, not the button: an attachment still uploading (or failed) keeps the whole
+    // message here, text and all, rather than going out without it.
+    const attachments = attach.take();
+    if (!attachments) {
+      toast('Wait for the uploads to finish, or remove the one that failed.');
+      return;
+    }
     const t = text.trim();
     // The message shows at once with its ticks; a failure stays on its bubble with Retry.
     setText('');
     setFromVoice(false);
-    const attachments = attach.ready();
-    attach.clear();
     void model.send(t, { voice: fromVoice, attachments });
   };
   const stop = () => {

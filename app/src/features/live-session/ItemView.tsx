@@ -16,7 +16,7 @@ import type { Item, SendStatus, Tick } from './model';
 const ORIGIN_LABEL: Record<string, string> = { telegram: 'Telegram', terminal: 'Terminal', app: '', system: '' };
 
 /** Accessibility labels for the status ticks (drawn by ui/StatusTick). */
-const TICK_LABEL: Record<Tick, string> = { clock: 'Not sent yet', sent: 'Sent', delivered: 'EDITH has it', failed: 'Not sent, tap to retry' };
+const TICK_LABEL: Record<Tick, string> = { clock: 'Not sent yet', sent: 'Sent', delivered: 'EDITH has it', failed: 'Not sent' };
 
 /** A caption only where the state isn't obvious from the ticks. */
 const STATUS_TEXT: Partial<Record<SendStatus, string>> = {
@@ -39,7 +39,7 @@ export const ItemView = memo(function ItemView({ item, onPress, tick, status, on
     case 'user': {
       const from = ORIGIN_LABEL[item.origin];
       const failed = tick === 'failed';
-      const retry = failed && item.local && onRetry ? () => onRetry(item.local!.key) : undefined;
+      const retry = failed && item.local && !item.local.final && onRetry ? () => onRetry(item.local!.key) : undefined;
       const caption = failed ? (item.local?.error ?? 'Not sent') : status ? STATUS_TEXT[status] : undefined;
       return (
         <View style={styles.userWrap}>
@@ -65,7 +65,7 @@ export const ItemView = memo(function ItemView({ item, onPress, tick, status, on
               <Text style={styles.reactionText}>{item.reaction}</Text>
             </View>
           ) : null}
-          {caption ? <Text style={[styles.caption, failed && styles.captionError]}>{failed ? `${caption} · Tap to retry` : caption}</Text> : null}
+          {caption ? <Text style={[styles.caption, failed && styles.captionError]}>{retry ? `${caption} · Tap to retry` : caption}</Text> : null}
         </View>
       );
     }
@@ -146,11 +146,19 @@ function DiffCard({ path, diff }: { path: string; diff: string }) {
 
 /** A message's attachments: thumbnails for images sent from this phone, name chips otherwise. */
 const SentAttachments = memo(function SentAttachments({ list }: { list: SentAttachment[] }) {
+  // A thumbnail whose file is gone (pruned, or the cache was cleared) shows as its name chip.
+  const [missing, setMissing] = useState<ReadonlySet<string>>(() => new Set());
   return (
     <View style={styles.attachments}>
       {list.map((a, i) =>
-        a.kind === 'image' && a.uri ? (
-          <Image key={`${a.id}-${i}`} source={{ uri: a.uri }} style={styles.attachmentImage} accessibilityLabel={`Photo ${a.name}`} />
+        a.kind === 'image' && a.uri && !missing.has(a.uri) ? (
+          <Image
+            key={`${a.id}-${i}`}
+            source={{ uri: a.uri }}
+            style={styles.attachmentImage}
+            accessibilityLabel={`Photo ${a.name}`}
+            onError={() => setMissing((m) => new Set(m).add(a.uri!))}
+          />
         ) : (
           <View key={`${a.id}-${i}`} style={styles.attachmentChip}>
             <Icon name={a.kind === 'audio' ? 'music-note-outline' : 'image-outline'} size={14} color={colors.textDim} />

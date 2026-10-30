@@ -6,7 +6,7 @@ import { cursorOf, type ButtonRows, type EdithEvent, type EventBus, type Lane, t
 import { bool, buttonRows, num, str } from '../../core/guards';
 import type { KeyValueStore } from '../../core/ports';
 import { createStore, type Store } from '../../core/store';
-import type { SentAttachment } from './attachments';
+import { ID_LIFETIME_S, type SentAttachment } from './attachments';
 
 export const MAX_ITEMS = 400; // the transcript keeps the newest ones; older ones drop off
 export const PAGE = 100; // history events per request
@@ -24,7 +24,20 @@ export interface LocalSend {
   key: string; // local id, for retry
   status: 'sending' | 'waiting' | 'sent' | 'failed'; // waiting: offline, sent again on reconnect
   error: string | null;
+  final?: boolean; // failed for good: sending again can't work (an attachment expired), so no retry
 }
+
+/** Why a message with attachments can't be sent any more: its ids are gone on the server. */
+export const ATTACHMENT_EXPIRED = 'Attachment expired on edith. Re-attach it and send again.';
+const EXPIRY_MARGIN_S = 600; // clock skew between the phone and edith
+
+/** An attachment id of this message is past the server's lifetime (attachments.ts ID_LIFETIME_S). */
+export function attachmentsExpired(attachments: SentAttachment[], ts: number, now: number): boolean {
+  return attachments.some((a) => a.id !== '' && (a.uploaded ?? ts) + ID_LIFETIME_S - EXPIRY_MARGIN_S <= now);
+}
+
+/** The server's 400 for an id it doesn't know (expired, or evicted from its id list). */
+const isUnknownAttachment = (e: unknown) => e instanceof ApiError && e.status === 400 && e.message.startsWith('unknown attachment');
 
 export type Item =
   | {
@@ -253,15 +266,15 @@ export function sentLocal(s: LiveState, key: string, ref: string, lane: string):
   return update(s, item.id, () => ({ ...item, ref, delivery: item.delivery ?? deliveryOf(lane), local: { key, status: 'sent', error: null } }));
 }
 
-export function setLocal(s: LiveState, key: string, status: LocalSend['status'], error: string | null): LiveState {
+export function setLocal(s: LiveState, key: string, status: LocalSend['status'], error: string | null, final = false): LiveState {
   const i = findUser(s, (x) => x.local?.key === key);
   if (i < 0) return s;
   const item = s.items[i] as Extract<Item, { kind: 'user' }>;
-  return update(s, item.id, () => ({ ...item, local: { key, status, error } }));
+  return update(s, item.id, () => ({ ...item, local: { key, status, error, ...(final ? { final } : {}) } }));
 }
 
-export function failedLocal(s: LiveState, key: string, error: string): LiveState {
-  return setLocal(s, key, 'failed', error);
+export function failedLocal(s: LiveState, key: string, error: string, final = false): LiveState {
+  return setLocal(s, key, 'failed', error, final);
 }
 
 /** Items only this app knows (sent messages not yet echoed, side-lane answers): a history rebuild keeps them. */
@@ -547,7 +560,8 @@ export interface OutboxEntry {
   error: string | null;
   ref: string | null;
   delivery: Delivery | null;
-  attachments?: SentAttachment[];
+  final?: boolean;
+  attachments?: SentAttachment[]; // with their local uri (the thumbnail), which may be gone by the next start
 }
 
 /** The messages to keep: sent from here, not yet in the server's record (echo), newest last. */
@@ -555,7 +569,7 @@ export function outboxOf(s: LiveState): OutboxEntry[] {
   const out: OutboxEntry[] = [];
   for (const x of s.items) {
     if (x.kind !== 'user' || !x.local || x.echoed) continue;
-    out.push({ key: x.local.key, text: x.text, voice: x.voice, ts: x.ts, status: x.local.status, error: x.local.error, ref: x.ref, delivery: x.delivery, attachments: x.attachments });
+    out.push({ key: x.local.key, text: x.text, voice: x.voice, ts: x.ts, status: x.local.status, error: x.local.error, ...(x.local.final ? { final: true } : {}), ref: x.ref, delivery: x.delivery, attachments: x.attachments });
   }
   return out.reverse().slice(-MAX_OUTBOX);
 }
@@ -571,7 +585,14 @@ export function restoreOutbox(s: LiveState, entries: OutboxEntry[], now: number)
     if (findUser(next, (x) => x.local?.key === e.key) >= 0) continue;
     let status = e.status;
     let error = e.error;
-    if (status === 'sending') {
+    let final = e.final === true;
+    const attachments = Array.isArray(e.attachments) ? e.attachments : [];
+    if (status !== 'sent' && attachmentsExpired(attachments, e.ts, now)) {
+      // Not "tap to retry": the server would answer "unknown attachment".
+      status = 'failed';
+      error = ATTACHMENT_EXPIRED;
+      final = true;
+    } else if (status === 'sending') {
       status = 'failed';
       error = 'The app closed while sending. Tap to send again if it didn\'t arrive.';
     } else if (status === 'waiting' && now - e.ts > RESEND_WITHIN_S) {
@@ -585,10 +606,10 @@ export function restoreOutbox(s: LiveState, entries: OutboxEntry[], now: number)
       voice: e.voice,
       ref: e.ref,
       delivery: e.delivery,
-      local: { key: e.key, status, error },
+      local: { key: e.key, status, error, ...(final ? { final } : {}) },
       echoed: false,
       reaction: null,
-      attachments: Array.isArray(e.attachments) ? e.attachments : [],
+      attachments, // a thumbnail whose file is gone falls back to the name chip (ItemView)
     });
   }
   if (next === s) return s;
@@ -610,6 +631,11 @@ export function createLiveModel(bus: EventBus, api: Api, storage?: KeyValueStore
 
   /** POST a message already shown locally, then link it to its turn, or mark it waiting (offline) or failed. */
   async function post(key: string, text: string, voice: boolean, attachments: SentAttachment[] = []): Promise<'sent' | 'waiting' | 'failed'> {
+    const nowS = Date.now() / 1000;
+    if (attachmentsExpired(attachments, nowS, nowS)) {
+      store.set((s) => failedLocal(s, key, ATTACHMENT_EXPIRED, true));
+      return 'failed';
+    }
     try {
       const r = await api.send(text, { ...(voice ? { voice: true } : {}), ...(attachments.length ? { attachments: attachments.map((a) => a.id) } : {}) });
       store.set((s) => sentLocal(s, key, r.ref, r.lane));
@@ -621,7 +647,8 @@ export function createLiveModel(bus: EventBus, api: Api, storage?: KeyValueStore
         scheduleFlush();
         return 'waiting';
       }
-      store.set((s) => failedLocal(s, key, message));
+      if (isUnknownAttachment(e)) store.set((s) => failedLocal(s, key, ATTACHMENT_EXPIRED, true));
+      else store.set((s) => failedLocal(s, key, message));
       return 'failed';
     }
   }
@@ -800,7 +827,7 @@ export function createLiveModel(bus: EventBus, api: Api, storage?: KeyValueStore
     },
     async retry(key) {
       const item = store.get().items.find((x) => x.kind === 'user' && x.local?.key === key);
-      if (!item || item.kind !== 'user' || item.local?.status !== 'failed') return;
+      if (!item || item.kind !== 'user' || item.local?.status !== 'failed' || item.local.final) return;
       store.set((s) => update(s, item.id, (x) => (x.kind === 'user' ? { ...x, ref: null, delivery: null, local: { key, status: 'sending', error: null } } : x)));
       await post(key, item.text, item.voice, item.attachments);
     },

@@ -40,12 +40,12 @@ export interface Transport {
   upload<T>(path: string, file: { uri: string; mime: string; name: string }, opts?: RequestOptions & { field?: string }): Promise<T>;
   /**
    * POST a file as the raw request body (with Content-Length; contracts/attachments.md), streamed from
-   * disk, answered with JSON. Sent once, never retried.
+   * disk, answered with JSON. Sent once, never retried. Aborting `signal` cancels the upload.
    */
   uploadRaw<T>(
     path: string,
     file: { uri: string; mime: string; name: string },
-    opts?: RequestOptions & { onProgress?: (sent: number, total: number) => void },
+    opts?: RequestOptions & { onProgress?: (sent: number, total: number) => void; signal?: AbortSignal },
   ): Promise<T>;
 }
 
@@ -55,14 +55,23 @@ export interface PickedFile {
   uri: string;
   name: string;
   mime: string;
-  size: number; // bytes, 0 if unknown
+  size: number; // bytes on disk (stat), 0 if it couldn't be read
 }
 
-/** The camera, the gallery and the file picker. */
+/**
+ * The camera, the gallery and the file picker. Picked files are copies in the app's own cache
+ * folder (never the originals): the app deletes them when they're removed, and prunes the folder.
+ */
 export interface MediaPicker {
   /** Null when Arpit cancels. Images come back as JPEG with the long edge at most 2048 px. */
   pickImage(source: 'camera' | 'library'): Promise<PickedFile | null>;
   pickAudio(): Promise<PickedFile | null>;
+  /** The file's size in bytes, or null when it's gone or unreadable. */
+  stat(uri: string): number | null;
+  /** Delete a picked file (only the app's own copies; nothing if it's already gone). */
+  discard(uri: string): void;
+  /** Delete old picked files, bounded by age and total size. Run once at startup. */
+  prune(): void;
 }
 
 export type InstallStatus = 'pending' | 'success' | 'cancelled' | 'incompatible' | 'failed';

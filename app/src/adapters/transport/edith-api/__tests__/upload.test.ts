@@ -59,6 +59,24 @@ describe('uploadRaw', () => {
     }
   });
 
+  it('an abort (the attachment was removed) cancels the task', async () => {
+    let resolve: (v: null) => void = () => {};
+    const { create, seen } = task(() => new Promise((r) => (resolve = r)));
+    const abort = new AbortController();
+    const p = uploadRaw(SERVER, '/v1/attachments', FILE, { timeoutMs: 60_000, signal: abort.signal }, create);
+    await Promise.resolve();
+    abort.abort();
+    expect(seen.cancelled).toBe(1);
+    resolve(null);
+    await expect(p).rejects.toMatchObject({ status: 0, message: 'cancelled' });
+
+    const before = new AbortController();
+    before.abort();
+    const { create: never, seen: unseen } = task(async () => ({ status: 200, body: '{}' }));
+    await expect(uploadRaw(SERVER, '/v1/attachments', FILE, { timeoutMs: 1000, signal: before.signal }, never)).rejects.toMatchObject({ message: 'cancelled' });
+    expect(unseen.url).toBeUndefined(); // never started
+  });
+
   it('needs a server', async () => {
     const { create } = task(async () => ({ status: 200, body: '{}' }));
     await expect(uploadRaw(null, '/v1/attachments', FILE, { timeoutMs: 1000 }, create)).rejects.toMatchObject({ status: 0 });

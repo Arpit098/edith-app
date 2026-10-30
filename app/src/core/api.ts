@@ -135,11 +135,13 @@ export function createApi(t: Transport) {
      */
     async uploadAttachment(
       file: { uri: string; mime: string; name: string; size: number },
-      onProgress?: (sent: number, total: number) => void,
+      opts: { onProgress?: (sent: number, total: number) => void; signal?: AbortSignal } = {},
     ): Promise<Attachment> {
       // 30 s plus 1 s per 100 KB: generous for Tailscale on mobile data, bounded at 10 minutes.
+      // The caller stats the file first (attachments.ts): a size is required, so this is never "30 s for anything".
+      if (!(file.size > 0)) throw new ApiError(0, 'unknown file size');
       const timeoutMs = Math.min(600_000, 30_000 + Math.ceil(file.size / 100_000) * 1000);
-      const r = await t.uploadRaw<Obj>('/v1/attachments', file, { timeoutMs, onProgress });
+      const r = await t.uploadRaw<Obj>('/v1/attachments', file, { timeoutMs, ...opts });
       return { id: str(r.id), name: str(r.name), type: str(r.type), size: num(r.size), sha256: str(r.sha256) };
     },
 

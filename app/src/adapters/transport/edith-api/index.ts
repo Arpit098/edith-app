@@ -52,7 +52,7 @@ export function createEdithApiTransport(opts: EdithApiOptions = {}): Transport {
     authorized: (path) => (server ? { url: server.baseUrl + path, headers: { Authorization: `Bearer ${server.token}` } } : null),
     upload: <T,>(path: string, file: { uri: string; mime: string; name: string }, uopts: RequestOptions & { field?: string } = {}) =>
       httpUpload<T>(server, path, file, uopts.field ?? 'file', uopts.timeoutMs ?? http.timeoutMs, http.fetch),
-    uploadRaw: <T,>(path: string, file: { uri: string; mime: string; name: string }, ropts: RequestOptions & { onProgress?: (sent: number, total: number) => void } = {}) =>
-      uploadRaw<T>(server, path, file, { timeoutMs: ropts.timeoutMs ?? UPLOAD_TIMEOUT_MS, onProgress: ropts.onProgress }, opts.createUploadTask ?? (createUploadTask as unknown as CreateUploadTask)),
+    uploadRaw: <T,>(path: string, file: { uri: string; mime: string; name: string }, ropts: RequestOptions & { onProgress?: (sent: number, total: number) => void; signal?: AbortSignal } = {}) =>
+      uploadRaw<T>(server, path, file, { timeoutMs: ropts.timeoutMs ?? UPLOAD_TIMEOUT_MS, onProgress: ropts.onProgress, signal: ropts.signal }, opts.createUploadTask ?? (createUploadTask as unknown as CreateUploadTask)),
   };
 }
