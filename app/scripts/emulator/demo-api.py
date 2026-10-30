@@ -74,6 +74,14 @@ ROUTES = {
         ]
     },
     "/v1/permissions": {"pending": []},
+    "/v1/accounts": {
+        "accounts": [
+            {"id": "a1b2c3d4", "label": "Personal", "email": "arpit@example.com", "plan": "max", "active": True},
+            {"id": "e5f6a7b8", "label": "Work", "email": "arpit.work@example.com", "plan": "pro", "active": False},
+        ],
+        "switch": None,
+        "login": None,
+    },
     "/v1/commands": {
         "commands": [
             {"name": "today", "description": "Today's agenda and reminders", "usage": "", "help": ""},

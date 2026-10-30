@@ -48,6 +48,8 @@ export interface EventDataMap {
   // How Claude took a frontend message, and the reaction Telegram would show (contracts/events.md):
   'message.delivered': { ref: string; delivery: 'main' | 'mid_turn' | 'side_lane'; rid: string };
   'message.reaction': { ref: string; emoji: string }; // EDITH's reaction on Arpit's message; the latest wins
+  // A Claude account switch's progress (contracts/accounts.md); read it through accountSwitchFrom (core/api):
+  'accounts.switch': Record<string, unknown>;
   // App-local events (never sent by the server):
   'app.connected': { first: boolean }; // core/connection.ts: the stream (re)opened; resync what may be missed
   'app.voice': { state: 'listening' | 'speaking' | 'idle' }; // the voice feature (Phase 3): mic or TTS active

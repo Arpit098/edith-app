@@ -4,6 +4,7 @@
 import type { FeatureModule } from '../core/feature';
 import appUpdate from './app-update';
 import approvals from './approvals';
+import claudeAccounts from './claude-accounts';
 import commands from './commands';
 import liveSession from './live-session';
 import liveStatus from './live-status';
@@ -17,6 +18,7 @@ export const features: FeatureModule[] = [
   approvals,
   commands,
   appUpdate,
+  claudeAccounts,
   liveStatus,
   notifications,
   // Phase 3: voice, assistant, widget
