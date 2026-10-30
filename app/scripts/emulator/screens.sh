@@ -67,6 +67,7 @@ keyboard_shown() { adb shell dumpsys input_method | grep -q "mInputShown=true"; 
 # Navigate with the header's menu (top right): open it, pick the screen (its item says
 # "<name>, current screen" when it's the one shown).
 go_to() {
+  wait_until "the menu button" on_screen Menu || return 1 # a dump can fail mid-scroll: wait, don't tap blind
   tap Menu || return 1
   wait_until "the menu" on_screen "Close the menu" || return 1
   if on_screen "$1, current screen"; then tap "$1, current screen" || return 1; else tap "$1" || return 1; fi
