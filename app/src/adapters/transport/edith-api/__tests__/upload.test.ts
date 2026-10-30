@@ -37,6 +37,12 @@ describe('uploadRaw', () => {
     expect(progress).toEqual([[10, 40]]);
   });
 
+  it('adds the caller’s headers, which never override the transport’s own', async () => {
+    const { create, seen } = task(async () => ({ status: 200, body: '{}' }));
+    await uploadRaw(SERVER, '/v1/wakeword/sessions/s/clips?kind=noise', FILE, { timeoutMs: 1000, headers: { 'x-clip-sha256': 'ab', Authorization: 'Bearer evil' } }, create);
+    expect(seen.options?.headers).toMatchObject({ 'x-clip-sha256': 'ab', Authorization: 'Bearer t0k' });
+  });
+
   it('turns an error status into an ApiError with the server message', async () => {
     const { create } = task(async () => ({ status: 413, body: '{"error":"too big"}' }));
     await expect(uploadRaw(SERVER, '/v1/attachments', FILE, { timeoutMs: 1000 }, create)).rejects.toEqual(new ApiError(413, 'too big'));

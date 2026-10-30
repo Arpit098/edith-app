@@ -17,7 +17,7 @@ export interface HttpOptions {
 
 export async function httpRequest<T>(
   server: ServerConfig | null,
-  method: 'GET' | 'POST' | 'PATCH',
+  method: 'GET' | 'POST' | 'PATCH' | 'DELETE', // DELETE retries like GET: a repeat finds it gone (404)
   path: string,
   body: unknown,
   opts: RequestOptions,

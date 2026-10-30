@@ -9,6 +9,7 @@ import liveSession from './live-session';
 import liveStatus from './live-status';
 import notifications from './notifications';
 import sessions from './sessions';
+import wakeword from './wakeword';
 
 export const features: FeatureModule[] = [
   liveSession,
@@ -19,5 +20,5 @@ export const features: FeatureModule[] = [
   liveStatus,
   notifications,
   // Phase 3: voice, assistant, widget
-  // Phase 4: wakeword
+  wakeword, // Phase 4: training and settings now; the detector later
 ];
