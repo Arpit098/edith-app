@@ -1,7 +1,7 @@
 // App frame: connect gate, header, banner panels, the current screen and the bottom tab bar.
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from 'react';
-import { ActivityIndicator, BackHandler, Keyboard, KeyboardAvoidingView, Linking, Pressable, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
+import { ActivityIndicator, BackHandler, Keyboard, KeyboardAvoidingView, Pressable, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -64,17 +64,6 @@ function Main({ loaded, connection, meter }: { loaded: LoadedFeatures; connectio
     return { tabs: tabList, routes: new Map(all.map((r) => [r.name, r])), home: tabList[0]!.name };
   }, [loaded, connection, go, tabNames, meter]);
 
-  // Links from the live status notification: edith://live, edith://approvals. Approvals show in the
-  // banner on every screen, so both land on the home (Live) tab.
-  useEffect(() => {
-    const open = (url: string | null) => {
-      if (url && /^edith:\/\/(live|approvals)\b/.test(url)) setNav({ tab: home, stack: [] });
-    };
-    void Linking.getInitialURL().then(open, () => {});
-    const sub = Linking.addEventListener('url', (e) => open(e.url));
-    return () => sub.remove();
-  }, [home]);
-
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
       const next = back(navRef.current, home);
@@ -108,7 +97,8 @@ function Main({ loaded, connection, meter }: { loaded: LoadedFeatures; connectio
   const [headerHeight, setHeaderHeight] = useState(insets.top + chrome.headerHeight);
   const onHeaderLayout = useCallback((e: LayoutChangeEvent) => setHeaderHeight(Math.round(e.nativeEvent.layout.height)), []);
   const tabBarSpace = keyboard ? 0 : chrome.tabBarHeight + space.s * 2;
-  const chromeInsets = useMemo(() => ({ top: headerHeight, bottom: insets.bottom + tabBarSpace }), [headerHeight, insets.bottom, tabBarSpace]);
+  // With the keyboard up, the tab bar is gone and the keyboard (KeyboardAvoidingView) covers the gesture area.
+  const chromeInsets = useMemo(() => ({ top: headerHeight, bottom: keyboard ? 0 : insets.bottom + tabBarSpace }), [headerHeight, insets.bottom, tabBarSpace, keyboard]);
 
   return (
     <KeyboardAvoidingView style={styles.flex} behavior="padding">
