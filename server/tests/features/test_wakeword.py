@@ -211,11 +211,29 @@ class UploadTest(unittest.TestCase):
             self.assertEqual(self.s.upload(self.sid, wav(1.1))[0], 409)
 
     def test_chunked_upload_needs_a_length(self):
+        # Headers only: the server refuses before reading a chunked body, and closes; a client still
+        # sending the body at that moment would get a broken pipe instead of the answer.
         c = http.client.HTTPConnection(*self.s.api.address, timeout=10)
         self.addCleanup(c.close)
-        c.request("POST", f"/v1/wakeword/sessions/{self.sid}/clips?kind=noise", body=iter([wav(1.0)]),
-                  headers={"Authorization": f"Bearer {TOKEN}", "Transfer-Encoding": "chunked"}, encode_chunked=True)
+        c.putrequest("POST", f"/v1/wakeword/sessions/{self.sid}/clips?kind=noise")
+        c.putheader("Authorization", f"Bearer {TOKEN}")
+        c.putheader("Transfer-Encoding", "chunked")
+        c.endheaders()
         self.assertEqual(c.getresponse().status, 411)
+
+    def test_an_early_refusal_drains_the_rest_so_the_client_gets_the_answer(self):
+        # Refused before the body is read (unknown kind): the rest (under 256 kB) is read and dropped
+        # rather than the connection closed on a client still sending. Proof that it was read: the
+        # same connection then serves another request.
+        c = http.client.HTTPConnection(*self.s.api.address, timeout=10)
+        self.addCleanup(c.close)
+        c.request("POST", f"/v1/wakeword/sessions/{self.sid}/clips?kind=music", body=wav(5.0),
+                  headers={"Authorization": f"Bearer {TOKEN}", "Content-Type": "audio/wav"})
+        r = c.getresponse()
+        self.assertEqual(r.status, 400)
+        self.assertIn("kind must be one of", json.loads(r.read())["error"])
+        c.request("GET", "/v1/wakeword/sessions", headers={"Authorization": f"Bearer {TOKEN}"})
+        self.assertEqual(c.getresponse().status, 200)
 
     def test_upload_is_streamed_not_buffered(self):
         reads = []
