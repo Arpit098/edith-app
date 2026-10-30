@@ -10,7 +10,7 @@
       "package": "com.arpit.edith",
       "versionCode": 2,
       "adaptiveIcon": {
-        "backgroundColor": "#0E1116",
+        "backgroundColor": "#10171D",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
@@ -24,6 +24,11 @@
         "android.permission.VIBRATE"
       ]
     },
-    "plugins": ["expo-secure-store", "./plugins/with-cleartext-traffic", "./plugins/with-release-signing"]
+    "plugins": [
+      "expo-secure-store",
+      "./plugins/with-cleartext-traffic",
+      "./plugins/with-release-signing",
+      ["expo-splash-screen", { "image": "./assets/splash-icon.png", "imageWidth": 200, "resizeMode": "contain", "backgroundColor": "#10171D" }]
+    ]
   }
 }

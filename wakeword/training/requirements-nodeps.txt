@@ -1,0 +1,4 @@
+# Installed with --no-deps: openWakeWord's own requirements pull tflite-runtime on Linux, which has no
+# wheels for recent Pythons and isn't needed (training and the metrics use ONNX). Its real needs are
+# in requirements.txt.
+openwakeword==0.6.0
