@@ -20,6 +20,12 @@ export function formatIST(ts: number): string {
   return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}, ${hh}:${mm} IST`;
 }
 
+/** "18:05": the time of day in IST, for message bubbles. */
+export function clockIST(ts: number): string {
+  const d = new Date((ts + IST_OFFSET_S) * 1000);
+  return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`;
+}
+
 /** "15.4 MB" */
 export function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;

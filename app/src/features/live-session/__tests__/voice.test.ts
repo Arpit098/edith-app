@@ -36,13 +36,14 @@ function setup(stt: SpeechToText['transcribe'] = async () => ({ text: 'check the
   const storage = new MemoryStorage();
   const voiceEvents: EdithEvent[] = [];
   ctx.bus.subscribe('app.voice', (e) => voiceEvents.push(e));
-  const m = createVoiceModel({ bus: ctx.bus, api: ctx.api, storage, recorder, stt: { transcribe: jest.fn(stt) } });
-  return { ctx, m, recorder, storage, voiceEvents };
+  const send = jest.fn(async (_text: string, _opts: { voice: boolean }) => {});
+  const m = createVoiceModel({ bus: ctx.bus, send, storage, recorder, stt: { transcribe: jest.fn(stt) } });
+  return { ctx, m, recorder, storage, voiceEvents, send };
 }
 
 describe('voice input', () => {
   it('records, shows progress, and puts the transcript in the box by default', async () => {
-    const { ctx, m, recorder, voiceEvents } = setup();
+    const { m, recorder, voiceEvents, send } = setup();
     await m.start();
     expect(recorder.started).toEqual([MAX_RECORDING_MS]);
     expect(m.store.get().phase).toBe('recording');
@@ -51,32 +52,21 @@ describe('voice input', () => {
 
     expect(await m.stop()).toBe('check the disk space');
     expect(m.store.get()).toMatchObject({ phase: 'idle', error: null });
-    expect(ctx.transport.calls.filter((c) => c.path === '/v1/messages')).toHaveLength(0);
+    expect(send).not.toHaveBeenCalled();
     expect(voiceEvents.map((e) => (e.data as { state: string }).state)).toEqual(['listening', 'idle']);
   });
 
-  it('sends straight away as a voice message when that setting is on, and remembers it', async () => {
-    const { ctx, m, storage } = setup();
+  it('sends straight away as a voice message (through the live send) when that setting is on, and remembers it', async () => {
+    const { ctx, m, storage, send } = setup();
     await m.setAutoSend(true);
     expect(storage.data.get('edith.voice.autoSend')).toBe('1');
     await m.start();
     expect(await m.stop()).toBeNull();
-    expect(ctx.transport.calls.at(-1)).toMatchObject({ path: '/v1/messages', body: { text: 'check the disk space', voice: true } });
+    expect(send).toHaveBeenCalledWith('check the disk space', { voice: true });
 
-    const again = createVoiceModel({ bus: ctx.bus, api: ctx.api, storage, recorder: new FakeRecorder(), stt: { transcribe: jest.fn() } });
+    const again = createVoiceModel({ bus: ctx.bus, send, storage, recorder: new FakeRecorder(), stt: { transcribe: jest.fn() } });
     await flush();
     expect(again.store.get().autoSend).toBe(true);
-  });
-
-  it('keeps the words in the box if sending fails', async () => {
-    const { ctx, m } = setup();
-    ctx.transport.on('POST /v1/messages', () => {
-      throw new ApiError(0, 'Network request failed');
-    });
-    await m.setAutoSend(true);
-    await m.start();
-    expect(await m.stop()).toBe('check the disk space');
-    expect(m.store.get().error).toBe('Not sent: Network request failed');
   });
 
   it('stops by itself at the cap, once even if Arpit taps too', async () => {
@@ -135,7 +125,7 @@ describe('voice input', () => {
     expect(m.store.get().phase).toBe('idle');
 
     const ctx = fakeContext();
-    const none = createVoiceModel({ bus: ctx.bus, api: ctx.api, storage: new MemoryStorage() });
+    const none = createVoiceModel({ bus: ctx.bus, send: async () => {}, storage: new MemoryStorage() });
     expect(none.store.get().available).toBe(false);
     await none.start();
     expect(none.store.get().phase).toBe('idle');

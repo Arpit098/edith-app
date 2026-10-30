@@ -82,6 +82,71 @@ Every live-view event's `data` also carries `cursor`: `"<session_id>:<byte offse
 transcript entry (several events from one entry share it). Cursors are opaque to the app; compare
 them only by equality, or use them with History below.
 
+## Messages from Arpit: accepted, delivered, reacted to
+
+Every message a frontend hands to EDITH (app or Telegram, including `/queue`) gets these events, so a
+message never vanishes from the app, whichever way it reaches Claude. All carry the frontend's `ref`
+(the one `POST /v1/messages` returned; `tg:<chat>:<message>` for Telegram). Times are the top-level `ts`.
+
+| Type | `data` | Emitted when |
+|---|---|---|
+| `message.user` | `{ref, text, voice, delivery, lane, attachments, replying_to}` (origin `app` or `telegram`) | At once, when the message is accepted (before Claude sees it) |
+| `message.delivered` | `{ref, delivery, rid}` | When Claude actually takes it in (see `delivery`) |
+| `message.reaction` | `{ref, emoji}` | App-origin messages only: the reaction Telegram would show for it; the latest one wins |
+
+- `message.user` from a frontend:
+  - `text` is clean: the bridge header (`[App message from Arpit, …]` / `[Telegram message from Arpit, …]`),
+    `[voice]`, `[tg-ref …]`, the `[Attached file saved at: …]` lines and the "[Arpit is replying to …]"
+    line are taken out.
+  - `attachments` is the list of saved file paths (`[]` if none); `replying_to` is the quoted text or `null`.
+  - `delivery` is the expected route: `main` (the main lane takes it now), `queued` (it waits for the main
+    lane) or `side_lane` (a parallel lane runs it now). `lane` is `main`, `queued` or `side`.
+- `message.delivered.delivery` is what happened:
+  - `main`: it started a main-lane turn;
+  - `mid_turn`: Claude was still working, and Claude Code folded the message into the running turn
+    (the transcript then has it inside a tool result, not as a user message);
+  - `side_lane`: a parallel lane (a fork of the conversation) started on it.
+
+  A queued message gets `message.delivered` when its turn starts. `rid` is the run id in the prompt's
+  `[tg-ref <rid>]` tag.
+- `message.reaction.emoji`, the same as Telegram's for the same moment:
+  - 👀 accepted; 🥱 queued; 👨‍💻 a main-lane turn started (or back to work after an approval); ⚡ a
+    side lane started (or back to work after an approval); 🙏 waiting for Arpit's approval;
+  - at the end: EDITH's `REACT:` pick (the last one in the reply) or 👍 when done, 😢 when done with
+    an error, 🫡 stopped, 🕊 dropped from the queue by /stop, 💔 failed.
+- The transcript's own copy of a frontend message is not sent again: the live view skips a `message.user`
+  whose `[tg-ref <rid>]` belongs to a message the server accepted (history drops it too, see below).
+  Messages typed in tmux still come from the transcript (origin `terminal`).
+
+**Side lanes** (`claude -p` forks; the main transcript never has their turns):
+- `message.assistant {text, lane: "side", ref, files}` carries the side lane's reply when it is done, plus
+  the existing `turn.started` / `turn.progress` / `turn.done` with `lane: "side"` and the same `ref`.
+- The note the main lane later gets ("[While you were busy, parallel lanes … handled these …]") is never
+  shown as a message: the live view and history strip that preamble from user messages.
+
+**Clean text everywhere:**
+- `message.assistant.text` has EDITH's `REACT:` and `SEND_FILE:` lines taken out; `files` lists the
+  `SEND_FILE` paths (`[]` if none). Also from the transcript, `lane` is `main` there.
+- `turn.done` gains `display_text` (the reply without `REACT:`/`SEND_FILE:` lines), `files` and `reaction`
+  (the `REACT:` pick or `null`). `text` stays the raw reply.
+- Transcript user messages that Claude Code wrapped in `<pasted_content …>` (long or multi-line pastes)
+  are unwrapped, not skipped.
+
+**Working state** ("EDITH is working…"). These existing events already cover it; there is no separate
+`turn.state` event:
+
+| State | Starts with |
+|---|---|
+| thinking | `turn.started` (and after each `tool.result`) |
+| tool | `turn.progress {step}` / `tool.call` (`step` is the tool summary, e.g. `$ npm test`) |
+| waiting_approval | `permission.request {ref, lane}`, until `permission.resolved` |
+| idle | `turn.done` / `turn.stopped` / `turn.failed` for that `ref` and `lane` |
+
+**Message log:** `message.user` (from frontends), `message.delivered`, `message.reaction`, the side-lane
+`message.assistant`, and side-lane `turn.started`/`turn.done` are also kept per conversation in
+`~/.cache/edith/message-log/<session>.json` (atomic writes, the newest 500 events), so they survive a
+restart and appear in History. Logged events carry `data.log_id` (unique) and no `cursor`.
+
 ### History
 
 `GET /v1/sessions/{id}/history?after=&before=&limit=` (`{id}` is a session id or `current`) returns
@@ -100,6 +165,10 @@ the same events as the live view, read from the transcript by byte offset (never
   events), and it never splits one. `ts` is the entry's own time.
 - `reset: true`: the cursor given belongs to another conversation (Claude switched); the page is the
   newest of the current one instead. A malformed cursor is a 400; an unknown session a 404.
+- **Merged with the message log:** each page also holds the logged events whose `ts` falls in the time
+  span of its transcript entries (from the entry before the page, exclusive, to its last entry; the newest
+  page runs to now), all sorted by `ts`. A transcript `message.user` for a logged message (same `rid`,
+  or the same clean text within 5 minutes) is left out, so nothing shows twice.
 - Live view on open: connect `/v1/stream` first (buffer events), then fetch the newest page, then
   apply buffered events whose `cursor` is not in that page. After a reconnect: `after=<last cursor>`
   until `more` is false.
