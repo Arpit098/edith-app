@@ -59,6 +59,11 @@ class AgentBackend(Protocol):
 
     def session_title(self, session_id: str) -> str | None: ...
 
+    def session_stats(self, session_id: str | None = None) -> dict | None:
+        """A conversation's (the current one by default) {started (unix time or None), messages (user
+        prompts plus replies with text), context_tokens (the latest prompt's size, or None)}, counted
+        incrementally from the transcript; None if there is no such conversation."""
+
     def name_session(self, title: str, session_id: str | None = None) -> str | None:
         """Name a conversation (the current one by default); returns its id, or None if there is none."""
 

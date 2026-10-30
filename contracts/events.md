@@ -186,6 +186,7 @@ Base `http://<edith's Tailscale IP>:8787`, reachable over Tailscale only. Every 
 | GET | `/v1/stream` | WebSocket | every event above as one JSON text message `{type, ts, session_id, origin, data}`; the server pings every 25 s (protocol ping) when the line is quiet. The app may send `{"type": "ping", "id"?: any}`; the answer is `{"type": "pong", "ts", "session_id": null, "origin": "system", "data": {"id"?}}` (`id` echoed). Any frame from the app counts as alive; three quiet periods without one and the server drops it. Other text from the app is ignored |
 | POST | `/v1/stop` | | `{running, dropped: [ref]}` |
 | GET | `/v1/status` | | `{main: busy/idle, queued, runs: [{ref, lane, seconds, step}], tmux: running/down, conversation: bool, session: {id, title} \| null}` |
+| GET | `/v1/status/details` | | `{ts, edith, lanes, session, agents, server}`: the status panel (contracts/status.md) |
 | GET | `/v1/sessions` | | `{sessions: [{session_id, title, updated, current}]}` |
 | POST | `/v1/sessions/{id}/resume` | | `{status: "switching", ref}`; the messages come as `command.reply`, then `session.changed` (if it switched) and last `session.switched {ref, result}` |
 | GET | `/v1/sessions/{id}/history` | `?after=&before=&limit=` | `{session_id, events, start, cursor, more, reset}` (see History) |

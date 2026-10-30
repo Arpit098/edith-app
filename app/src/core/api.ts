@@ -50,6 +50,24 @@ export interface Status {
   session: { id: string; title: string | null } | null;
 }
 
+/** GET /v1/status/details (contracts/status.md): the status panel. Times are unix seconds. */
+export interface StatusDetails {
+  ts: number; // the server's clock when it answered
+  edith: {
+    state: 'idle' | 'thinking' | 'tool' | 'waiting_approval';
+    tool: string | null;
+    step: string | null;
+    since: number | null;
+    ref: string | null;
+    turn_started: number | null;
+    tmux: 'running' | 'down';
+  };
+  lanes: { side: { ref: string; seconds: number; step: string | null; summary: string | null }[]; max_side: number; queued: number; approvals: number };
+  session: { id: string; title: string | null; started: number | null; messages: number | null; context_tokens: number | null } | null;
+  agents: { name: string; dir: string; branch: string | null; state: 'busy' | 'idle' | 'blocked'; blocked: 'permission' | 'usage_limit' | null; last: string | null }[];
+  server: { tag: string | null; started: number; uptime: number };
+}
+
 export interface PendingPermission {
   id: string;
   tool: string;
@@ -128,6 +146,59 @@ function replies(v: unknown): Reply[] {
   return Array.isArray(v) ? v.map((r: Record<string, unknown>) => ({ text: str(r?.text), buttons: buttonRows(r?.buttons) })) : [];
 }
 
+function strOrNull(v: unknown): string | null {
+  return v == null ? null : str(v);
+}
+
+function numOrNull(v: unknown): number | null {
+  return typeof v === 'number' && Number.isFinite(v) ? v : null;
+}
+
+function oneOf<T extends string>(v: unknown, allowed: readonly T[], fallback: T): T {
+  return allowed.includes(v as T) ? (v as T) : fallback;
+}
+
+function list(v: unknown): Obj[] {
+  return Array.isArray(v) ? v.filter((x): x is Obj => !!x && typeof x === 'object') : [];
+}
+
+export function statusDetailsFrom(r: Obj): StatusDetails {
+  const e = (r.edith ?? {}) as Obj;
+  const lanes = (r.lanes ?? {}) as Obj;
+  const session = r.session as Obj | null | undefined;
+  const server = (r.server ?? {}) as Obj;
+  return {
+    ts: num(r.ts, Date.now() / 1000),
+    edith: {
+      state: oneOf(e.state, ['idle', 'thinking', 'tool', 'waiting_approval'] as const, 'idle'),
+      tool: strOrNull(e.tool),
+      step: strOrNull(e.step),
+      since: numOrNull(e.since),
+      ref: strOrNull(e.ref),
+      turn_started: numOrNull(e.turn_started),
+      tmux: e.tmux === 'running' ? 'running' : 'down',
+    },
+    lanes: {
+      side: list(lanes.side).map((x) => ({ ref: str(x.ref), seconds: num(x.seconds), step: strOrNull(x.step), summary: strOrNull(x.summary) })),
+      max_side: num(lanes.max_side),
+      queued: num(lanes.queued),
+      approvals: num(lanes.approvals),
+    },
+    session: session
+      ? { id: str(session.id), title: strOrNull(session.title), started: numOrNull(session.started), messages: numOrNull(session.messages), context_tokens: numOrNull(session.context_tokens) }
+      : null,
+    agents: list(r.agents).map((a) => ({
+      name: str(a.name),
+      dir: str(a.dir),
+      branch: strOrNull(a.branch),
+      state: oneOf(a.state, ['busy', 'idle', 'blocked'] as const, 'idle'),
+      blocked: a.blocked === 'permission' || a.blocked === 'usage_limit' ? a.blocked : null,
+      last: strOrNull(a.last),
+    })),
+    server: { tag: strOrNull(server.tag), started: num(server.started), uptime: num(server.uptime) },
+  };
+}
+
 function lane(v: unknown): Lane | null {
   return v === 'main' || v === 'side' ? v : null;
 }
@@ -184,6 +255,10 @@ export function createApi(t: Transport) {
         conversation: bool(r.conversation),
         session: session ? { id: str(session.id), title: session.title == null ? null : str(session.title) } : null,
       };
+    },
+
+    async statusDetails(opts?: RequestOptions): Promise<StatusDetails> {
+      return statusDetailsFrom(await t.request<Obj>('GET', '/v1/status/details', undefined, opts));
     },
 
     async sessions(): Promise<Session[]> {
