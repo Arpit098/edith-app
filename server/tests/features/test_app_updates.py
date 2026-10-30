@@ -108,7 +108,7 @@ class CollectTest(unittest.TestCase):
         w.gh.add_run(102, apk=apk_artifact(102, 1102, signing="debug"))               # no OTA artifact
         w.gh.add_run(103, apk=apk_artifact(103, 1103, cert="AA:BB"), ota=ota_artifact(103, "u3", lie=True))
         w.gh.add_run(104, apk=apk_artifact(104, 1104, lie=True))
-        self.assertEqual(w.collect(), 600)
+        self.assertEqual(w.collect(), 120)  # every 2 min
         runs = json.loads((w.root / "index.json").read_text())["runs"]
         self.assertEqual(runs["101"], {"apk": "collected", "ota": "collected"})
         self.assertEqual(runs["102"], {"apk": "skipped: debug-signed", "ota": "missing"})
@@ -124,6 +124,19 @@ class CollectTest(unittest.TestCase):
         w.restart()
         w.collect()
         self.assertEqual(len(w.gh.downloads), downloads)  # every outcome is final: nothing downloaded again
+
+    def test_an_unchanged_run_list_does_no_work(self):
+        w = World(self)
+        w.gh.add_run(101, apk=apk_artifact(101, 1101), ota=ota_artifact(101, "u1"))
+        w.collect()
+        index = w.root / "index.json"
+        before, downloads = index.stat().st_mtime_ns, len(w.gh.downloads)
+        writes = []
+        real = app_updates.store.write_json
+        with mock.patch.object(app_updates.store, "write_json", lambda *a: writes.append(a) or real(*a)):
+            for _ in range(3):  # three 2-minute passes with nothing new on GitHub
+                self.assertEqual(w.collect(), 120)
+        self.assertEqual((writes, len(w.gh.downloads), index.stat().st_mtime_ns), ([], downloads, before))
 
     def test_a_failed_download_is_retried_next_pass(self):
         w = World(self)

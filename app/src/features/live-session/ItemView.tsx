@@ -2,7 +2,7 @@
 // event re-renders only the rows it touched.
 
 import { memo, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { DiffView } from '../../ui/DiffView';
 import { Icon } from '../../ui/Icon';
@@ -10,12 +10,13 @@ import { ReplyButtons } from '../../ui/ReplyButtons';
 import { StatusTick } from '../../ui/StatusTick';
 import { colors, mono, radius, space } from '../../ui/theme';
 import { clockIST } from '../../common/format';
+import type { SentAttachment } from './attachments';
 import type { Item, SendStatus, Tick } from './model';
 
 const ORIGIN_LABEL: Record<string, string> = { telegram: 'Telegram', terminal: 'Terminal', app: '', system: '' };
 
 /** Accessibility labels for the status ticks (drawn by ui/StatusTick). */
-const TICK_LABEL: Record<Tick, string> = { clock: 'Not sent yet', sent: 'Sent', delivered: 'EDITH has it', failed: 'Not sent, tap to retry' };
+const TICK_LABEL: Record<Tick, string> = { clock: 'Not sent yet', sent: 'Sent', delivered: 'EDITH has it', failed: 'Not sent' };
 
 /** A caption only where the state isn't obvious from the ticks. */
 const STATUS_TEXT: Partial<Record<SendStatus, string>> = {
@@ -38,15 +39,18 @@ export const ItemView = memo(function ItemView({ item, onPress, tick, status, on
     case 'user': {
       const from = ORIGIN_LABEL[item.origin];
       const failed = tick === 'failed';
-      const retry = failed && item.local && onRetry ? () => onRetry(item.local!.key) : undefined;
+      const retry = failed && item.local && !item.local.final && onRetry ? () => onRetry(item.local!.key) : undefined;
       const caption = failed ? (item.local?.error ?? 'Not sent') : status ? STATUS_TEXT[status] : undefined;
       return (
         <View style={styles.userWrap}>
           <Pressable style={[styles.bubble, styles.user, failed && styles.userFailed]} onPress={retry} disabled={!retry} accessibilityHint={retry ? 'Send again' : undefined}>
             {from || item.voice ? <Text style={styles.meta}>{[from, item.voice ? '🎙 voice' : ''].filter(Boolean).join(' · ')}</Text> : null}
-            <Text style={styles.text} selectable>
-              {item.text}
-            </Text>
+            {item.attachments.length ? <SentAttachments list={item.attachments} /> : null}
+            {item.text ? (
+              <Text style={styles.text} selectable>
+                {item.text}
+              </Text>
+            ) : null}
             <View style={styles.footer}>
               <Text style={styles.time}>{clockIST(item.ts)}</Text>
               {tick ? (
@@ -61,7 +65,7 @@ export const ItemView = memo(function ItemView({ item, onPress, tick, status, on
               <Text style={styles.reactionText}>{item.reaction}</Text>
             </View>
           ) : null}
-          {caption ? <Text style={[styles.caption, failed && styles.captionError]}>{failed ? `${caption} · Tap to retry` : caption}</Text> : null}
+          {caption ? <Text style={[styles.caption, failed && styles.captionError]}>{retry ? `${caption} · Tap to retry` : caption}</Text> : null}
         </View>
       );
     }
@@ -140,7 +144,39 @@ function DiffCard({ path, diff }: { path: string; diff: string }) {
   );
 }
 
+/** A message's attachments: thumbnails for images sent from this phone, name chips otherwise. */
+const SentAttachments = memo(function SentAttachments({ list }: { list: SentAttachment[] }) {
+  // A thumbnail whose file is gone (pruned, or the cache was cleared) shows as its name chip.
+  const [missing, setMissing] = useState<ReadonlySet<string>>(() => new Set());
+  return (
+    <View style={styles.attachments}>
+      {list.map((a, i) =>
+        a.kind === 'image' && a.uri && !missing.has(a.uri) ? (
+          <Image
+            key={`${a.id}-${i}`}
+            source={{ uri: a.uri }}
+            style={styles.attachmentImage}
+            accessibilityLabel={`Photo ${a.name}`}
+            onError={() => setMissing((m) => new Set(m).add(a.uri!))}
+          />
+        ) : (
+          <View key={`${a.id}-${i}`} style={styles.attachmentChip}>
+            <Icon name={a.kind === 'audio' ? 'music-note-outline' : 'image-outline'} size={14} color={colors.textDim} />
+            <Text style={styles.attachmentName} numberOfLines={1}>
+              {a.name}
+            </Text>
+          </View>
+        ),
+      )}
+    </View>
+  );
+});
+
 const styles = StyleSheet.create({
+  attachments: { flexDirection: 'row', flexWrap: 'wrap', gap: space.xs, marginBottom: space.xs },
+  attachmentImage: { width: 140, height: 140, borderRadius: radius.m },
+  attachmentChip: { flexDirection: 'row', alignItems: 'center', gap: space.xs, maxWidth: 220, backgroundColor: colors.surfaceHigh, borderRadius: radius.s, paddingHorizontal: space.s, paddingVertical: space.xs },
+  attachmentName: { color: colors.text, fontSize: 13, flexShrink: 1 },
   bubble: { borderRadius: radius.l, paddingHorizontal: space.m, paddingVertical: space.s + 2, marginVertical: space.xs, maxWidth: '88%' },
   userWrap: { alignSelf: 'flex-end', alignItems: 'flex-end', maxWidth: '88%', marginVertical: space.xs },
   user: { backgroundColor: colors.user, borderBottomRightRadius: radius.s, maxWidth: '100%', marginVertical: 0 },

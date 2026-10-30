@@ -1,6 +1,6 @@
 // Test doubles for the ports (used by jest only; nothing in the app imports this folder).
 
-import { createApi } from '../core/api';
+import { ApiError, createApi } from '../core/api';
 import { Connection } from '../core/connection';
 import { EventBus, type EdithEvent, type EventDataMap, type EventType } from '../core/events';
 import type { FeatureContext } from '../core/feature';
@@ -59,6 +59,34 @@ export class FakeTransport implements Transport {
       released = true;
     };
   }
+
+  async uploadRaw<T>(
+    path: string,
+    file: { uri: string; mime: string; name: string },
+    opts: { onProgress?: (sent: number, total: number) => void; signal?: AbortSignal } = {},
+  ): Promise<T> {
+    this.uploads.push({ path, file, field: 'raw' });
+    const handler = this.routes.get(`UPLOAD ${path}`);
+    if (!handler) throw new Error(`FakeTransport: no answer for UPLOAD ${path}`);
+    opts.onProgress?.(50, 100);
+    const { signal } = opts;
+    if (!signal) return handler(file) as T;
+    // Like the real one: an abort cancels at once, whatever the server would have answered.
+    return new Promise<T>((resolve, reject) => {
+      const onAbort = () => {
+        this.cancelledUploads++;
+        reject(new ApiError(0, 'cancelled'));
+      };
+      if (signal.aborted) return onAbort();
+      signal.addEventListener('abort', onAbort, { once: true });
+      Promise.resolve()
+        .then(() => handler(file) as T)
+        .then(resolve, reject)
+        .finally(() => signal.removeEventListener('abort', onAbort));
+    });
+  }
+
+  cancelledUploads = 0;
 
   authorized(path: string) {
     return this.config ? { url: this.config.baseUrl + path, headers: { Authorization: `Bearer ${this.config.token}` } } : null;

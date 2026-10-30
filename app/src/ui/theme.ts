@@ -18,6 +18,8 @@ export const colors = {
   diffDel: '#2D1416',
   diffDelText: '#FFA198',
   diffHunk: '#A5D6FF',
+  overlay: 'rgba(14, 17, 22, 0.66)', // over a thumbnail while it uploads
+  overlayStrong: 'rgba(14, 17, 22, 0.8)',
 } as const;
 
 export const space = { xs: 4, s: 8, m: 12, l: 16, xl: 24 } as const;

@@ -166,7 +166,7 @@ describe('message states', () => {
 
   it('a failed turn shows as failed on its message', () => {
     let s = [ev('turn.started', { ref: 'r', lane: 'main' })].reduce(reduce, initialLive);
-    s = { ...s, items: [{ kind: 'user', id: 99, ts: 1, text: 'x', origin: 'app', voice: false, ref: 'r', delivery: 'main', local: { key: 'k', status: 'sent', error: null }, echoed: false, reaction: null }] };
+    s = { ...s, items: [{ kind: 'user', id: 99, ts: 1, text: 'x', origin: 'app', voice: false, ref: 'r', delivery: 'main', local: { key: 'k', status: 'sent', error: null }, echoed: false, reaction: null, attachments: [] }] };
     s = reduce(s, ev('turn.failed', { ref: 'r', reason: 'crashed' }));
     expect(tickOf(mine(s), s.turns)).toBe('failed');
     expect(sendStatus(mine(s), s.turns)).toBe('failed');

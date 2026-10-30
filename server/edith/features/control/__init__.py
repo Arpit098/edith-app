@@ -1,14 +1,17 @@
-"""Control: /stop, /status, /queue, /restart and /help (also /start).
+"""Control: /stop, /status, /queue, /compact, /restart and /help (also /start).
 
 Texts are the legacy bridge's, word for word (golden tests in tests/features/test_bridge_commands.py).
 /help and the command menu are built from the registry: every feature places its own commands.
 """
 import os
+import queue
 import signal
 import time
 
 from edith.core import CommandCall, Context, Feature
 
+COMPACT_REPLIES = {"busy": "⚠️ EDITH is busy; try /compact when the task ends.", "ok": "✅ Compacted.",
+                   "failed": "❌ Compaction failed"}
 HELP_HEADER = ("I'm E.D.I.T.H. Just text me what you need.\n\n"
                "If I'm busy, new messages run in a parallel lane straight away (up to {lanes}).\n\n")
 
@@ -50,6 +53,22 @@ def setup(ctx: Context) -> None:
         call.reply("🔄 Restarting the bridge, back in a few seconds.")
         os.kill(os.getpid(), signal.SIGTERM)  # main.py shuts down cleanly; systemd (Restart=always) restarts it
 
+    def compact_job(item):
+        instructions, reply = item
+        result, detail = agent.compact(instructions)
+        reply(COMPACT_REPLIES[result] + (f": {detail}" if detail else ""))
+
+    submit_compact = ctx.add_worker("compact", compact_job, maxsize=1)  # one at a time; it takes minutes
+
+    def compact(call: CommandCall):
+        if agent.busy():
+            return COMPACT_REPLIES["busy"]
+        try:
+            submit_compact((call.args.strip(), call.reply))
+        except queue.Full:
+            return "🗜 Already compacting; I'll tell you when it's done."
+        return "🗜 Compacting the conversation…"
+
     # ---- App API ----
 
     def api_stop(req):
@@ -69,6 +88,8 @@ def setup(ctx: Context) -> None:
     ctx.add_route("GET", "/v1/status", api_status)
     ctx.add_command("queue", "Run after the current task", queue_, usage="<task>", menu=True, order=40,
                     help="wait for the current task instead of running in parallel", takes_prompt=True)
+    ctx.add_command("compact", "Compact the conversation", compact, usage="[instructions]", order=75,
+                    help="compact the conversation (optional: what to keep)")
     ctx.add_command("stop", "Stop all running tasks", stop, menu=True, order=80, help="stop all running tasks")
     ctx.add_command("status", "What E.D.I.T.H is doing", status, menu=True, order=90, help="what I'm doing right now")
     ctx.add_command("restart", "Restart the bridge", restart, menu=True, order=100,

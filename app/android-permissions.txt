@@ -1,0 +1,14 @@
+# The APK's merged <uses-permission> set, exactly (checked in CI by scripts/check-permissions.sh).
+# Adding one is a reviewed change: say which library or feature needs it.
+android.permission.INTERNET                 # the App API over Tailscale
+android.permission.ACCESS_NETWORK_STATE     # expo / React Native networking
+android.permission.RECORD_AUDIO             # push-to-talk (android-modules/edith-recorder)
+android.permission.CAMERA                   # attachments: take a photo (expo-image-picker)
+android.permission.REQUEST_INSTALL_PACKAGES # in-app APK updates (android-modules/edith-installer)
+android.permission.POST_NOTIFICATIONS       # notifications and the live status (android-modules/edith-system)
+android.permission.POST_PROMOTED_NOTIFICATIONS # Android 16 Live Updates: the Live Alerts pill (edith-system)
+android.permission.FOREGROUND_SERVICE       # EdithSessionService while a turn runs or an approval waits (edith-system)
+android.permission.FOREGROUND_SERVICE_SPECIAL_USE # its type, specialUse (reason in edith-system's manifest)
+android.permission.USE_BIOMETRIC            # expo-secure-store
+android.permission.USE_FINGERPRINT          # expo-secure-store
+com.arpit.edith.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION # androidx.core (non-exported dynamic receivers)
