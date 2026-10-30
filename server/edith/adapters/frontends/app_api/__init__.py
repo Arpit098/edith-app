@@ -45,6 +45,7 @@ CLIENT_BACKLOG = 1000     # frames waiting for one stream client; more and it is
 PING_EVERY = 25.0         # seconds; a client that misses two pings is dropped
 AUDIT_MAX = 5 * 1024 * 1024
 IDLE_POLL = 60.0          # serve_forever's idle wake-up; stop() wakes it at once anyway
+DRAIN_MAX = 256 * 1024    # an upload refused early: read and drop a rest up to this, so the client gets the answer
 
 
 def tailscale_ip():
@@ -475,6 +476,18 @@ class BodyReader:
         self.left -= len(data)
         return data
 
+    def drain(self, limit):
+        """Read and drop the rest of the body if it is at most `limit` bytes; -> True if it was read
+        (each read has the connection's socket timeout)."""
+        if self.left > limit:
+            return False
+        try:
+            while self.read():
+                pass
+        except (OSError, ConnectionError):
+            return False
+        return True
+
 
 class Handler(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
@@ -559,7 +572,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                             "query": dict(urllib.parse.parse_qsl(url.query)),
                                             "headers": {k.lower(): v for k, v in self.headers.items()}})
                 finally:
-                    if reader.left:  # the handler stopped early (e.g. a 400): don't reuse the connection
+                    # The handler stopped early (e.g. a 400). A small rest is read and dropped, so the
+                    # client finishes sending and gets the answer (closing on it mid-send makes its write
+                    # fail instead); a big one isn't worth the bandwidth: the connection is closed.
+                    if reader.left and not reader.drain(DRAIN_MAX):
                         self.close_connection = True
                 status, extra = self._answer(result)
                 return

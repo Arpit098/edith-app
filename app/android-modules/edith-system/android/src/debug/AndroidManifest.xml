@@ -1,0 +1,10 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <!-- Debug builds only (never in a release APK): the CI emulator job posts each notification state
+       through this, with `adb shell am broadcast`. DUMP is held by adb's shell, not by other apps. -->
+  <application>
+    <receiver
+      android:name="com.arpit.edith.system.DebugNotificationsReceiver"
+      android:exported="true"
+      android:permission="android.permission.DUMP" />
+  </application>
+</manifest>
