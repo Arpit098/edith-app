@@ -8,8 +8,9 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { StatusDetails } from '../../core/api';
 import { shallowEqual, useStore } from '../../core/store';
 import { clockIST, formatIST } from '../../common/format';
+import { colors, radius, space, type } from '../../core/theme';
+import { Glass } from '../../ui/Glass';
 import { Icon } from '../../ui/Icon';
-import { colors, mono, radius, space } from '../../ui/theme';
 import type { LiveModel } from './model';
 import { barSummary, detailsLabel, formatElapsed, formatTokens, formatUptime, pollDetails, sinceFrom, type BarSummary } from './status';
 
@@ -20,7 +21,8 @@ const AGENT: Record<StatusDetails['agents'][number]['state'], string> = { idle: 
 
 type Fetched = { details: StatusDetails; at: number } | null;
 
-export const StatusPanel = memo(function StatusPanel({ model }: { model: LiveModel }) {
+/** `backdrop`: the view the pill and card float over (useBackdrop), for real glass; flat without it. */
+export const StatusPanel = memo(function StatusPanel({ model, backdrop }: { model: LiveModel; backdrop?: number | null }) {
   const bar = useStore(model.store, barSummary, shallowEqual);
   const [open, setOpen] = useState(false);
   const [fetched, setFetched] = useState<Fetched>(null);
@@ -45,27 +47,29 @@ export const StatusPanel = memo(function StatusPanel({ model }: { model: LiveMod
 
   return (
     <View>
-      <Pressable
-        style={styles.bar}
-        onPress={() => setOpen((o) => !o)}
-        accessibilityRole="button"
-        accessibilityState={{ expanded: open }}
-        accessibilityLabel={`${bar.label}${bar.counts ? `, ${bar.counts}` : ''}. ${open ? 'Hide' : 'Show'} details`}
-      >
-        <View style={[styles.dot, { backgroundColor: TONE[bar.tone] }]} />
-        <Text style={styles.barText} numberOfLines={1}>
-          {bar.label}
-          {bar.tone !== 'idle' ? <Elapsed since={since} /> : null}
-          {bar.counts ? <Text style={styles.dim}>{` · ${bar.counts}`}</Text> : null}
-        </Text>
-        {bar.title ? (
-          <Text style={styles.barTitle} numberOfLines={1}>
-            {bar.title}
+      <Glass level="thin" backdrop={backdrop} radius={radius.pill}>
+        <Pressable
+          style={styles.bar}
+          onPress={() => setOpen((o) => !o)}
+          accessibilityRole="button"
+          accessibilityState={{ expanded: open }}
+          accessibilityLabel={`${bar.label}${bar.counts ? `, ${bar.counts}` : ''}. ${open ? 'Hide' : 'Show'} details`}
+        >
+          <View style={[styles.dot, { backgroundColor: TONE[bar.tone] }]} />
+          <Text style={styles.barText} numberOfLines={1}>
+            {bar.label}
+            {bar.tone !== 'idle' ? <Elapsed since={since} /> : null}
+            {bar.counts ? <Text style={styles.dim}>{` · ${bar.counts}`}</Text> : null}
           </Text>
-        ) : null}
-        <Icon name={open ? 'chevron-up' : 'chevron-down'} size={18} color={colors.textDim} />
-      </Pressable>
-      {open ? <Card fetched={fetched} error={error} /> : null}
+          {bar.title ? (
+            <Text style={styles.barTitle} numberOfLines={1}>
+              {bar.title}
+            </Text>
+          ) : null}
+          <Icon name={open ? 'chevron-up' : 'chevron-down'} size={18} color={colors.textDim} />
+        </Pressable>
+      </Glass>
+      {open ? <Card fetched={fetched} error={error} backdrop={backdrop} /> : null}
     </View>
   );
 });
@@ -92,19 +96,19 @@ function Elapsed({ since }: { since: number }) {
   return <Text>{` · ${formatElapsed(now - since)}`}</Text>;
 }
 
-function Card({ fetched, error }: { fetched: Fetched; error: string | null }) {
+function Card({ fetched, error, backdrop }: { fetched: Fetched; error: string | null; backdrop?: number | null }) {
   const d = fetched?.details;
   if (!d) {
     return (
-      <View style={styles.card}>
+      <Glass level="regular" backdrop={backdrop} radius={radius.l} style={styles.card}>
         <Text style={error ? styles.error : styles.dim}>{error ? `Couldn't load the details: ${error}` : 'Loading…'}</Text>
-      </View>
+      </Glass>
     );
   }
   const ago = (t: number | null) => (t == null ? null : formatElapsed(d.ts - t));
   const e = d.edith;
   return (
-    <View style={styles.card}>
+    <Glass level="regular" backdrop={backdrop} radius={radius.l} style={styles.card}>
       <ScrollView style={styles.scroll} nestedScrollEnabled>
         {error ? <Text style={styles.error}>{`Couldn't refresh: ${error}`}</Text> : null}
         <Section title="EDITH">
@@ -141,7 +145,7 @@ function Card({ fetched, error }: { fetched: Fetched; error: string | null }) {
           {[d.server.tag ? `Live ${d.server.tag}` : null, `up ${formatUptime(d.server.uptime)}`, `updated ${clockIST(fetched.at)} IST`].filter(Boolean).join(' · ')}
         </Text>
       </ScrollView>
-    </View>
+    </Glass>
   );
 }
 
@@ -189,27 +193,27 @@ function AgentRow({ agent: a }: { agent: StatusDetails['agents'][number] }) {
 }
 
 const styles = StyleSheet.create({
-  bar: { flexDirection: 'row', alignItems: 'center', gap: space.s, paddingHorizontal: space.m, paddingVertical: space.s, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
+  bar: { flexDirection: 'row', alignItems: 'center', gap: space.s, paddingHorizontal: space.m, paddingVertical: space.s },
   dot: { width: 10, height: 10, borderRadius: 5, marginHorizontal: 5 },
-  barText: { color: colors.text, fontSize: 13, flex: 1 },
-  barTitle: { color: colors.textDim, fontSize: 12, maxWidth: '35%' },
+  barText: { color: colors.text, fontSize: type.size.small, flex: 1 },
+  barTitle: { color: colors.textDim, fontSize: type.size.caption, maxWidth: '35%' },
   dim: { color: colors.textDim },
-  card: { marginHorizontal: space.s, marginTop: space.xs, marginBottom: space.s, padding: space.m, backgroundColor: colors.surface, borderRadius: radius.l, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border },
+  card: { marginTop: space.s, padding: space.m },
   scroll: { maxHeight: 420 },
-  error: { color: colors.danger, fontSize: 13, marginBottom: space.s },
+  error: { color: colors.danger, fontSize: type.size.small, marginBottom: space.s },
   section: { marginBottom: space.m },
-  sectionTitle: { color: colors.textDim, fontSize: 11, fontWeight: '600', letterSpacing: 0.8, textTransform: 'uppercase', marginBottom: space.xs },
+  sectionTitle: { color: colors.textDim, fontSize: type.size.caption, fontWeight: '600', letterSpacing: 0.8, textTransform: 'uppercase', marginBottom: space.xs },
   row: { flexDirection: 'row', gap: space.s, paddingVertical: 2 },
-  label: { color: colors.textDim, fontSize: 13, width: 84 },
-  value: { color: colors.text, fontSize: 13, flex: 1 },
-  mono: { fontFamily: mono },
+  label: { color: colors.textDim, fontSize: type.size.small, width: 84 },
+  value: { color: colors.text, fontSize: type.size.small, flex: 1 },
+  mono: { fontFamily: type.mono },
   warn: { color: colors.warn },
   agent: { paddingVertical: space.xs },
   agentHead: { flexDirection: 'row', alignItems: 'center', gap: space.s },
   smallDot: { width: 8, height: 8, borderRadius: 4 },
-  agentName: { color: colors.text, fontSize: 13, fontWeight: '600', flexShrink: 1 },
-  agentBranch: { color: colors.textDim, fontSize: 12, flex: 1 },
-  agentState: { color: colors.textDim, fontSize: 12 },
-  agentLast: { color: colors.textDim, fontSize: 12, marginLeft: 16, marginTop: 2 },
-  footer: { color: colors.textDim, fontSize: 11, textAlign: 'center' },
+  agentName: { color: colors.text, fontSize: type.size.small, fontWeight: '600', flexShrink: 1 },
+  agentBranch: { color: colors.textDim, fontSize: type.size.caption, flex: 1 },
+  agentState: { color: colors.textDim, fontSize: type.size.caption },
+  agentLast: { color: colors.textDim, fontSize: type.size.caption, marginLeft: 16, marginTop: 2 },
+  footer: { color: colors.textDim, fontSize: type.size.caption, textAlign: 'center' },
 });

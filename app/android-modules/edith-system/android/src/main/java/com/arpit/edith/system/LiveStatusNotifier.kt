@@ -52,6 +52,30 @@ class LiveStatusNotifier(private val context: Context) {
     }
   }
 
+  /**
+   * A 30 s demo Live Update ("EDITH · Thinking…" with a running timer) under its own id, so Arpit can
+   * check the Live Alerts pill without starting a turn. It never touches the real status.
+   */
+  fun testIsland() {
+    val demo = LiveStatus(
+      title = "EDITH · Thinking…",
+      text = "A test of the Live Alerts pill",
+      chip = "Thinking",
+      startedAt = System.currentTimeMillis(),
+      progress = true,
+      link = "edith://live",
+      keepAlive = false,
+    )
+    val notification = build(demo, timeoutMs = TEST_MS)
+    main.post {
+      try {
+        manager.notify(TEST_ID, notification)
+      } catch (ignored: SecurityException) {
+        // notifications not allowed: Settings says so
+      }
+    }
+  }
+
   fun clear() {
     main.post {
       EdithSessionService.release(remove = true)
@@ -93,7 +117,7 @@ class LiveStatusNotifier(private val context: Context) {
     }
   }
 
-  private fun build(s: LiveStatus): Notification {
+  private fun build(s: LiveStatus, timeoutMs: Long? = null): Notification {
     ensureChannel(context)
     val builder = Notification.Builder(context, CHANNEL_ID)
       .setSmallIcon(R.drawable.edith_status_icon)
@@ -107,7 +131,7 @@ class LiveStatusNotifier(private val context: Context) {
     // Never claims a task forever (EDITH killed mid-task, a lost turn.done): it times out by itself
     // unless re-posted. JS re-posts a held status at least every 10 min (features/live-status), and
     // EdithSessionService stops at the same deadline.
-    builder.setTimeoutAfter(if (s.keepAlive) KEEP_ALIVE_TIMEOUT_MS else STALE_AFTER_MS)
+    builder.setTimeoutAfter(timeoutMs ?: if (s.keepAlive) KEEP_ALIVE_TIMEOUT_MS else STALE_AFTER_MS)
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) builder.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
     s.startedAt?.let { builder.setWhen(it).setUsesChronometer(true) }
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA) {
@@ -123,6 +147,8 @@ class LiveStatusNotifier(private val context: Context) {
   companion object {
     const val CHANNEL_ID = "edith_live"
     const val NOTIFICATION_ID = 7110
+    private const val TEST_ID = 7112
+    private const val TEST_MS = 30_000L
     private const val STALE_AFTER_MS = 30L * 60 * 1000 // no update for 30 min: EDITH is gone, drop it
     const val KEEP_ALIVE_TIMEOUT_MS = 20L * 60 * 1000 // a held status not re-posted for 20 min: let go
     // Notification.EXTRA_REQUEST_PROMOTED_ONGOING (Android 16), by value: the platform Builder has no

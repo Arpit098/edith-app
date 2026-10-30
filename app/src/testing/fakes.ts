@@ -42,7 +42,7 @@ export class FakeTransport implements Transport {
     this.reconnects++;
   }
 
-  uploads: { path: string; file: { uri: string; mime: string; name: string }; field: string }[] = [];
+  uploads: { path: string; file: { uri: string; mime: string; name: string }; field: string; headers?: Record<string, string> }[] = [];
   async upload<T>(path: string, file: { uri: string; mime: string; name: string }, opts: { field?: string } = {}): Promise<T> {
     this.uploads.push({ path, file, field: opts.field ?? 'file' });
     const handler = this.routes.get(`UPLOAD ${path}`);
@@ -63,9 +63,9 @@ export class FakeTransport implements Transport {
   async uploadRaw<T>(
     path: string,
     file: { uri: string; mime: string; name: string },
-    opts: { onProgress?: (sent: number, total: number) => void; signal?: AbortSignal } = {},
+    opts: { onProgress?: (sent: number, total: number) => void; signal?: AbortSignal; headers?: Record<string, string> } = {},
   ): Promise<T> {
-    this.uploads.push({ path, file, field: 'raw' });
+    this.uploads.push({ path, file, field: 'raw', headers: opts.headers });
     const handler = this.routes.get(`UPLOAD ${path}`);
     if (!handler) throw new Error(`FakeTransport: no answer for UPLOAD ${path}`);
     opts.onProgress?.(50, 100);

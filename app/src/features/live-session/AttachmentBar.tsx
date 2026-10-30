@@ -8,7 +8,8 @@ import { formatBytes } from '../../common/format';
 import { useStore } from '../../core/store';
 import { Button } from '../../ui/Button';
 import { Icon } from '../../ui/Icon';
-import { colors, radius, space } from '../../ui/theme';
+import { GrowIn } from '../../ui/motion';
+import { colors, radius, space } from '../../core/theme';
 import type { AttachmentsModel, Draft, DraftsState } from './attachments';
 
 const selectDrafts = (s: DraftsState) => s.drafts;
@@ -22,11 +23,12 @@ export const AttachMenu = memo(function AttachMenu({ attach, onDone }: { attach:
     void attach.add(source);
   };
   return (
-    <View style={styles.menu} accessibilityRole="menu">
+    // Grows out of the paperclip (bottom left), like a sheet from its trigger.
+    <GrowIn origin="left bottom" style={styles.menu}>
       <Button small icon="camera-outline" label="Camera" onPress={() => add('camera')} disabled={picking} />
       <Button small icon="image-outline" label="Photos" onPress={() => add('library')} disabled={picking} />
       <Button small icon="music-note-outline" label="Audio file" onPress={() => add('audio')} disabled={picking} />
-    </View>
+    </GrowIn>
   );
 });
 
@@ -97,7 +99,7 @@ const styles = StyleSheet.create({
   strip: { gap: space.s, paddingHorizontal: space.s, paddingTop: space.s, alignItems: 'center' },
   picking: { marginHorizontal: space.s },
   error: { color: colors.danger, fontSize: 13, paddingHorizontal: space.m, paddingTop: space.s },
-  chip: { borderRadius: radius.m, backgroundColor: colors.surface, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, overflow: 'hidden' },
+  chip: { borderRadius: radius.m, backgroundColor: colors.card, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.hairline, overflow: 'hidden' },
   imageChip: { width: 64, height: 64 },
   failed: { borderColor: colors.danger },
   thumb: { width: 64, height: 64 },

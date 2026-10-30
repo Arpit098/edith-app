@@ -5,8 +5,9 @@ import { StyleSheet, Text, View } from 'react-native';
 import { formatBytes, formatIST } from '../../common/format';
 import { useStore } from '../../core/store';
 import { Button } from '../../ui/Button';
-import { colors, space } from '../../ui/theme';
+import { colors, space } from '../../core/theme';
 import { apkAvailable, type AppUpdateModel, type AppUpdateState } from './model';
+import { ReleaseNotes } from './ReleaseNotes';
 
 const selectState = (s: AppUpdateState) => s;
 
@@ -38,7 +39,7 @@ export function UpdateSection({ model }: { model: AppUpdateModel }) {
           <Text style={styles.text}>
             Update available: EDITH {s.latest.versionName} (build {s.latest.versionCode}, {formatBytes(s.latest.size)}, {formatIST(s.latest.built_at)})
           </Text>
-          {s.latest.notes ? <Text style={styles.notes}>{s.latest.notes}</Text> : null}
+          <ReleaseNotes release={s.latest} />
           {s.phase === 'downloading' ? (
             <Text style={styles.dim}>
               Downloading {formatBytes(s.received)} of {formatBytes(s.total)} ({s.total ? Math.floor((100 * s.received) / s.total) : 0}%)
@@ -65,11 +66,10 @@ export function UpdateSection({ model }: { model: AppUpdateModel }) {
 
 const styles = StyleSheet.create({
   box: { gap: space.xs },
-  block: { gap: space.s, marginTop: space.s, paddingTop: space.s, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
+  block: { gap: space.s, marginTop: space.s, paddingTop: space.s, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.hairline },
   row: { flexDirection: 'row', alignItems: 'center', gap: space.s, marginTop: space.s, flexWrap: 'wrap' },
   value: { color: colors.text, fontSize: 16 },
   text: { color: colors.text, fontSize: 14 },
-  notes: { color: colors.textDim, fontSize: 13 },
   dim: { color: colors.textDim, fontSize: 13 },
   error: { color: colors.danger },
 });

@@ -1,0 +1,135 @@
+# Phase 2b screens for Arpit's approval (PLAN.md §4.11), on an Android 16 emulator (x86 runner, free
+# and open source tools only): a release-mode x86_64 APK (Expo's debug key, OTA off: never shipped)
+# connected to a demo App API (app/scripts/emulator/demo-api.py). It saves screenshots of the main
+# screens (glass, and flat in battery saver), frame times for glass on and off, and a short screen
+# recording as the `phase-2b-screens` artifact.
+#
+# About half an hour of runner time, so it runs only on PRs that touch the look (glass, theme, ui,
+# shell) and by hand, never on main builds.
+name: screens
+
+on:
+  pull_request:
+    paths:
+      - 'app/android-modules/edith-glass/**'
+      - 'app/src/ui/**'
+      - 'app/src/core/theme/**'
+      - 'app/src/shell/**'
+      - 'app/scripts/emulator/screens.sh'
+      - 'app/scripts/emulator/demo-api.py'
+      - '.github/workflows/screens.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: screens-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: app
+
+jobs:
+  screens:
+    name: Screens, frame times and a clip on an emulator
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_NOHASHDIR: 'true'
+      CCACHE_COMPILERCHECK: content
+      CCACHE_SLOPPINESS: file_macro,time_macros,include_file_mtime,include_file_ctime,pch_defines
+      CCACHE_MAXSIZE: 1G
+      CMAKE_C_COMPILER_LAUNCHER: ccache
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
+    steps:
+      # The build plus the Android 16 system image don't fit the runner's free disk (as in notifications.yml).
+      - name: Free disk space
+        working-directory: .
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/share/swift
+          sudo docker image prune --all --force >/dev/null || true
+          df -h /
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: false
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ccache
+      - run: npm ci --no-audit --no-fund
+      - name: ccache
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-screens-${{ runner.os }}-${{ hashFiles('app/package-lock.json') }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-screens-${{ runner.os }}-${{ hashFiles('app/package-lock.json') }}-
+            ccache-screens-${{ runner.os }}-
+
+      - name: Expo prebuild
+        run: npx expo prebuild --platform android --no-install
+        env:
+          CI: 1
+      # Release mode (the JS bundled in, as on the phone), x86_64 for the emulator. No signing
+      # secrets here: Expo's debug key, and no EDITH_UPDATES_SIGNING, so OTA is off.
+      - name: Gradle assembleRelease (x86_64)
+        working-directory: app/android
+        run: |
+          ./gradlew assembleRelease --no-daemon --build-cache -PreactNativeArchitectures=x86_64 \
+            -Pandroid.enableMinifyInReleaseBuilds=false -Pandroid.enableShrinkResourcesInReleaseBuilds=false \
+            "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g"
+          cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/edith-screens.apk"
+          rm -rf app/build ../node_modules/*/android/build ../node_modules/@*/*/android/build ../android-modules/*/android/build
+          df -h /
+
+      - name: KVM for the emulator
+        working-directory: .
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Demo App API
+        run: nohup python3 scripts/emulator/demo-api.py 8787 >"$RUNNER_TEMP/demo-api.out" 2>&1 &
+      # Animations stay on: the clip is of them (disable-animations would mean "Remove animations").
+      - name: Screens on Android 16
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 36
+          target: google_apis
+          arch: x86_64
+          profile: pixel_7
+          # The runner's 4 cores and enough memory: with the defaults the system process itself
+          # stalled after boot ("Process system isn't responding").
+          cores: 4
+          ram-size: 4096M
+          heap-size: 576M
+          disable-animations: false
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          working-directory: app
+          script: ./scripts/emulator/screens.sh "$RUNNER_TEMP/edith-screens.apk" out/screens
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Phase 2b screens"
+            ls out/screens 2>/dev/null | sed 's/^/- /' || echo "(none)"
+            echo
+            cat out/screens/frames.md 2>/dev/null || true
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: phase-2b-screens
+          path: app/out/screens/
+          retention-days: 30

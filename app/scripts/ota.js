@@ -5,6 +5,7 @@
 //
 //   node scripts/ota.js --dir <artifact dir containing dist/> --runtime-version <rv> --key <private key pem>
 //        --cert <certificate pem> --base-url http://edith:8787 --sha <git sha> --run-id <n> [--expo-config <json file>]
+//        [--release-notes <json file>]
 //
 // The signature is RSA PKCS#1 v1.5 over SHA-256 of the manifest bytes, which is what expo-updates
 // verifies (SHA256withRSA). The script checks its own signature against the certificate that the
@@ -59,6 +60,7 @@ function describe(dir, rel, contentType, baseUrl) {
  * @param {string} o.sha
  * @param {number} o.runId
  * @param {object} [o.expoConfig]
+ * @param {object} [o.releaseNotes]  {new, fixes, changes, details} (scripts/release-notes.js)
  * @param {Date}   [o.now]
  */
 function buildUpdate(o) {
@@ -82,7 +84,8 @@ function buildUpdate(o) {
     runtimeVersion: o.runtimeVersion,
     launchAsset: launch.asset,
     assets: assets.map((a) => a.asset),
-    metadata: { channel: 'main', sha: o.sha },
+    // Manifest metadata values are strings (expo-updates keeps them flat), so the notes go in as JSON.
+    metadata: { channel: 'main', sha: o.sha, ...(o.releaseNotes ? { release_notes: JSON.stringify(o.releaseNotes) } : {}) },
     extra: o.expoConfig ? { expoClient: o.expoConfig } : {},
   };
   const manifestBytes = Buffer.from(JSON.stringify(manifest), 'utf8');
@@ -102,6 +105,7 @@ function buildUpdate(o) {
     sha: o.sha,
     run_id: o.runId,
     files: [{ ...launch.file, launch: true }, ...assets.map((a) => a.file)],
+    ...(o.releaseNotes ? { release_notes: o.releaseNotes } : {}),
   };
   return { manifestBytes, sig, update };
 }
@@ -136,6 +140,7 @@ if (require.main === module) {
       sha: a.sha,
       runId: Number(a['run-id']),
       expoConfig: a['expo-config'] ? JSON.parse(fs.readFileSync(a['expo-config'], 'utf8')) : undefined,
+      releaseNotes: a['release-notes'] ? JSON.parse(fs.readFileSync(a['release-notes'], 'utf8')) : undefined,
     });
     writeUpdate(a.dir, built);
     console.log(`OTA update ${built.update.id}: runtime ${built.update.runtimeVersion}, ${built.update.files.length} files`);

@@ -15,6 +15,7 @@ const LATEST = {
   sha256: SHA,
   cert_sha256: '2B:6C',
   notes: 'Settings: updates',
+  release_notes: null,
   url: '/v1/app/apk/1043',
 };
 

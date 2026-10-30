@@ -22,6 +22,8 @@ class FakeStatus implements OngoingStatus {
   }
   canPromote = () => true;
   openPromotionSettings() {}
+  liveUpdates = true;
+  testIsland() {}
 }
 
 describe('viewOf', () => {

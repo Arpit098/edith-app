@@ -5,7 +5,7 @@ import type { Command } from '../../core/api';
 import { useStore } from '../../core/store';
 import { Button } from '../../ui/Button';
 import { ReplyButtons } from '../../ui/ReplyButtons';
-import { colors, radius, space } from '../../ui/theme';
+import { colors, radius, space, type, useChrome } from '../../core/theme';
 import { toast } from '../../ui/toast';
 import type { CommandsModel, CommandsState, OutputEntry } from './model';
 
@@ -18,6 +18,7 @@ const keyOf = (o: OutputEntry) => String(o.id);
 
 export function CommandsScreen({ model }: { model: CommandsModel }) {
   const output = useStore(model.store, selectOutput);
+  const chromeInsets = useChrome();
   useEffect(() => void model.load(), [model]);
   const renderItem = useCallback(({ item }: { item: OutputEntry }) => <OutputCard entry={item} model={model} />, [model]);
   return (
@@ -26,7 +27,7 @@ export function CommandsScreen({ model }: { model: CommandsModel }) {
       keyExtractor={keyOf}
       renderItem={renderItem}
       ListHeaderComponent={<Picker model={model} />}
-      contentContainerStyle={styles.list}
+      contentContainerStyle={[styles.list, { paddingTop: chromeInsets.top + space.m, paddingBottom: chromeInsets.bottom + space.l }]}
       keyboardShouldPersistTaps="handled"
     />
   );
@@ -111,19 +112,19 @@ const OutputCard = memo(function OutputCard({ entry, model }: { entry: OutputEnt
 });
 
 const styles = StyleSheet.create({
-  list: { padding: space.m, gap: space.s },
+  list: { paddingHorizontal: space.l, gap: space.s },
   center: { alignItems: 'center', gap: space.m, padding: space.l },
   error: { color: colors.danger, textAlign: 'center' },
   picker: { gap: space.m, marginBottom: space.s },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: space.s },
-  chip: { flexDirection: 'row', alignItems: 'center', gap: space.xs, backgroundColor: colors.surfaceHigh, borderRadius: radius.l, paddingHorizontal: space.m, paddingVertical: space.s },
-  chipOn: { backgroundColor: colors.user },
-  chipText: { color: colors.text, fontSize: 14 },
+  chip: { flexDirection: 'row', alignItems: 'center', gap: space.xs, backgroundColor: colors.card, borderRadius: radius.pill, paddingHorizontal: space.m, paddingVertical: space.s, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.hairline },
+  chipOn: { backgroundColor: colors.accentSoft, borderColor: colors.accent },
+  chipText: { color: colors.text, fontSize: type.size.small },
   argsBox: { gap: space.s },
   help: { color: colors.textDim, fontSize: 13 },
   argsRow: { flexDirection: 'row', gap: space.s, alignItems: 'center' },
-  input: { flex: 1, color: colors.text, backgroundColor: colors.surface, borderRadius: radius.m, paddingHorizontal: space.m, paddingVertical: space.s, fontSize: 15, minHeight: 44 },
-  card: { backgroundColor: colors.surface, borderRadius: radius.m, padding: space.m },
+  input: { flex: 1, color: colors.text, backgroundColor: colors.input, borderRadius: radius.m, paddingHorizontal: space.m, paddingVertical: space.s, fontSize: type.size.body, minHeight: 44 },
+  card: { backgroundColor: colors.card, borderRadius: radius.m, padding: space.m, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.hairline },
   cmd: { color: colors.accent, fontSize: 12, marginBottom: space.xs },
   text: { color: colors.text, fontSize: 15, lineHeight: 21 },
   note: { color: colors.textDim, fontSize: 13, marginTop: space.xs },

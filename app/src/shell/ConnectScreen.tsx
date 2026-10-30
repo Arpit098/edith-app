@@ -7,7 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Connection } from '../core/connection';
 import { Button } from '../ui/Button';
 import { Icon } from '../ui/Icon';
-import { colors, mono, radius, space } from '../ui/theme';
+import { colors, type, radius, space } from '../core/theme';
 
 export function ConnectScreen({ connection }: { connection: Connection }) {
   const insets = useSafeAreaInsets();
@@ -80,8 +80,8 @@ const styles = StyleSheet.create({
   title: { color: colors.text, fontSize: 24, fontWeight: '700' },
   sub: { color: colors.textDim, fontSize: 14, textAlign: 'center' },
   label: { color: colors.textDim, fontSize: 13, marginTop: space.m },
-  input: { color: colors.text, backgroundColor: colors.surface, borderRadius: radius.m, paddingHorizontal: space.m, paddingVertical: space.m, fontSize: 16, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border },
-  mono: { fontFamily: mono },
+  input: { color: colors.text, backgroundColor: colors.card, borderRadius: radius.m, paddingHorizontal: space.m, paddingVertical: space.m, fontSize: 16, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.hairline },
+  mono: { fontFamily: type.mono },
   error: { color: colors.danger, fontSize: 14, marginTop: space.m },
   action: { marginTop: space.xl },
 });

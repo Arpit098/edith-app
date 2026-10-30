@@ -44,7 +44,7 @@ async function mount() {
   await act(async () => {
     r = create(
       <SafeAreaProvider initialMetrics={METRICS}>
-        <Shell loaded={loaded} connection={ctx.connection} />
+        <Shell loaded={loaded} connection={ctx.connection} meter={null} />
       </SafeAreaProvider>,
     );
   });

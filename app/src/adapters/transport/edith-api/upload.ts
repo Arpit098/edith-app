@@ -23,7 +23,7 @@ export async function uploadRaw<T>(
   server: ServerConfig | null,
   path: string,
   file: { uri: string; mime: string; name: string },
-  opts: { timeoutMs: number; onProgress?: (sent: number, total: number) => void; signal?: AbortSignal },
+  opts: { timeoutMs: number; onProgress?: (sent: number, total: number) => void; signal?: AbortSignal; headers?: Record<string, string> },
   createTask: CreateUploadTask,
 ): Promise<T> {
   if (!server) throw new ApiError(0, 'Not connected to a server');
@@ -35,6 +35,7 @@ export async function uploadRaw<T>(
       httpMethod: 'POST',
       uploadType: BINARY_CONTENT,
       headers: {
+        ...opts.headers, // the caller's own (e.g. x-clip-sha256); never overriding the ones below
         Authorization: `Bearer ${server.token}`,
         Accept: 'application/json',
         'Content-Type': file.mime, // a hint only: the server sniffs the type

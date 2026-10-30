@@ -7,7 +7,7 @@ import type { PendingPermission } from '../../core/api';
 import { useStore } from '../../core/store';
 import { Button } from '../../ui/Button';
 import { Icon } from '../../ui/Icon';
-import { colors, mono, radius, space } from '../../ui/theme';
+import { colors, type, radius, space } from '../../core/theme';
 import { toast } from '../../ui/toast';
 import type { ApprovalsModel, ApprovalsState } from './model';
 
@@ -51,10 +51,10 @@ const Card = memo(function Card({ p, busy, model }: { p: PendingPermission; busy
 });
 
 const styles = StyleSheet.create({
-  wrap: { padding: space.s, gap: space.s, backgroundColor: colors.bg },
-  card: { backgroundColor: colors.surfaceHigh, borderRadius: radius.m, padding: space.m, borderWidth: 1, borderColor: colors.warn },
+  wrap: { paddingHorizontal: space.m, paddingBottom: space.m, gap: space.s }, // inside the glass header
+  card: { backgroundColor: colors.cardRaised, borderRadius: radius.m, padding: space.m, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.warn },
   head: { flexDirection: 'row', alignItems: 'center', gap: space.s },
-  title: { color: colors.text, fontWeight: '700', fontSize: 15, flex: 1 },
-  detail: { color: colors.text, fontFamily: mono, fontSize: 12, marginTop: space.s },
+  title: { color: colors.text, fontWeight: '700', fontSize: type.size.body, flex: 1 },
+  detail: { color: colors.text, fontFamily: type.mono, fontSize: type.size.caption + 1, marginTop: space.s, backgroundColor: colors.code, borderRadius: radius.s, padding: space.s },
   actions: { flexDirection: 'row', justifyContent: 'flex-end', gap: space.s, marginTop: space.m },
 });

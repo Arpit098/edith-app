@@ -1,20 +1,28 @@
 // The Tools launcher: one tile per feature `tool` (PLAN.md §4.4).
 
 import { memo } from 'react';
-import { FlatList, Pressable, StyleSheet, Text, useWindowDimensions } from 'react-native';
+import { FlatList, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import type { Tool } from '../core/feature';
+import { colors, radius, space, type, useChrome } from '../core/theme';
 import { Empty } from '../ui/Empty';
+import { Glass } from '../ui/Glass';
 import { Icon } from '../ui/Icon';
-import { colors, radius, space } from '../ui/theme';
 
 const TILE_MIN = 104;
 const keyOf = (t: Tool) => t.screen;
 
 export function ToolsScreen({ tools, open }: { tools: Tool[]; open: (screen: string) => void }) {
   const { width } = useWindowDimensions();
-  const columns = Math.max(2, Math.floor((width - space.m * 2) / TILE_MIN));
-  if (!tools.length) return <Empty icon="toolbox-outline" title="No tools yet" detail="Each feature with a tool adds a tile here." />;
+  const chromeInsets = useChrome();
+  const columns = Math.max(2, Math.floor((width - space.l * 2) / TILE_MIN));
+  if (!tools.length) {
+    return (
+      <View style={[styles.flex, { paddingTop: chromeInsets.top, paddingBottom: chromeInsets.bottom }]}>
+        <Empty icon="toolbox-outline" title="No tools yet" detail="Each feature with a tool adds a tile here." />
+      </View>
+    );
+  }
   return (
     <FlatList
       key={columns} // numColumns can't change on the fly
@@ -22,26 +30,34 @@ export function ToolsScreen({ tools, open }: { tools: Tool[]; open: (screen: str
       numColumns={columns}
       keyExtractor={keyOf}
       renderItem={({ item }) => <Tile tool={item} open={open} />}
-      contentContainerStyle={styles.grid}
+      contentContainerStyle={[styles.grid, { paddingTop: chromeInsets.top + space.l, paddingBottom: chromeInsets.bottom + space.l }]}
       columnWrapperStyle={styles.row}
     />
   );
 }
 
+/** A glass tile (flat: tiles sit in a list, so they don't blur). */
 const Tile = memo(function Tile({ tool, open }: { tool: Tool; open: (screen: string) => void }) {
   return (
-    <Pressable style={styles.tile} onPress={() => open(tool.screen)} android_ripple={{ color: '#ffffff11' }} accessibilityRole="button" accessibilityLabel={tool.title}>
-      <Icon name={tool.icon} size={32} color={colors.accent} />
-      <Text style={styles.label} numberOfLines={2}>
-        {tool.title}
-      </Text>
-    </Pressable>
+    <Glass level="thin" radius={radius.l} style={styles.tile}>
+      <Pressable style={styles.press} onPress={() => open(tool.screen)} android_ripple={{ color: colors.ripple }} accessibilityRole="button" accessibilityLabel={tool.title}>
+        <View style={styles.iconWell}>
+          <Icon name={tool.icon} size={28} color={colors.accent} />
+        </View>
+        <Text style={styles.label} numberOfLines={2}>
+          {tool.title}
+        </Text>
+      </Pressable>
+    </Glass>
   );
 });
 
 const styles = StyleSheet.create({
-  grid: { padding: space.m, gap: space.m },
+  flex: { flex: 1 },
+  grid: { paddingHorizontal: space.l, gap: space.m },
   row: { gap: space.m },
-  tile: { flex: 1, aspectRatio: 1, maxWidth: 160, backgroundColor: colors.surface, borderRadius: radius.l, alignItems: 'center', justifyContent: 'center', gap: space.s, padding: space.s, overflow: 'hidden' },
-  label: { color: colors.text, fontSize: 14, textAlign: 'center' },
+  tile: { flex: 1, aspectRatio: 1, maxWidth: 160 },
+  press: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: space.s, padding: space.s },
+  iconWell: { width: 52, height: 52, borderRadius: 26, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.accentSoft },
+  label: { color: colors.text, fontSize: type.size.small, fontWeight: '600', textAlign: 'center' },
 });
