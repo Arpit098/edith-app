@@ -10,6 +10,7 @@ android.permission.POST_PROMOTED_NOTIFICATIONS # Android 16 Live Updates: the Li
 android.permission.FOREGROUND_SERVICE       # EdithSessionService while a turn runs or an approval waits; PushService while pushes are on (edith-system)
 android.permission.FOREGROUND_SERVICE_SPECIAL_USE # its type, specialUse (reasons in edith-system's manifest); PushService too
 android.permission.RECEIVE_BOOT_COMPLETED  # pushes resume after a reboot if Settings → Push is on (edith-system PushBootReceiver)
+android.permission.WAKE_LOCK                # PushService holds the CPU up to 30 s per reconnect while asleep (edith-system)
 android.permission.USE_BIOMETRIC            # expo-secure-store
 android.permission.USE_FINGERPRINT          # expo-secure-store
 com.arpit.edith.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION # androidx.core (non-exported dynamic receivers)

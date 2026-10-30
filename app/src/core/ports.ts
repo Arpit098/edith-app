@@ -114,23 +114,31 @@ export interface PushSetup {
   ntfyToken: string; // the phone's read-only ntfy token
   apiUrl: string;
   apiToken: string;
+  mode: PushMode;
 }
+
+/** 'instant': a native service holds one ntfy stream (battery: Unrestricted); 'poll': a check every 15 minutes. */
+export type PushMode = 'instant' | 'poll';
 
 export interface PushStatus {
   enabled: boolean;
   ntfyUrl: string | null;
-  connected: boolean; // the ntfy stream is open now
+  mode: PushMode;
+  connected: boolean; // 'instant': the ntfy stream is open now; 'poll': the last check went through
   error: string | null; // why not, in words
+  lastCheckAt: number | null; // 'poll': when the last check went through (ms since the epoch)
   batteryUnrestricted: boolean; // exempt from battery optimisation (OxygenOS may stop it otherwise)
 }
 
-/** Pushes while the app is closed: a native service holding one ntfy stream (contracts/push.md). */
+/** Pushes while the app is closed: a native service holding one ntfy stream, or a 15-minute check (contracts/push.md). */
 export interface PushReceiver {
   /** Save the setup (encrypted on the phone) and start. False: Android refused to start it now. */
   enable(setup: PushSetup): boolean;
   /** The App API moved or its token changed: Allow/Deny on pushes use the new one. No-op while off. */
   updateApi(apiUrl: string, apiToken: string): void;
-  /** At app start: restart the service if pushes are on. */
+  /** Switch between the always-on stream and the 15-minute check. False: Android refused to start it now. */
+  setMode(mode: PushMode): boolean;
+  /** At app start: restart the service (or schedule the check) if pushes are on. Harmless if it runs. */
   resume(): boolean;
   /** Turn off and forget the tokens. */
   disable(): void;

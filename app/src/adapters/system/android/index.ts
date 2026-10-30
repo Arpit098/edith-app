@@ -3,7 +3,7 @@
 import { requireOptionalNativeModule } from 'expo';
 import { PermissionsAndroid } from 'react-native';
 
-import type { LocalNotification, Notifier, OngoingStatus, OngoingStatusView, PushReceiver, PushSetup, PushStatus } from '../../../core/ports';
+import type { LocalNotification, Notifier, OngoingStatus, OngoingStatusView, PushMode, PushReceiver, PushSetup, PushStatus } from '../../../core/ports';
 
 interface NativeSystem {
   sdkInt: number;
@@ -18,6 +18,7 @@ interface NativeSystem {
   testIsland(): { ok: boolean; message: string };
   pushEnable(setup: PushSetup): boolean;
   pushUpdateApi(apiUrl: string, apiToken: string): void;
+  pushSetMode(mode: PushMode): boolean;
   pushResume(): boolean;
   pushDisable(): void;
   pushStatus(): Partial<PushStatus>;
@@ -63,11 +64,20 @@ export function createAndroidSystem(): { status: OngoingStatus; notifier: Notifi
   const push: PushReceiver = {
     enable: (setup) => native.pushEnable(setup),
     updateApi: (apiUrl, apiToken) => native.pushUpdateApi(apiUrl, apiToken),
+    setMode: (mode) => native.pushSetMode(mode),
     resume: () => native.pushResume(),
     disable: () => native.pushDisable(),
     status: () => {
       const s = native.pushStatus();
-      return { enabled: s.enabled === true, ntfyUrl: s.ntfyUrl ?? null, connected: s.connected === true, error: s.error ?? null, batteryUnrestricted: s.batteryUnrestricted === true };
+      return {
+        enabled: s.enabled === true,
+        ntfyUrl: s.ntfyUrl ?? null,
+        mode: s.mode === 'poll' ? 'poll' : 'instant',
+        connected: s.connected === true,
+        error: s.error ?? null,
+        lastCheckAt: typeof s.lastCheckAt === 'number' ? s.lastCheckAt : null,
+        batteryUnrestricted: s.batteryUnrestricted === true,
+      };
     },
     openBatterySettings: () => native.openBatterySettings(),
   };

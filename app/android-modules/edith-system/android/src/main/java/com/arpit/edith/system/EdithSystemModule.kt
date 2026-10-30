@@ -28,6 +28,7 @@ class PushRecord : Record {
   @Field val ntfyToken: String = ""
   @Field val apiUrl: String = ""
   @Field val apiToken: String = ""
+  @Field val mode: String = PushConfig.INSTANT
 
   fun toSettings() = PushSettings(ntfyUrl, topic, ntfyToken, apiUrl, apiToken)
 }
@@ -64,7 +65,8 @@ class EdithSystemModule : Module() {
     Function("canPromote") { status.canPromote() }
     Function("openPromotionSettings") { if (SUPPORTED) status.openPromotionSettings() }
     Function("testIsland") { if (SUPPORTED) status.testIsland() else mapOf("ok" to false, "message" to "Needs Android 8 or newer.") }
-    Function("pushEnable") { s: PushRecord -> SUPPORTED && push.enable(s.toSettings()) }
+    Function("pushEnable") { s: PushRecord -> SUPPORTED && push.enable(s.toSettings(), s.mode) }
+    Function("pushSetMode") { mode: String -> SUPPORTED && push.setMode(mode) }
     Function("pushUpdateApi") { apiUrl: String, apiToken: String -> if (SUPPORTED) push.updateApi(apiUrl, apiToken) }
     Function("pushResume") { SUPPORTED && push.resume() }
     Function("pushDisable") { if (SUPPORTED) push.disable() }

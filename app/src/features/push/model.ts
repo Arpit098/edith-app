@@ -3,7 +3,7 @@
 // doing. The service itself runs natively (ports.push); this holds no tokens beyond handing them over.
 
 import type { Connection } from '../../core/connection';
-import type { AppVisibility, PushReceiver, PushStatus, Transport } from '../../core/ports';
+import type { AppVisibility, PushMode, PushReceiver, PushStatus, Transport } from '../../core/ports';
 import { createStore, type Store } from '../../core/store';
 
 export const NTFY_PORT = 2586; // deploy/ntfy/server.yml
@@ -16,7 +16,7 @@ export interface PushState {
   error: string | null; // a refused setup, shown under the form
 }
 
-const OFF: PushStatus = { enabled: false, ntfyUrl: null, connected: false, error: null, batteryUnrestricted: false };
+const OFF: PushStatus = { enabled: false, ntfyUrl: null, mode: 'instant', connected: false, error: null, lastCheckAt: null, batteryUnrestricted: false };
 
 /** edith's ntfy: the App API's host on ntfy's port (http://100.78.124.98:8787 -> http://100.78.124.98:2586). */
 export function defaultNtfyUrl(apiBaseUrl: string | null): string {
@@ -34,7 +34,9 @@ function apiAuth(transport: Transport): { apiUrl: string; apiToken: string } | n
 export interface PushModel {
   store: Store<PushState>;
   /** Turn pushes on with the phone's ntfy token. False (and `error` set) when the setup is refused. */
-  enable(ntfyUrl: string, ntfyToken: string): boolean;
+  enable(ntfyUrl: string, ntfyToken: string, mode?: PushMode): boolean;
+  /** Always-on, or a check every 15 minutes (less battery, up to 15 minutes late). */
+  setMode(mode: PushMode): void;
   disable(): void;
   refresh(): void;
   openBatterySettings(): void;
@@ -66,7 +68,8 @@ export function createPushModel(deps: {
     checks = setTimeout(() => check(i + 1), CHECKS_MS[i]);
   }
 
-  /** The connection is open: the service runs (Android lets it start while the app is in front) with this API. */
+  /** The connection is open: the service runs (Android lets it start while the app is in front) with this API.
+   *  resume() on every reconnect is cheap: the service reconnects only if its ntfy settings changed. */
   function sync() {
     if (connection.store.get().link !== 'open' || !push.status().enabled) return;
     const auth = apiAuth(transport);
@@ -87,7 +90,7 @@ export function createPushModel(deps: {
 
   return {
     store,
-    enable(ntfyUrl, ntfyToken) {
+    enable(ntfyUrl, ntfyToken, mode = 'instant') {
       const url = ntfyUrl.trim().replace(/\/+$/, '');
       const token = ntfyToken.trim();
       const auth = apiAuth(transport);
@@ -100,11 +103,17 @@ export function createPushModel(deps: {
         return false;
       }
       void deps.ensurePermission?.();
-      const started = push.enable({ ntfyUrl: url, topic: TOPIC, ntfyToken: token, ...auth });
+      const started = push.enable({ ntfyUrl: url, topic: TOPIC, ntfyToken: token, ...auth, mode });
       store.set((s) => ({ ...s, error: started ? null : 'Android didn’t let the push service start. Open EDITH again and retry.' }));
       stopChecks();
       check(0);
       return started;
+    },
+    setMode(mode) {
+      const started = push.setMode(mode);
+      store.set((s) => ({ ...s, error: started ? null : 'Android didn’t let the push service start. Open EDITH again and retry.' }));
+      stopChecks();
+      check(0);
     },
     disable() {
       stopChecks();

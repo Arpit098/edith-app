@@ -9,6 +9,8 @@
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
   <!-- PushService resumes after a reboot, if Settings → Push is on. -->
   <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+  <!-- PushService: a partial wakelock of at most 30 s around each reconnect, so it finishes asleep. -->
+  <uses-permission android:name="android.permission.WAKE_LOCK" />
 
   <application>
     <!--
@@ -50,6 +52,13 @@
         <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
       </intent-filter>
     </receiver>
+    <!-- PushService's wake-up alarm (inexact, allow-while-idle). -->
+    <receiver android:name="com.arpit.edith.system.PushAlarmReceiver" android:exported="false" />
+    <!-- Settings → Push, 15-minute check mode: a periodic job instead of the service. -->
+    <service
+      android:name="com.arpit.edith.system.PushPollJob"
+      android:exported="false"
+      android:permission="android.permission.BIND_JOB_SERVICE" />
     <!-- Allow / Deny on a notification: sends the answer without opening the app. -->
     <receiver android:name="com.arpit.edith.system.NotificationActionReceiver" android:exported="false" />
   </application>

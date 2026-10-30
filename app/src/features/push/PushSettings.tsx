@@ -8,27 +8,64 @@ import { colors, radius, space, type } from '../../core/theme';
 import { useStore } from '../../core/store';
 import { Button } from '../../ui/Button';
 import { Icon } from '../../ui/Icon';
+import type { PushMode } from '../../core/ports';
 import type { PushModel, PushState } from './model';
 
 const selectStatus = (s: PushState) => s.status;
 const selectError = (s: PushState) => s.error;
+
+const MODES: { mode: PushMode; label: string; icon: string; hint: string }[] = [
+  { mode: 'instant', label: 'Instant', icon: 'lightning-bolt-outline', hint: 'Stays connected: news arrives at once.' },
+  { mode: 'poll', label: 'Every 15 min', icon: 'timer-outline', hint: 'Checks every 15 minutes (longer in deep sleep): less battery, news can be late.' },
+];
+
+const clock = (ms: number) => {
+  const d = new Date(ms);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+};
+
+function statusLine(status: PushState['status']): string {
+  if (status.mode === 'poll') {
+    if (status.error) return status.error;
+    return status.connected && status.lastCheckAt
+      ? `On: checks edith every 15 minutes. Last check ${clock(status.lastCheckAt)}.`
+      : 'On: the first check comes within 15 minutes.';
+  }
+  return status.connected ? 'On: connected to edith’s push server.' : (status.error ?? 'On: connecting to edith’s push server…');
+}
+
+function ModePicker({ mode, onPick }: { mode: PushMode; onPick: (mode: PushMode) => void }) {
+  return (
+    <View style={styles.box}>
+      <View style={styles.row} accessibilityRole="radiogroup">
+        {MODES.map((m) => (
+          <Button key={m.mode} small icon={m.icon} label={m.label} variant={m.mode === mode ? 'primary' : 'ghost'} onPress={() => m.mode !== mode && onPick(m.mode)} />
+        ))}
+      </View>
+      <Text style={styles.dim}>{MODES.find((m) => m.mode === mode)!.hint}</Text>
+    </View>
+  );
+}
 
 export function PushSettings({ model, defaultUrl }: { model: PushModel; defaultUrl: string }) {
   const status = useStore(model.store, selectStatus);
   const error = useStore(model.store, selectError);
   const [url, setUrl] = useState(defaultUrl);
   const [token, setToken] = useState('');
+  const [mode, setMode] = useState<PushMode>('instant');
 
   if (status.enabled) {
-    const line = status.connected ? 'On: connected to edith’s push server.' : (status.error ?? 'On: connecting to edith’s push server…');
+    const line = statusLine(status);
+    const ok = status.connected && !status.error;
     return (
       <View style={styles.box}>
         <View style={styles.row} accessibilityLiveRegion="polite">
-          <Icon name={status.connected ? 'check-circle-outline' : 'progress-clock'} size={18} color={status.connected ? colors.ok : status.error ? colors.warn : colors.textDim} />
+          <Icon name={ok ? 'check-circle-outline' : 'progress-clock'} size={18} color={ok ? colors.ok : status.error ? colors.warn : colors.textDim} />
           <Text style={[styles.text, styles.flex]}>{line}</Text>
         </View>
         <Text style={styles.dim}>Replies, approvals (with Allow and Deny) and reminders arrive with EDITH closed.</Text>
-        {status.batteryUnrestricted ? null : (
+        <ModePicker mode={status.mode} onPick={model.setMode} />
+        {status.mode === 'poll' || status.batteryUnrestricted ? null : (
           <View style={styles.banner}>
             <Text style={styles.text}>OxygenOS may stop the push connection to save battery. In EDITH’s app info, set Battery to Unrestricted.</Text>
             <View style={styles.row}>
@@ -68,9 +105,10 @@ export function PushSettings({ model, defaultUrl }: { model: PushModel; defaultU
         secureTextEntry
         accessibilityLabel="Phone token"
       />
+      <ModePicker mode={mode} onPick={setMode} />
       {error ? <Text style={styles.error}>{error}</Text> : null}
       <View style={styles.row}>
-        <Button small variant="primary" icon="bell-ring-outline" label="Turn on" onPress={() => model.enable(url, token) && setToken('')} />
+        <Button small variant="primary" icon="bell-ring-outline" label="Turn on" onPress={() => model.enable(url, token, mode) && setToken('')} />
       </View>
     </View>
   );

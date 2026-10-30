@@ -95,8 +95,10 @@ class FeatureTest(unittest.TestCase):
         results = [False, True]
         notify = self.ntfy.notify
         self.ntfy.notify = lambda *a: (notify(*a), results.pop(0))[1]
+        results.insert(1, True)
         self.publish("turn.done", ref="r1", text="first try fails")
-        self.assertEqual(self.data()["tag"], "turn:r1")
+        self.publish("turn.done", ref="r2", text="goes after it")
+        self.assertEqual([self.data()["tag"], self.data()["tag"]], ["turn:r1", "turn:r2"])  # r1 done with, in order
         self.publish("turn.done", ref="r1", text="sent again")
         self.assertEqual(self.data()["tag"], "turn:r1")  # not deduped: the first never arrived
 

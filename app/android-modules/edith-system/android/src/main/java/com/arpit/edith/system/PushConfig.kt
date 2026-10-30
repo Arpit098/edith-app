@@ -16,7 +16,8 @@ import org.json.JSONObject
  * What [PushService] needs with the app closed (at boot, too): edith's ntfy, its read-only token, and
  * the App API address and token for Allow/Deny. Kept in private SharedPreferences, the secrets
  * encrypted with an AES-GCM key that never leaves the Android Keystore. `lastId` (ntfy's message id,
- * for `?since=`) is not secret and is written on every message.
+ * for `?since=`; a unix time until the first message) is not secret and is written on every message.
+ * `mode`: [INSTANT] (the always-on [PushService]) or [POLL] (the 15-minute [PushPollJob]).
  */
 data class PushSettings(
   val ntfyUrl: String,
@@ -32,6 +33,15 @@ class PushConfig(context: Context) {
   var enabled: Boolean
     get() = prefs.getBoolean("enabled", false)
     set(v) = prefs.edit().putBoolean("enabled", v).apply()
+
+  var mode: String
+    get() = prefs.getString("mode", INSTANT) ?: INSTANT
+    set(v) = prefs.edit().putString("mode", v).apply()
+
+  /** When the 15-minute check last went through (ms since the epoch), or 0. */
+  var lastCheck: Long
+    get() = prefs.getLong("lastCheck", 0L)
+    set(v) = prefs.edit().putLong("lastCheck", v).apply()
 
   var lastId: String?
     get() = prefs.getString("lastId", null)
@@ -86,9 +96,11 @@ class PushConfig(context: Context) {
     return gen.generateKey()
   }
 
-  private companion object {
-    const val ALIAS = "edith_push"
-    const val TRANSFORM = "AES/GCM/NoPadding"
-    const val IV_BYTES = 12
+  companion object {
+    const val INSTANT = "instant"
+    const val POLL = "poll"
+    private const val ALIAS = "edith_push"
+    private const val TRANSFORM = "AES/GCM/NoPadding"
+    private const val IV_BYTES = 12
   }
 }
