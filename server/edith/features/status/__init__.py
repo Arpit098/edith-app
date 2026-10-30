@@ -22,16 +22,37 @@ from .agents import Agents
 
 MAX_SUMMARIES = 100  # refs -> first line of the message, for side-lane summaries
 SUMMARY = 80         # characters
+KEYWORD = (r"(?:access[_-]?token|refresh[_-]?token|auth[_-]?token|token|secret|password|passwd|pwd"
+           r"|api[_-]?key|bearer|basic)")
 SECRET = re.compile(
-    r"(?i)\b(?:bearer|token|secret|password|passwd|api[_-]?key)\b[\s:=\"']+\S+"  # key=value, Bearer x
+    rf"(?i)(?:\b|(?<=[_-])){KEYWORD}\b[\s:=\"']+\S+"      # key=value, DB_PASSWORD=x, Bearer x, Basic x
     r"|\b(?:sk|pk|rk)-[A-Za-z0-9_-]{16,}|\bgh[pousr]_[A-Za-z0-9]{20,}|\bgithub_pat_[A-Za-z0-9_]{20,}"
     r"|\bxox[abpr]-[A-Za-z0-9-]{10,}|\bAIza[0-9A-Za-z_-]{30,}|\bya29\.[0-9A-Za-z_.-]{20,}"
+    r"|\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"                    # AWS access key id
+    r"|\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}(?:\.[A-Za-z0-9_-]*)?"  # JWT, however short
     r"|\b\d{8,10}:[A-Za-z0-9_-]{30,}"            # Telegram bot token
     r"|\b(?=[A-Za-z0-9_-]*\d)(?=[A-Za-z0-9_-]*[A-Za-z])[A-Za-z0-9_-]{32,}\b")  # long mixed strings (also full git shas)
+URL_CREDENTIALS = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://)[^\s/@:]+:[^\s/@]+@")  # scheme://user:pass@
 
 
 def redact(text):
-    return SECRET.sub("[redacted]", text) if isinstance(text, str) else text
+    if not isinstance(text, str):
+        return text
+    return SECRET.sub("[redacted]", URL_CREDENTIALS.sub(r"\1[redacted]@", text))
+
+
+class Cached:
+    """fn()'s value, computed by one caller at a time and kept for `ttl` seconds (None: for good)."""
+
+    def __init__(self, fn, ttl=None, clock=time.monotonic):
+        self.fn, self.ttl, self.clock = fn, ttl, clock
+        self._lock, self._at, self._value = threading.Lock(), None, None
+
+    def get(self):
+        with self._lock:
+            if self._at is None or self.ttl is not None and self.clock() - self._at >= self.ttl:
+                self._value, self._at = self.fn(), self.clock()
+            return self._value
 
 
 def one_line(text, size=SUMMARY):
@@ -58,9 +79,11 @@ def setup(ctx: Context) -> None:
     main = {"state": "idle", "tool": None, "step": None, "since": None, "ref": None}
     approvals = {}        # pending permission id -> lane
     summaries: collections.OrderedDict[str, str] = collections.OrderedDict()
-    agents = Agents(socket=cfg.get("agents_socket"), ttl=float(cfg.get("agents_ttl", 5)))
+    ttl = float(cfg.get("agents_ttl", 5))
+    agents = Agents(socket=cfg.get("agents_socket"), ttl=ttl)
+    tmux_alive = Cached(agent.tmux_alive, ttl)  # `tmux has-session` at most once per ttl, like the agents
     live_dir = os.path.expanduser(cfg.get("live_dir") or str(pathlib.Path(__file__).resolve().parents[4]))
-    tag = []  # [git describe of live_dir], filled on the first request
+    tag = Cached(lambda: describe_live(live_dir))  # once: a deploy restarts the bridge
 
     def is_main(ev):
         return ev.data.get("lane", "main") == "main"
@@ -121,7 +144,7 @@ def setup(ctx: Context) -> None:
             m.update(state="tool" if run.step else "thinking", tool=None, step=redact(run.step), ref=run.ref,
                      since=run.started)
         m["turn_started"] = run.started if run else None
-        m["tmux"] = "running" if agent.tmux_alive() else "down"
+        m["tmux"] = "running" if tmux_alive.get() else "down"
         return m
 
     def api_details(req):
@@ -137,13 +160,11 @@ def setup(ctx: Context) -> None:
             side = [{"ref": r.ref, "seconds": int(now - r.started), "step": redact(r.step),
                      "summary": summaries.get(r.ref)} for r in runs if r.lane == "side"]
             pending = len(approvals)
-        if not tag:
-            tag.append(describe_live(live_dir))
         return {"ts": now, "edith": edith_part(runs),
                 "lanes": {"side": side, "max_side": agent.max_side_lanes, "queued": queued, "approvals": pending},
                 "session": session,
                 "agents": [{**a, "last": redact(a["last"])} for a in agents.get()] if cfg.get("agents", True) else [],
-                "server": {"tag": tag[0], "started": started, "uptime": int(now - started)}}
+                "server": {"tag": tag.get(), "started": started, "uptime": int(now - started)}}
 
     ctx.add_route("GET", "/v1/status/details", api_details)
 

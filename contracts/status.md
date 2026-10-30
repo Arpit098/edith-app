@@ -2,7 +2,7 @@
 
 The app's status panel (the bar under the Live header, and the card it opens). The bar itself is kept
 up to date from stream events (contracts/events.md, "Working state" and `lane.status`); the card also
-fetches the details below, only while it is open (every 10 s).
+fetches the details below, only while it is open and the app is on screen (every 10 s).
 
 `GET /v1/status/details`, read-only, with the bearer token like every App API route. `GET /v1/status`
 is unchanged.
@@ -64,9 +64,11 @@ at most once per 5 s however often the app asks (read-only: `capture-pane`, neve
   box-drawing characters, at most 100 characters; `null` if none is on screen.
 
 **`server`**: `tag` is `git describe --tags --always --dirty` of the live checkout (`null` if unknown),
-`started` and `uptime` (seconds) are the bridge process's.
+`started` and `uptime` (seconds) are the bridge process's. `edith.tmux` is checked at most once per 5 s.
 
 **Redaction:** free text (`step`, `summary`, `title`, `last`) has anything that looks like a secret
-replaced by `[redacted]`: `token=…`/`Bearer …` pairs, known key prefixes (`sk-`, `ghp_`, `xox…-`,
-`AIza…`, Telegram bot tokens) and long mixed letter-and-digit strings (32+ characters, which also
-catches full git shas and uuids).
+replaced by `[redacted]`: `key=value` / `key: value` pairs for token, secret, password, api key,
+access token and the like (also as a suffix: `DB_PASSWORD=…`, `GITHUB_TOKEN=…`), `Bearer …` and
+`Basic …`, the `user:pass@` of a URL, known key prefixes (`sk-`, `ghp_`, `xox…-`, `AIza…`, `ya29.`,
+AWS `AKIA…`), JWTs (`eyJ….…`), Telegram bot tokens and long mixed letter-and-digit strings (32+
+characters, which also catches full git shas and uuids).

@@ -13,7 +13,7 @@ from edith.adapters.agents.claude_tmux.backend import entry_time
 from edith.adapters.agents.claude_tmux.stats import SessionStats
 import edith.features.status as status
 from edith.core import Event, EventBus, Ports, Registry, load_features
-from edith.features.status import one_line, redact
+from edith.features.status import Cached, one_line, redact
 from edith.features.status.agents import Agents, git_branch, read_screen
 from edith.ports.agent import RunInfo
 
@@ -115,7 +115,34 @@ class MainLaneTest(unittest.TestCase):
         self.assertEqual((e["state"], e["step"], e["ref"], e["since"]), ("tool", "$ make", "r2", 50.0))
 
 
+class CachedTest(unittest.TestCase):
+    def test_ttl_and_forever(self):
+        clock, calls = [0.0], []
+        c = Cached(lambda: calls.append(1) or len(calls), ttl=5, clock=lambda: clock[0])
+        self.assertEqual((c.get(), c.get()), (1, 1))
+        clock[0] = 5.0
+        self.assertEqual(c.get(), 2)
+        once = Cached(lambda: calls.append(1) or "tag", clock=lambda: clock[0])
+        clock[0] = 1e9
+        self.assertEqual((once.get(), once.get(), len(calls)), ("tag", "tag", 3))
+
+
 class DetailsTest(unittest.TestCase):
+    def test_tmux_checked_at_most_once_per_ttl(self):
+        agent = FakeAgent()
+        agent.tmux_alive = mock.Mock(return_value=True)
+        _, get = load(agent)
+        for _ in range(5):
+            get()
+        self.assertEqual(agent.tmux_alive.call_count, 1)
+
+    def test_git_describe_runs_once(self):
+        with mock.patch.object(status, "describe_live", return_value="p1-live-9") as describe:
+            _, get = load(FakeAgent())
+            for _ in range(3):
+                self.assertEqual(get()["server"]["tag"], "p1-live-9")
+        self.assertEqual(describe.call_count, 1)
+
     def test_lanes_session_and_server(self):
         agent = FakeAgent()
         bus, get = load(agent)
@@ -145,15 +172,43 @@ class DetailsTest(unittest.TestCase):
             self.assertEqual(load(FakeAgent(), {"live_dir": repo})[1]()["server"]["tag"], "p1-live-9")
 
 
+LEAKS = [  # (text, the secret part that must not survive)
+    ("token=abc123def", "abc123def"),
+    ("Authorization: Bearer abcdef", "abcdef"),
+    ("Authorization: Basic dXNlcjpwYXNz", "dXNlcjpwYXNz"),
+    ("DB_PASSWORD=hunter2xyz", "hunter2xyz"),
+    ("GITHUB_TOKEN=abc", "=abc"),
+    ("export API_KEY=k3y", "k3y"),
+    ("access_token=ya29.a0AfH6SMBxyz", "a0AfH6SMBxyz"),
+    ("client-secret: s3cr3t", "s3cr3t"),
+    ("psql postgres://u:Pa55word@host/db", "Pa55word"),
+    ("https://user:pw@github.com/x", "user:pw"),
+    ("AKIAIOSFODNN7EXAMPLE", "IOSFODNN7EXAMPLE"),
+    ("eyJhbGciOi.eyJzdWIi.sig", "eyJhbGciOi"),
+    ("sk-ant-api03-abcdefghijklmnop", "abcdefghijklmnop"),
+    ("ghp_abcdefghijklmnopqrstuvwxyz0123", "abcdefghijklmnopqrstuvwxyz0123"),
+    ("123456789:AAEabcdefghijklmnopqrstuvwxyz012345", "AAEabcdefghijklmnop"),
+    ("xoxb-1234567890-abcdef", "1234567890-abcdef"),
+    ("AIza" + "B" * 35, "B" * 35),
+    ("a" * 20 + "1" * 20, "a" * 20),
+]
+
+
 class RedactTest(unittest.TestCase):
     def test_secrets(self):
-        for text in ("token=abc123def", "Authorization: Bearer abcdef", "sk-ant-api03-abcdefghijklmnop",
-                     "ghp_abcdefghijklmnopqrstuvwxyz0123", "123456789:AAEabcdefghijklmnopqrstuvwxyz012345",
-                     "a" * 20 + "1" * 20, "xoxb-1234567890-abcdef"):
-            self.assertNotIn(text[-6:], redact(f"x {text} y"), text)
+        for text, secret in LEAKS:
+            with self.subTest(text):
+                out = redact(f"x {text} y")
+                self.assertNotIn(secret, out)
+                self.assertIn("[redacted]", out)
+                self.assertTrue(out.startswith("x ") and out.endswith(" y"), out)
+
+    def test_url_keeps_scheme_and_host(self):
+        self.assertEqual(redact("postgres://u:Pa55word@host/db"), "postgres://[redacted]@host/db")
 
     def test_ordinary_text_kept(self):
-        for text in ("$ npm test", "Read: server/edith/features/status/__init__.py", "PR #15 is green, 0e563a3"):
+        for text in ("$ npm test", "Read: server/edith/features/status/__init__.py", "PR #15 is green, 0e563a3",
+                     "https://github.com/Arpit098/edith-app/pull/15", "Bash(make test)", "EYJ is not a jwt"):
             self.assertEqual(redact(text), text)
 
     def test_one_line(self):

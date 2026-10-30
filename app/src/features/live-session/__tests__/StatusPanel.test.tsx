@@ -23,10 +23,27 @@ function toggle(r: ReactTestRenderer) {
   r.root.find((n) => n.props.accessibilityRole === 'button' && typeof n.props.onPress === 'function').props.onPress();
 }
 
+function fakeVisibility() {
+  let active = true;
+  const handlers = new Set<(a: boolean) => void>();
+  return {
+    active: () => active,
+    onChange(h: (a: boolean) => void) {
+      handlers.add(h);
+      return () => handlers.delete(h);
+    },
+    set(a: boolean) {
+      active = a;
+      handlers.forEach((h) => h(a));
+    },
+  };
+}
+
 function fakeModel() {
   const store = createStore(initialLive);
   const details = jest.fn().mockResolvedValue(statusDetailsFrom(DETAILS));
-  return { model: { store, details } as unknown as LiveModel, store, details };
+  const visibility = fakeVisibility();
+  return { model: { store, details, visibility } as unknown as LiveModel, store, details, visibility };
 }
 
 describe('StatusPanel', () => {
@@ -86,6 +103,34 @@ describe('StatusPanel', () => {
       await jest.advanceTimersByTimeAsync(60_000);
     });
     expect(details).toHaveBeenCalledTimes(2); // closed: no more fetches
+    act(() => r.unmount());
+  });
+
+  it('stops fetching in the background and refreshes on return', async () => {
+    const { model, details, visibility } = fakeModel();
+    let r!: ReactTestRenderer;
+    await act(async () => {
+      r = create(<StatusPanel model={model} />);
+    });
+    await act(async () => {
+      toggle(r);
+    });
+    expect(details).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      visibility.set(false);
+    });
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(60_000);
+    });
+    expect(details).toHaveBeenCalledTimes(1); // backgrounded: nothing
+    await act(async () => {
+      visibility.set(true);
+    });
+    expect(details).toHaveBeenCalledTimes(2); // back on screen: at once
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(10_000);
+    });
+    expect(details).toHaveBeenCalledTimes(3);
     act(() => r.unmount());
   });
 

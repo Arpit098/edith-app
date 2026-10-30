@@ -1,5 +1,6 @@
 // The status bar under the Live header and the card it drops down. The bar follows stream events
-// only (status.ts barSummary); the card fetches GET /v1/status/details while it is open, every 10 s.
+// only (status.ts barSummary); the card fetches GET /v1/status/details while it is open and EDITH is
+// on screen, every 10 s (paused in the background, refreshed at once on return).
 
 import { memo, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
@@ -27,8 +28,10 @@ export const StatusPanel = memo(function StatusPanel({ model }: { model: LiveMod
   const changedAt = useMemo(() => Date.now() / 1000, [bar.state]); // when the bar's state last changed here
   const since = sinceFrom(bar.state, changedAt, fetched?.details ?? null, fetched?.at ?? 0);
 
+  const visible = useVisible(model);
+
   useEffect(() => {
-    if (!open) return;
+    if (!open || !visible) return;
     return pollDetails(
       () => model.details(),
       (r) => {
@@ -38,7 +41,7 @@ export const StatusPanel = memo(function StatusPanel({ model }: { model: LiveMod
       },
       REFRESH_MS,
     );
-  }, [open, model]);
+  }, [open, visible, model]);
 
   return (
     <View>
@@ -66,6 +69,18 @@ export const StatusPanel = memo(function StatusPanel({ model }: { model: LiveMod
     </View>
   );
 });
+
+/** Whether EDITH is on screen; true where the app has no visibility port. */
+function useVisible(model: LiveModel): boolean {
+  const v = model.visibility;
+  const [visible, setVisible] = useState(() => v?.active() ?? true);
+  useEffect(() => {
+    if (!v) return;
+    setVisible(v.active()); // it may have changed between the first render and subscribing
+    return v.onChange(setVisible);
+  }, [v]);
+  return visible;
+}
 
 /** " · 0:42", ticking once a second; mounted only while EDITH is busy. */
 function Elapsed({ since }: { since: number }) {
