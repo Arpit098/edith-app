@@ -19,9 +19,10 @@ PKG=com.arpit.edith
 mkdir -p "$OUT"
 
 wait_until() { # <description> <command…>
-  local what=$1 delay=0.2 deadline=$((SECONDS + 30))
+  local what=$1 delay=0.2 deadline=$((SECONDS + ${WAIT_S:-30}))
   shift
   until "$@" >/dev/null 2>&1; do
+    dismiss_anr
     if ((SECONDS > deadline)); then
       echo "::error::timed out waiting for $what"
       ui >"$OUT/timeout-ui.xml" || true
@@ -34,6 +35,14 @@ wait_until() { # <description> <command…>
 }
 
 ui() { adb shell uiautomator dump /sdcard/ui.xml >/dev/null && adb exec-out cat /sdcard/ui.xml; }
+# A CPU-rendered emulator is slow enough that System UI (or another app) sometimes hits an ANR
+# right after boot; its "isn't responding" dialog covers the screen. Answer "Wait" and go on.
+dismiss_anr() {
+  if ui | grep -qF "isn't responding"; then
+    echo "an ANR dialog: Wait"
+    tap Wait || true
+  fi
+}
 on_screen() { ui | grep -qF "=\"$1\""; } # a node's text or content-desc
 top_activity() { adb shell dumpsys activity activities | grep -m1 -E "topResumedActivity|ResumedActivity:"; }
 launcher_on_top() { top_activity | grep -qi launcher; }
@@ -60,6 +69,7 @@ for attr in ("content-desc", "text"):
 # A screenshot once two frames in a row match (springs have settled), at most 12 tries.
 shot() {
   local file="$OUT/$1.png" prev="" now delay=0.2
+  dismiss_anr
   for _ in $(seq 12); do
     adb exec-out screencap -p >"$file.tmp"
     now=$(md5sum <"$file.tmp")
@@ -89,14 +99,14 @@ battery_saver() { # on|off: the glass goes flat while it's on (edith-glass's Pow
 # Frame times for one scripted run: scroll the transcript up and down, then go round the tabs.
 measure() {
   local label=$1
-  tap Live
-  wait_until "the live tab" on_screen "Reminder set for Monday 2 November at 9:00."
+  tap Live || return 1
+  wait_until "the live tab" on_screen "Reminder set for Monday 2 November at 9:00." || return 1
   adb shell dumpsys gfxinfo "$PKG" reset >/dev/null
   for _ in 1 2 3; do
     scroll_up 300
     scroll_down 300
   done
-  for t in Sessions Tools Settings Live; do tap "$t"; done
+  for t in Sessions Tools Settings Live; do tap "$t" || return 1; done
   adb shell dumpsys gfxinfo "$PKG" >"$OUT/gfxinfo-$label.txt"
   {
     echo "#### $label"
@@ -120,7 +130,7 @@ demo network -e wifi show -e level 4
 demo notifications -e visible false
 
 adb shell am start -W -n "$PKG/.MainActivity" >/dev/null
-wait_until "the connect screen" on_screen "Server address"
+WAIT_S=90 wait_until "the connect screen" on_screen "Server address"
 shot 00-connect
 tap "Server address"
 adb shell input text "10.0.2.2:8787"
@@ -131,49 +141,49 @@ tap Connect
 wait_until "the live session" on_screen "Reminder set for Monday 2 November at 9:00."
 keyboard_shown && adb shell input keyevent KEYCODE_BACK
 
-echo "::group::Screenshots"
+screenshots() {
 shot 01-live
 scroll_up
 shot 02-live-scrolled-under-the-glass
 scroll_down
-tap Sessions
-wait_until "sessions" on_screen "Morning briefing"
+tap Sessions || return 1
+wait_until "sessions" on_screen "Morning briefing" || return 1
 shot 03-sessions
-tap Tools
+tap Tools || return 1
 shot 04-tools
-tap Settings
-wait_until "settings" on_screen "Measure frames"
+tap Settings || return 1
+wait_until "settings" on_screen "Measure frames" || return 1
 shot 05-settings
-tap Live
-tap "Attach a photo or audio file"
-wait_until "the attach menu" on_screen "Camera"
+tap Live || return 1
+tap "Attach a photo or audio file" || return 1
+wait_until "the attach menu" on_screen "Camera" || return 1
 shot 06-attach-menu
-tap "Close the attach menu"
+tap "Close the attach menu" || return 1
 battery_saver on
-tap Settings
-wait_until "flat glass in battery saver" on_screen "Glass: flat"
-tap Live
+tap Settings || return 1
+wait_until "flat glass in battery saver" on_screen "Glass: flat" || return 1
+tap Live || return 1
 shot 07-live-battery-saver-flat
 battery_saver off
-echo "::endgroup::"
+}
 
-echo "::group::Frame times (emulator, SwiftShader)"
+frames() {
 echo "### Frame times on the emulator (SwiftShader: compare the two runs, not with a phone)" >"$OUT/frames.md"
-measure glass
+measure glass || return 1
 battery_saver on
-measure flat-battery-saver
+measure flat-battery-saver || return 1
 battery_saver off
 cat "$OUT/frames.md"
-echo "::endgroup::"
+}
 
-echo "::group::Recording"
-tap Live
-wait_until "the live tab" on_screen "Reminder set for Monday 2 November at 9:00."
+recording() {
+tap Live || return 1
+wait_until "the live tab" on_screen "Reminder set for Monday 2 November at 9:00." || return 1
 adb shell screenrecord --time-limit 24 --bit-rate 8000000 /sdcard/clip.mp4 &
 rec=$!
 sleep 1.5
 for t in Sessions Tools Settings Live; do
-  tap "$t"
+  tap "$t" || return 1
   sleep 1.4
 done
 scroll_up 700
@@ -184,14 +194,30 @@ scroll_down 700
 sleep 1
 scroll_down 700
 sleep 1
-tap "Attach a photo or audio file"
+tap "Attach a photo or audio file" || return 1
 sleep 1.5
-tap "Close the attach menu"
+tap "Close the attach menu" || return 1
 sleep 1
-tap Sessions
+tap Sessions || return 1
 sleep 1.2
-tap Live
+tap Live || return 1
 wait $rec || true
 adb pull /sdcard/clip.mp4 "$OUT/phase-2b-clip.mp4"
-echo "::endgroup::"
+}
+# Each part runs even if one before it failed (a failure is recorded, its screen saved), so the
+# artifact always has what could be made; the job fails at the end.
+FAILED=()
+for part in screenshots frames recording; do
+  echo "::group::$part"
+  if ! "$part"; then
+    FAILED+=("$part")
+    adb exec-out screencap -p >"$OUT/failed-$part.png" || true
+    battery_saver off || true
+  fi
+  echo "::endgroup::"
+done
 demo exit
+if ((${#FAILED[@]})); then
+  echo "::error::failed: ${FAILED[*]}"
+  exit 1
+fi
