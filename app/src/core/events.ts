@@ -23,13 +23,14 @@ export type ButtonRows = ReplyButton[][];
  * opaque, compared only by equality or passed back to the history API.
  */
 export interface EventDataMap {
-  'message.user': { text: string; voice: boolean; cursor: string };
-  'message.assistant': { text: string; cursor: string };
+  // Frontend messages (contracts/events.md, "Messages from Arpit"): accepted at once with the POST's ref; clean text.
+  'message.user': { text: string; voice: boolean; cursor: string; ref?: string; delivery?: 'main' | 'queued' | 'side_lane'; lane?: 'main' | 'queued' | 'side'; attachments?: string[]; replying_to?: string | null };
+  'message.assistant': { text: string; cursor: string; lane?: Lane; ref?: string; files?: string[] };
   'tool.call': { id: string; name: string; summary: string; cursor: string };
   'tool.result': { id: string; name: string; ok: boolean; summary: string; cursor: string };
   'file.diff': { id: string; path: string; diff: string; cursor: string };
   'turn.started': { ref: string; lane?: Lane };
-  'turn.done': { ref: string; text: string; steps: number; elapsed: number; lane?: Lane; is_error?: boolean; subtype?: string; display_text?: string };
+  'turn.done': { ref: string; text: string; display_text?: string; files?: string[]; reaction?: string | null; steps: number; elapsed: number; lane?: Lane; is_error?: boolean; subtype?: string };
   'turn.stopped': { ref: string; lane?: Lane | 'queued' };
   'turn.queued': { ref: string; position: number };
   'turn.progress': { ref: string; lane: Lane; steps: number; step: string; elapsed: number };
@@ -44,6 +45,9 @@ export interface EventDataMap {
   'message.system': { text: string; buttons?: ButtonRows; key?: string; ref?: string };
   'message.buttons_cleared': { key: string };
   'command.reply': { ref: string; text: string; buttons?: ButtonRows };
+  // How Claude took a frontend message, and the reaction Telegram would show (contracts/events.md):
+  'message.delivered': { ref: string; delivery: 'main' | 'mid_turn' | 'side_lane'; rid: string };
+  'message.reaction': { ref: string; emoji: string }; // EDITH's reaction on Arpit's message; the latest wins
   // App-local events (never sent by the server):
   'app.connected': { first: boolean }; // core/connection.ts: the stream (re)opened; resync what may be missed
   'app.voice': { state: 'listening' | 'speaking' | 'idle' }; // the voice feature (Phase 3): mic or TTS active

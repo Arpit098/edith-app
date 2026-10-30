@@ -7,27 +7,68 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { DiffView } from '../../ui/DiffView';
 import { Icon } from '../../ui/Icon';
 import { ReplyButtons } from '../../ui/ReplyButtons';
+import { StatusTick } from '../../ui/StatusTick';
 import { colors, mono, radius, space } from '../../ui/theme';
-import type { Item } from './model';
+import { clockIST } from '../../common/format';
+import type { Item, SendStatus, Tick } from './model';
 
 const ORIGIN_LABEL: Record<string, string> = { telegram: 'Telegram', terminal: 'Terminal', app: '', system: '' };
 
-export const ItemView = memo(function ItemView({ item, onPress }: { item: Item; onPress: (id: number, action: string) => Promise<unknown> }) {
+/** Accessibility labels for the status ticks (drawn by ui/StatusTick). */
+const TICK_LABEL: Record<Tick, string> = { clock: 'Not sent yet', sent: 'Sent', delivered: 'EDITH has it', failed: 'Not sent, tap to retry' };
+
+/** A caption only where the state isn't obvious from the ticks. */
+const STATUS_TEXT: Partial<Record<SendStatus, string>> = {
+  queued: 'Queued: EDITH is busy, it runs next',
+  side: 'Answering in parallel (the main conversation is busy)',
+  folded: 'Added to the task EDITH was already working on',
+  stopped: 'Stopped',
+};
+
+export interface ItemViewProps {
+  item: Item;
+  onPress: (id: number, action: string) => Promise<unknown>;
+  tick?: Tick | null; // for Arpit's messages
+  status?: SendStatus | null;
+  onRetry?: (key: string) => void;
+}
+
+export const ItemView = memo(function ItemView({ item, onPress, tick, status, onRetry }: ItemViewProps) {
   switch (item.kind) {
     case 'user': {
       const from = ORIGIN_LABEL[item.origin];
+      const failed = tick === 'failed';
+      const retry = failed && item.local && onRetry ? () => onRetry(item.local!.key) : undefined;
+      const caption = failed ? (item.local?.error ?? 'Not sent') : status ? STATUS_TEXT[status] : undefined;
       return (
-        <View style={[styles.bubble, styles.user]}>
-          {from || item.voice ? <Text style={styles.meta}>{[from, item.voice ? '🎙 voice' : ''].filter(Boolean).join(' · ')}</Text> : null}
-          <Text style={styles.text} selectable>
-            {item.text}
-          </Text>
+        <View style={styles.userWrap}>
+          <Pressable style={[styles.bubble, styles.user, failed && styles.userFailed]} onPress={retry} disabled={!retry} accessibilityHint={retry ? 'Send again' : undefined}>
+            {from || item.voice ? <Text style={styles.meta}>{[from, item.voice ? '🎙 voice' : ''].filter(Boolean).join(' · ')}</Text> : null}
+            <Text style={styles.text} selectable>
+              {item.text}
+            </Text>
+            <View style={styles.footer}>
+              <Text style={styles.time}>{clockIST(item.ts)}</Text>
+              {tick ? (
+                <View accessibilityLabel={TICK_LABEL[tick]}>
+                  <StatusTick kind={tick} color={colors.textDim} />
+                </View>
+              ) : null}
+            </View>
+          </Pressable>
+          {item.reaction ? (
+            <View style={styles.reaction} accessibilityLabel={`EDITH reacted ${item.reaction}`}>
+              <Text style={styles.reactionText}>{item.reaction}</Text>
+            </View>
+          ) : null}
+          {caption ? <Text style={[styles.caption, failed && styles.captionError]}>{failed ? `${caption} · Tap to retry` : caption}</Text> : null}
         </View>
       );
     }
     case 'assistant':
       return (
         <View style={[styles.bubble, styles.assistant]}>
+          {item.lane === 'side' ? <Text style={styles.meta}>⚡ Parallel answer (the main conversation was busy)</Text> : null}
           <Text style={styles.text} selectable>
             {item.text}
           </Text>
@@ -101,7 +142,15 @@ function DiffCard({ path, diff }: { path: string; diff: string }) {
 
 const styles = StyleSheet.create({
   bubble: { borderRadius: radius.l, paddingHorizontal: space.m, paddingVertical: space.s + 2, marginVertical: space.xs, maxWidth: '88%' },
-  user: { backgroundColor: colors.user, alignSelf: 'flex-end', borderBottomRightRadius: radius.s },
+  userWrap: { alignSelf: 'flex-end', alignItems: 'flex-end', maxWidth: '88%', marginVertical: space.xs },
+  user: { backgroundColor: colors.user, borderBottomRightRadius: radius.s, maxWidth: '100%', marginVertical: 0 },
+  userFailed: { borderWidth: 1, borderColor: colors.danger },
+  footer: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 3, marginTop: 2 },
+  time: { color: colors.textDim, fontSize: 11 },
+  reaction: { marginTop: -10, marginRight: space.s, backgroundColor: colors.surfaceHigh, borderRadius: 12, paddingHorizontal: 5, paddingVertical: 1, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border },
+  reactionText: { fontSize: 14 },
+  caption: { color: colors.textDim, fontSize: 11, marginTop: 2, marginRight: space.xs },
+  captionError: { color: colors.danger },
   assistant: { backgroundColor: colors.surface, alignSelf: 'flex-start', borderBottomLeftRadius: radius.s },
   text: { color: colors.text, fontSize: 15, lineHeight: 21 },
   meta: { color: colors.textDim, fontSize: 11, marginBottom: 2 },
