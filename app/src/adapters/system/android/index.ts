@@ -1,9 +1,9 @@
-// Adapter: OngoingStatus (Live Alerts) and Notifier on our native module android-modules/edith-system.
+// Adapter: OngoingStatus (Live Alerts), Notifier and PushReceiver on our native module android-modules/edith-system.
 
 import { requireOptionalNativeModule } from 'expo';
 import { PermissionsAndroid } from 'react-native';
 
-import type { LocalNotification, Notifier, OngoingStatus, OngoingStatusView } from '../../../core/ports';
+import type { LocalNotification, Notifier, OngoingStatus, OngoingStatusView, PushReceiver, PushSetup, PushStatus } from '../../../core/ports';
 
 interface NativeSystem {
   sdkInt: number;
@@ -16,12 +16,18 @@ interface NativeSystem {
   canPromote(): boolean;
   openPromotionSettings(): void;
   testIsland(): { ok: boolean; message: string };
+  pushEnable(setup: PushSetup): boolean;
+  pushUpdateApi(apiUrl: string, apiToken: string): void;
+  pushResume(): boolean;
+  pushDisable(): void;
+  pushStatus(): Partial<PushStatus>;
+  openBatterySettings(): void;
 }
 
 const MIN_SDK = 26; // notification channels and foreground-service starts (Android 8); the app's minSdk is 24
 
 /** Null where the native module isn't built in (jest, web), or on Android older than 8. */
-export function createAndroidSystem(): { status: OngoingStatus; notifier: Notifier } | null {
+export function createAndroidSystem(): { status: OngoingStatus; notifier: Notifier; push: PushReceiver } | null {
   const native = requireOptionalNativeModule<NativeSystem>('EdithSystem');
   if (!native) return null;
   const sdkInt = Number(native.sdkInt);
@@ -54,5 +60,16 @@ export function createAndroidSystem(): { status: OngoingStatus; notifier: Notifi
     active: async () => native.activeTags(),
     ensurePermission,
   };
-  return { status, notifier };
+  const push: PushReceiver = {
+    enable: (setup) => native.pushEnable(setup),
+    updateApi: (apiUrl, apiToken) => native.pushUpdateApi(apiUrl, apiToken),
+    resume: () => native.pushResume(),
+    disable: () => native.pushDisable(),
+    status: () => {
+      const s = native.pushStatus();
+      return { enabled: s.enabled === true, ntfyUrl: s.ntfyUrl ?? null, connected: s.connected === true, error: s.error ?? null, batteryUnrestricted: s.batteryUnrestricted === true };
+    },
+    openBatterySettings: () => native.openBatterySettings(),
+  };
+  return { status, notifier, push };
 }

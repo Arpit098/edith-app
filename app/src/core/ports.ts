@@ -107,6 +107,37 @@ export interface OngoingStatus {
 
 export type NotificationChannel = 'replies' | 'approvals' | 'reminders' | 'errors';
 
+/** What the push service needs with the app closed (contracts/push.md): edith's ntfy and the App API for Allow/Deny. */
+export interface PushSetup {
+  ntfyUrl: string; // e.g. http://100.78.124.98:2586
+  topic: string;
+  ntfyToken: string; // the phone's read-only ntfy token
+  apiUrl: string;
+  apiToken: string;
+}
+
+export interface PushStatus {
+  enabled: boolean;
+  ntfyUrl: string | null;
+  connected: boolean; // the ntfy stream is open now
+  error: string | null; // why not, in words
+  batteryUnrestricted: boolean; // exempt from battery optimisation (OxygenOS may stop it otherwise)
+}
+
+/** Pushes while the app is closed: a native service holding one ntfy stream (contracts/push.md). */
+export interface PushReceiver {
+  /** Save the setup (encrypted on the phone) and start. False: Android refused to start it now. */
+  enable(setup: PushSetup): boolean;
+  /** The App API moved or its token changed: Allow/Deny on pushes use the new one. No-op while off. */
+  updateApi(apiUrl: string, apiToken: string): void;
+  /** At app start: restart the service if pushes are on. */
+  resume(): boolean;
+  /** Turn off and forget the tokens. */
+  disable(): void;
+  status(): PushStatus;
+  openBatterySettings(): void;
+}
+
 /** A notification button that calls the App API in the background, without opening the app. */
 export interface NotificationAction {
   label: string;
@@ -288,6 +319,7 @@ export interface Ports {
   media?: MediaPicker; // attachments
   status?: OngoingStatus;
   notifier?: Notifier;
+  push?: PushReceiver; // absent in tests, on web and before Android 8
   visibility?: AppVisibility;
   // Built in later phases (PLAN.md §6); absent until then.
   tts?: TextToSpeech; // Phase 3
