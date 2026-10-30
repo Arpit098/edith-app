@@ -29,7 +29,7 @@ export interface EventDataMap {
   'tool.result': { id: string; name: string; ok: boolean; summary: string; cursor: string };
   'file.diff': { id: string; path: string; diff: string; cursor: string };
   'turn.started': { ref: string; lane?: Lane };
-  'turn.done': { ref: string; text: string; steps: number; elapsed: number; lane?: Lane; is_error?: boolean; subtype?: string };
+  'turn.done': { ref: string; text: string; steps: number; elapsed: number; lane?: Lane; is_error?: boolean; subtype?: string; display_text?: string };
   'turn.stopped': { ref: string; lane?: Lane | 'queued' };
   'turn.queued': { ref: string; position: number };
   'turn.progress': { ref: string; lane: Lane; steps: number; step: string; elapsed: number };
@@ -47,6 +47,7 @@ export interface EventDataMap {
   // App-local events (never sent by the server):
   'app.connected': { first: boolean }; // core/connection.ts: the stream (re)opened; resync what may be missed
   'app.voice': { state: 'listening' | 'speaking' | 'idle' }; // the voice feature (Phase 3): mic or TTS active
+  'app.screen': { name: string }; // shell/: the screen now on top (e.g. "live", "approvals")
 }
 
 export type EventType = keyof EventDataMap;

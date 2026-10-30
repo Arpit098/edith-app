@@ -3,7 +3,8 @@ import type { OngoingStatus, OngoingStatusView } from '../../../core/ports';
 import { ev, fakeContext, flush } from '../../../testing/fakes';
 import { createLiveStatus, initialStatus, reduce, viewOf, type LiveStatusState } from '../model';
 
-const run = (events: Parameters<typeof reduce>[1][], from: LiveStatusState = initialStatus) => events.reduce(reduce, from);
+const T0 = 1_800_000_000_000;
+const run = (events: Parameters<typeof reduce>[1][], from: LiveStatusState = initialStatus, now = T0) => events.reduce((s, e) => reduce(s, e, now), from);
 
 class FakeStatus implements OngoingStatus {
   shown: OngoingStatusView[] = [];
@@ -28,41 +29,63 @@ describe('viewOf', () => {
     expect(viewOf(initialStatus)).toBeNull();
   });
 
-  it('shows thinking, then the running step with a timer from the oldest run', () => {
-    const t0 = ev('turn.started', { ref: 'r1' }, { ts: 1000 });
-    let s = run([t0]);
-    expect(viewOf(s)).toMatchObject({ title: 'EDITH is thinking', chip: 'Thinking', startedAt: 1_000_000, progress: true, link: 'edith://live' });
-    s = run([ev('turn.progress', { ref: 'r1', steps: 3, step: '$ npm test', elapsed: 40 }, { ts: 1040 })], s);
-    expect(viewOf(s)).toMatchObject({ title: 'EDITH is working', text: '$ npm test · step 3', chip: 'Working', startedAt: 1_000_000 });
-    s = run([ev('turn.started', { ref: 'r2' }, { ts: 1050 })], s);
-    expect(viewOf(s)?.title).toBe('EDITH is working (2 tasks)');
-    s = run([ev('turn.done', { ref: 'r1' }), ev('turn.stopped', { ref: 'r2' })], s);
+  it('shows thinking, running <tool>, thinking again after the result, with a timer from the oldest run', () => {
+    let s = run([ev('turn.started', { ref: 'r1', lane: 'main' })]);
+    expect(viewOf(s)).toEqual({
+      title: 'EDITH is thinking',
+      text: 'Working out what to do',
+      chip: 'Thinking',
+      startedAt: T0,
+      progress: true,
+      link: 'edith://live',
+      alert: false,
+      keepAlive: true,
+    });
+    s = run([ev('tool.call', { id: 't1', name: 'Bash', summary: '$ npm test' })], s);
+    expect(viewOf(s)).toMatchObject({ title: 'Running Bash', text: '$ npm test', chip: 'Bash' });
+    s = run([ev('turn.progress', { ref: 'r1', lane: 'main', steps: 3, step: '$ npm test', elapsed: 40 })], s, T0 + 45_000);
+    expect(viewOf(s)).toMatchObject({ text: '$ npm test · step 3', startedAt: T0 + 5_000 }); // re-anchored on the server's elapsed
+    s = run([ev('tool.result', { id: 't1', name: 'Bash', ok: true })], s);
+    expect(viewOf(s)).toMatchObject({ title: 'EDITH is thinking', text: 'Last: $ npm test · step 3', chip: 'Thinking' });
+    s = run([ev('turn.started', { ref: 'r2', lane: 'side' })], s, T0 + 50_000);
+    expect(viewOf(s)?.title).toBe('EDITH is thinking · 2 tasks');
+    s = run([ev('turn.done', { ref: 'r1' }), ev('turn.progress', { ref: 'r2', lane: 'side', steps: 1, step: 'Read a.ts' })], s, T0 + 60_000);
+    expect(viewOf(s)).toMatchObject({ title: 'Running a parallel task', text: 'Read a.ts · step 1', chip: 'Working' });
+    s = run([ev('turn.stopped', { ref: 'r2' })], s);
     expect(viewOf(s)).toBeNull();
   });
 
-  it('puts an approval first and opens the approvals', () => {
+  it('ignores tool events with no main-lane run, and clips a long tool name in the chip', () => {
+    expect(viewOf(run([ev('tool.call', { name: 'Bash' })]))).toBeNull();
+    const s = run([ev('turn.started', { ref: 'r', lane: 'main' }), ev('tool.call', { name: 'mcp__gmail__search_threads', summary: 'mail' })]);
+    expect(viewOf(s)?.chip).toBe('mcp__gmail_…');
+  });
+
+  it('puts an approval first, opens the approvals and keeps the turn timer', () => {
     const s = run([
       ev('turn.started', { ref: 'r1' }),
       ev('permission.request', { id: 'a1', tool: 'Bash', detail: 'rm -rf build' }),
       ev('permission.request', { id: 'a2', tool: 'Write', detail: 'x.ts' }),
     ]);
     expect(viewOf(s)).toEqual({
-      title: 'EDITH needs your approval',
+      title: 'Waiting for your approval',
       text: 'Bash: rm -rf build (+1 more)',
       chip: 'Approve?',
-      startedAt: null,
+      startedAt: T0,
       progress: false,
       link: 'edith://approvals',
       alert: true,
+      keepAlive: true,
     });
     const after = run([ev('permission.resolved', { id: 'a1' }), ev('permission.resolved', { id: 'a2', decision: 'gone' })], s);
     expect(viewOf(after)?.chip).toBe('Thinking');
   });
 
-  it('shows listening and speaking from the voice feature', () => {
-    expect(viewOf(run([localEvent('app.voice', { state: 'listening' })]))?.chip).toBe('Listening');
-    expect(viewOf(run([localEvent('app.voice', { state: 'speaking' })]))?.chip).toBe('Speaking');
+  it('shows listening and speaking from the voice feature, without keeping EDITH alive', () => {
+    expect(viewOf(run([localEvent('app.voice', { state: 'listening' })]))).toMatchObject({ chip: 'Listening', keepAlive: false });
+    expect(viewOf(run([localEvent('app.voice', { state: 'speaking' })]))).toMatchObject({ chip: 'Speaking', keepAlive: false });
     expect(viewOf(run([localEvent('app.voice', { state: 'speaking' }), localEvent('app.voice', { state: 'idle' })]))).toBeNull();
+    expect(viewOf(run([ev('turn.started', { ref: 'r' }), localEvent('app.voice', { state: 'speaking' })]))).toMatchObject({ chip: 'Speaking', keepAlive: true });
   });
 
   it('drops runs whose end was missed once the lanes are idle', () => {
@@ -74,7 +97,7 @@ describe('viewOf', () => {
 });
 
 describe('createLiveStatus', () => {
-  beforeEach(() => jest.useFakeTimers({ now: 1_800_000_000_000 }));
+  beforeEach(() => jest.useFakeTimers({ now: T0 }));
   afterEach(() => jest.useRealTimers());
 
   function setup() {
@@ -96,7 +119,7 @@ describe('createLiveStatus', () => {
     ctx.bus.publish(ev('turn.progress', { ref: 'r', steps: 3, step: 'Edit b.ts' }));
     expect(status.shown).toHaveLength(1); // within the second: held back
     jest.advanceTimersByTime(1000);
-    expect(status.shown.map((v) => v.text)).toEqual(['Working out what to do', 'Edit b.ts · step 3']); // only the newest
+    expect(status.shown.map((v) => v.text)).toEqual(['Working out what to do', 'Last: Edit b.ts · step 3']); // only the newest
 
     ctx.bus.publish(ev('turn.done', { ref: 'r' }));
     expect(status.cleared).toBe(1);
@@ -106,16 +129,23 @@ describe('createLiveStatus', () => {
     m.dispose();
   });
 
+  it('never throttles starting or ending the keep-alive', () => {
+    const { ctx, status } = setup();
+    ctx.bus.publish(localEvent('app.voice', { state: 'speaking' }));
+    ctx.bus.publish(ev('turn.started', { ref: 'r' })); // keepAlive turns on: shown at once
+    expect(status.shown.map((v) => v.keepAlive)).toEqual([false, true]);
+    ctx.bus.publish(ev('turn.done', { ref: 'r' })); // and off again at once
+    expect(status.shown.map((v) => v.keepAlive)).toEqual([false, true, false]);
+  });
+
   it('does not re-post an unchanged view, and asks for permission once', () => {
     const { ctx, status } = setup();
     ctx.bus.publish(ev('permission.request', { id: 'a', tool: 'Bash', detail: 'ls' }));
+    ctx.bus.publish(ev('permission.request', { id: 'a', tool: 'Bash', detail: 'ls' })); // a duplicate
     ctx.bus.publish(ev('message.user', { text: 'unrelated' }));
-    jest.advanceTimersByTime(3000);
-    ctx.bus.publish(ev('turn.started', { ref: 'r' })); // the approval still wins: same view
     jest.advanceTimersByTime(3000);
     expect(status.shown).toHaveLength(1);
     ctx.bus.publish(ev('permission.resolved', { id: 'a' }));
-    ctx.bus.publish(ev('turn.done', { ref: 'r' }));
     ctx.bus.publish(ev('turn.started', { ref: 'r2' }));
     expect(status.asked).toBe(1);
   });
@@ -129,7 +159,7 @@ describe('createLiveStatus', () => {
     ctx.bus.publish(localEvent('app.connected', { first: false }));
     await flush(); // promises aren't faked
     jest.advanceTimersByTime(1000);
-    expect(status.shown.map((v) => v.chip)).toEqual(['Thinking', 'Working']);
-    expect(status.shown.at(-1)).toMatchObject({ text: '$ make', startedAt: 1_800_000_000_000 - 30_000 });
+    expect(status.shown).toHaveLength(2);
+    expect(status.shown.at(-1)).toMatchObject({ text: 'Last: $ make', startedAt: T0 - 30_000 });
   });
 });
