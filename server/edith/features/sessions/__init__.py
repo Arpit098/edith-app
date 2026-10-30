@@ -115,18 +115,6 @@ def setup(ctx: Context) -> None:
             raise ApiError(429, "Too many switches waiting")
         return {"status": "switching", "ref": ref}
 
-    def api_history(req):
-        q = req.get("query") or {}
-        sid = req["params"]["id"]
-        try:
-            limit = int(q.get("limit", 50))
-        except ValueError:
-            raise ApiError(400, "limit must be a number")
-        page = agent.history(None if sid == "current" else sid, q.get("after"), q.get("before"), limit)
-        if page is None:
-            raise ApiError(404, "No such conversation")
-        return page
-
     def api_new(req):
         return {"result": agent.new_session()}
 
@@ -141,7 +129,6 @@ def setup(ctx: Context) -> None:
     ctx.add_action("sess", press)
     ctx.add_route("GET", "/v1/sessions", api_list)
     ctx.add_route("POST", "/v1/sessions/{id}/resume", api_resume)
-    ctx.add_route("GET", "/v1/sessions/{id}/history", api_history)
     ctx.add_route("POST", "/v1/sessions/new", api_new)
     ctx.add_route("PATCH", "/v1/sessions/{id}", api_rename)
 
