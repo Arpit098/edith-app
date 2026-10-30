@@ -11,12 +11,15 @@ is read from the file and never printed.
 import argparse
 import json
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from lib import FetchError, download, request, sha256_file, write_json  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+SESSION_ID = re.compile(r"[0-9]{8}-[0-9]{4}-[0-9a-f]{4}")  # contracts/wakeword.md
+SHA256 = re.compile(r"[0-9a-f]{64}")
 
 
 def read_token(path):
@@ -43,7 +46,13 @@ def fetch(base, token, session="latest", work=os.path.join(HERE, "..", "work"), 
         if not recorded:
             raise FetchError("no session with clips on edith yet: record some in the app first")
         session = recorded[0]["id"]
+    if not SESSION_ID.fullmatch(str(session)):  # used in a path below: only the contract's form
+        raise FetchError(f"not a session id: {str(session)[:80]!r}")
     manifest = get_json(base, f"/v1/wakeword/sessions/{session}/manifest", token)
+    bad = [c.get("sha256") for c in manifest["clips"] if not SHA256.fullmatch(str(c.get("sha256")))]
+    if bad or manifest.get("session") != session:
+        raise FetchError(f"the manifest from edith is not valid (session {manifest.get('session')!r}, "
+                         f"{len(bad)} bad sha256 values); nothing was written")
     folder = os.path.join(os.path.abspath(work), "recordings", session)
     os.makedirs(os.path.join(folder, "clips"), exist_ok=True)
     got = 0

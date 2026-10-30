@@ -3,15 +3,18 @@
     <root>/<session>/manifest.json     the session and its clips (written atomically)
     <root>/<session>/clips/<sha>.wav   one file per clip, named by its SHA-256
     <root>/.lock                       flock'd around every change
+    <root>/.tmp/                       uploads in progress (emptied at start)
 
 Files are 0600 and folders 0700. Manifests are read once and kept in memory (only this process
-writes them), so listing sessions or checking disk use never re-reads or walks the folders.
+writes them), so listing sessions or checking disk use never re-reads or walks the folders. A
+session whose manifest.json can't be read is skipped (and logged), so the others keep working.
 """
 import array
 import contextlib
 import fcntl
 import hashlib
 import json
+import logging
 import math
 import os
 import re
@@ -24,6 +27,7 @@ import wave
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+log = logging.getLogger("edith.feature.wakeword")
 IST = ZoneInfo("Asia/Kolkata")
 KINDS = {"positive_near": (0.5, 5.0), "positive_far": (0.5, 5.0), "positive_whisper": (0.5, 5.0),
          "noise": (1.0, 120.0)}  # kind -> (min, max) seconds
@@ -113,15 +117,27 @@ class Recordings:
         os.chmod(root, 0o700)
         self._lock = threading.Lock()
         self._lock_file = os.path.join(root, ".lock")
+        # Uploads in progress live here, not in their session's folder, so deleting a session never
+        # removes a file that is still being written (it is moved into the session under the lock).
+        self.tmp = os.path.join(root, ".tmp")
+        shutil.rmtree(self.tmp, ignore_errors=True)  # uploads cut off by a restart
+        os.mkdir(self.tmp, 0o700)
+        os.chmod(self.tmp, 0o700)
         self._manifests: dict[str, dict] = {}
+        self.used = 0
         with self._locked():
             for name in os.listdir(root):
                 path = os.path.join(root, name, "manifest.json")
                 if SESSION_ID.fullmatch(name) and os.path.exists(path):
-                    with open(path) as f:
-                        self._manifests[name] = json.load(f)
-                    self._sweep(name)
-        self.used = sum(c["bytes"] for m in self._manifests.values() for c in m["clips"])
+                    try:
+                        with open(path) as f:
+                            m = json.load(f)
+                        size = sum(int(c["bytes"]) for c in m["clips"])
+                        summary(m)  # every field the routes read is there
+                    except (OSError, ValueError, KeyError, TypeError, AttributeError) as e:
+                        log.warning("wake word session %s skipped: its manifest.json is unreadable (%s)", name, e)
+                        continue
+                    self._manifests[name], self.used = m, self.used + size
 
     @contextlib.contextmanager
     def _locked(self):
@@ -133,13 +149,6 @@ class Recordings:
                 yield
             finally:
                 os.close(fd)  # releases the flock
-
-    def _sweep(self, sid):
-        """Remove uploads that never finished (a crash mid-upload) from a session's clips folder."""
-        clips = os.path.join(self.root, sid, "clips")
-        for name in os.listdir(clips) if os.path.isdir(clips) else []:
-            if name.startswith(".upload-"):
-                os.remove(os.path.join(clips, name))
 
     def _save(self, manifest):
         manifest["updated_at"] = int(time.time())
@@ -202,7 +211,7 @@ class Recordings:
         if self.used + length > self.max_total_bytes:
             raise StoreError(507, "recordings are using all their space; delete a session")
         clips = os.path.join(self.root, sid, "clips")
-        tmp = os.path.join(clips, f".upload-{secrets.token_hex(8)}")
+        tmp = os.path.join(self.tmp, f"upload-{secrets.token_hex(8)}")
         try:
             h, size = hashlib.sha256(), 0
             fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)

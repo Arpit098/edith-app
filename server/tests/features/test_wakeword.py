@@ -107,7 +107,7 @@ class SessionsTest(unittest.TestCase):
         self.assertEqual(s.call("DELETE", f"/v1/wakeword/sessions/{second}")[1], {"deleted": second})
         self.assertEqual(s.call("DELETE", f"/v1/wakeword/sessions/{second}")[0], 404)
         self.assertEqual(s.call("DELETE", "/v1/wakeword/sessions/..")[0], 404)
-        self.assertEqual(sorted(os.listdir(s.root)), [".lock", body["id"]])
+        self.assertEqual(sorted(os.listdir(s.root)), [".lock", ".tmp", body["id"]])
         for folder in (s.root, s.root / body["id"], s.root / body["id"] / "clips"):
             self.assertEqual(stat.S_IMODE(os.stat(folder).st_mode), 0o700)
         manifest = s.root / body["id"] / "manifest.json"
@@ -129,7 +129,7 @@ class SessionsTest(unittest.TestCase):
                              ("DELETE", f"/v1/wakeword/sessions/{sid}")):
             with self.subTest(path):
                 self.assertEqual(s.call(method, path, token=None)[0], 401)
-        self.assertEqual(len(os.listdir(s.root)), 2)  # nothing deleted
+        self.assertEqual(len(os.listdir(s.root)), 3)  # .lock, .tmp and the session: nothing deleted
 
 
 class UploadTest(unittest.TestCase):
@@ -252,13 +252,55 @@ class UploadTest(unittest.TestCase):
     def test_restart_reads_the_manifests_and_drops_half_uploads(self):
         data = wav(1.0)
         self.s.upload(self.sid, data)
-        (self.s.root / self.sid / "clips" / ".upload-dead").write_bytes(b"partial")
+        (self.s.root / ".tmp" / "upload-dead").write_bytes(b"partial")
         again = store_mod.Recordings(str(self.s.root))
         self.assertEqual((again.used, again.session(self.sid)["clips"]), (len(data), 1))
         self.assertEqual(os.listdir(self.s.root / self.sid / "clips"), [f"{sha(data)}.wav"])
+        self.assertEqual(os.listdir(self.s.root / ".tmp"), [])
+
+    def test_a_session_deleted_mid_upload(self):
+        store = store_mod.Recordings(str(self.s.root))
+        data = wav(1.0)
+
+        class Body:  # the session is deleted while the clip is still arriving
+            sent = False
+
+            def read(self, n):
+                if self.sent:
+                    return b""
+                self.sent = True
+                store.delete(sid)
+                return data
+        sid = store.create("doomed")["id"]
+        with self.assertRaises(store_mod.StoreError) as cm:
+            store.add(sid, "positive_near", Body(), len(data))
+        self.assertEqual(cm.exception.status, 404)
+        self.assertFalse((self.s.root / sid).exists())
+        self.assertEqual(os.listdir(self.s.root / ".tmp"), [])  # the temp file went too
+        self.assertEqual(store.used, 0)
+
+    def test_a_corrupt_manifest_skips_only_its_session(self):
+        self.s.upload(self.sid, wav(1.0))
+        bad = self.s.session("broken")
+        (self.s.root / bad / "manifest.json").write_text("{not json")
+        other = self.s.session("half")
+        (self.s.root / other / "manifest.json").write_text(json.dumps({"session": other, "clips": [{}]}))
+        with self.assertLogs("edith.feature.wakeword", "WARNING") as logs:
+            again = store_mod.Recordings(str(self.s.root))
+        self.assertEqual([s["id"] for s in again.sessions()], [self.sid])
+        self.assertEqual(len(logs.records), 2)
 
 
 class ModelStatusTest(unittest.TestCase):
+    def test_bad_json_is_a_400_or_no_model(self):
+        s = Server(self)
+        status, body, _ = s.call("POST", "/v1/wakeword/sessions", b"[1, 2]", {"Content-Type": "application/json"})
+        self.assertEqual(status, 400)
+        self.assertIn("JSON object", body["error"])
+        for content in ("[1, 2]", "{broken", "\"text\""):
+            (s.models / "hey_edith.json").write_text(content)
+            self.assertEqual(s.call("GET", "/v1/wakeword/model")[1]["model"], None)
+
     def test_states(self):
         s = Server(self)
         self.assertEqual(s.call("GET", "/v1/wakeword/model")[1], {"state": "no_recordings", "model": None, "latest_session": None})

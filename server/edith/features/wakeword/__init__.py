@@ -47,7 +47,10 @@ def setup(ctx: Context) -> None:
     # ---- sessions ----
 
     def create(req):
-        session = call(store().create, ((req.get("body") or {}).get("label") or ""))
+        body = req.get("body") or {}
+        if not isinstance(body, dict):
+            raise ApiError(400, "the body must be a JSON object, e.g. {\"label\": \"Living room\"}")
+        session = call(store().create, str(body.get("label") or ""))
         return json_answer(session, {"created": session["id"]})
 
     def listing(req):
@@ -92,10 +95,13 @@ def setup(ctx: Context) -> None:
         key = (st.st_mtime_ns, st.st_size)
         if model_cache.get("key") != key:
             try:
-                model_cache.update(key=key, value=json.loads(model_file.read_text()))
+                value = json.loads(model_file.read_text())
             except (OSError, ValueError):
+                value = None
+            if not isinstance(value, dict):  # unreadable or not an object: as if there were no model yet
                 ctx.log("wake word model info unreadable: %s", model_file)
-                return None
+                value = None
+            model_cache.update(key=key, value=value)
         return model_cache["value"]
 
     def model(req):

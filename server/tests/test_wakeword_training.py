@@ -158,6 +158,20 @@ class FetchTest(unittest.TestCase):
         self.assertIn("ok      edith reachable with the token: model state: waiting_for_training", text)
         self.assertNotIn(TOKEN, text)
 
+    def test_ids_from_the_server_are_checked_before_any_path(self):
+        good = "20261102-1043-a1b2"
+        cases = {
+            "session path": [{"sessions": [{"id": "../../etc", "clips": 1}]}],
+            "sha path": [{"sessions": [{"id": good, "clips": 1}]},
+                         {"session": good, "clips": [{"sha256": "../../x", "kind": "noise"}]}],
+            "other session": [{"sessions": [{"id": good, "clips": 1}]}, {"session": "20990101-0000-ffff", "clips": []}],
+        }
+        for name, answers in cases.items():
+            with self.subTest(name), mock.patch.object(fetch, "get_json", side_effect=answers), \
+                    self.assertRaises(lib.FetchError):
+                fetch.fetch(self.base, TOKEN, "latest", self.work, log=lambda m: None)
+        self.assertEqual(os.listdir(self.work), [])  # nothing written anywhere
+
     def test_token_file_rules_and_errors(self):
         path = pathlib.Path(self.work, "token")
         path.write_text(TOKEN)

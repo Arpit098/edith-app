@@ -126,3 +126,4 @@ the token from a file and never prints it. Recordings never go in git.
 
 `~/.cache/edith/wakeword/recordings/<session>/manifest.json` and `clips/<sha256>.wav`, mode 0600 (folders
 0700). Written atomically (temp file, then rename); the manifest is changed under a lock. Never in git.
+Uploads in progress are written to `recordings/.tmp/` and moved into their session only once checked.
