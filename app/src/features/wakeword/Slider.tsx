@@ -4,7 +4,7 @@
 import { memo, useMemo, useRef, useState } from 'react';
 import { PanResponder, StyleSheet, View, type LayoutChangeEvent } from 'react-native';
 
-import { colors, space } from '../../ui/theme';
+import { colors, space } from '../../core/theme';
 
 const THUMB = 22;
 
@@ -63,7 +63,7 @@ export const Slider = memo(function Slider({ value, onChange, step = 0.05, label
 
 const styles = StyleSheet.create({
   box: { height: THUMB + space.m, justifyContent: 'center' },
-  track: { height: 4, borderRadius: 2, backgroundColor: colors.border, marginHorizontal: THUMB / 2, overflow: 'hidden' },
+  track: { height: 4, borderRadius: 2, backgroundColor: colors.hairline, marginHorizontal: THUMB / 2, overflow: 'hidden' },
   fill: { height: 4, backgroundColor: colors.accent, marginLeft: -THUMB / 2 },
   thumb: { position: 'absolute', width: THUMB, height: THUMB, borderRadius: THUMB / 2, backgroundColor: colors.accent, borderWidth: 2, borderColor: colors.bg },
 });

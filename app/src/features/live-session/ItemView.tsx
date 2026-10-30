@@ -8,7 +8,7 @@ import { DiffView } from '../../ui/DiffView';
 import { Icon } from '../../ui/Icon';
 import { ReplyButtons } from '../../ui/ReplyButtons';
 import { StatusTick } from '../../ui/StatusTick';
-import { colors, mono, radius, space } from '../../ui/theme';
+import { colors, type, radius, space } from '../../core/theme';
 import { clockIST } from '../../common/format';
 import type { SentAttachment } from './attachments';
 import type { Item, SendStatus, Tick } from './model';
@@ -175,30 +175,30 @@ const SentAttachments = memo(function SentAttachments({ list }: { list: SentAtta
 const styles = StyleSheet.create({
   attachments: { flexDirection: 'row', flexWrap: 'wrap', gap: space.xs, marginBottom: space.xs },
   attachmentImage: { width: 140, height: 140, borderRadius: radius.m },
-  attachmentChip: { flexDirection: 'row', alignItems: 'center', gap: space.xs, maxWidth: 220, backgroundColor: colors.surfaceHigh, borderRadius: radius.s, paddingHorizontal: space.s, paddingVertical: space.xs },
-  attachmentName: { color: colors.text, fontSize: 13, flexShrink: 1 },
+  attachmentChip: { flexDirection: 'row', alignItems: 'center', gap: space.xs, maxWidth: 220, backgroundColor: colors.cardRaised, borderRadius: radius.s, paddingHorizontal: space.s, paddingVertical: space.xs },
+  attachmentName: { color: colors.text, fontSize: type.size.small, flexShrink: 1 },
   bubble: { borderRadius: radius.l, paddingHorizontal: space.m, paddingVertical: space.s + 2, marginVertical: space.xs, maxWidth: '88%' },
   userWrap: { alignSelf: 'flex-end', alignItems: 'flex-end', maxWidth: '88%', marginVertical: space.xs },
-  user: { backgroundColor: colors.user, borderBottomRightRadius: radius.s, maxWidth: '100%', marginVertical: 0 },
+  user: { backgroundColor: colors.userBubble, borderBottomRightRadius: radius.s, maxWidth: '100%', marginVertical: 0 },
   userFailed: { borderWidth: 1, borderColor: colors.danger },
   footer: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 3, marginTop: 2 },
-  time: { color: colors.textDim, fontSize: 11 },
-  reaction: { marginTop: -10, marginRight: space.s, backgroundColor: colors.surfaceHigh, borderRadius: 12, paddingHorizontal: 5, paddingVertical: 1, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border },
+  time: { color: colors.textDim, fontSize: type.size.caption },
+  reaction: { marginTop: -10, marginRight: space.s, backgroundColor: colors.cardRaised, borderRadius: radius.pill, paddingHorizontal: 5, paddingVertical: 1, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.hairline },
   reactionText: { fontSize: 14 },
-  caption: { color: colors.textDim, fontSize: 11, marginTop: 2, marginRight: space.xs },
+  caption: { color: colors.textDim, fontSize: type.size.caption, marginTop: 2, marginRight: space.xs },
   captionError: { color: colors.danger },
-  assistant: { backgroundColor: colors.surface, alignSelf: 'flex-start', borderBottomLeftRadius: radius.s },
-  text: { color: colors.text, fontSize: 15, lineHeight: 21 },
-  meta: { color: colors.textDim, fontSize: 11, marginBottom: 2 },
-  note: { color: colors.textDim, fontSize: 13, marginTop: space.xs },
-  system: { backgroundColor: colors.surfaceHigh, borderRadius: radius.m, padding: space.m, marginVertical: space.xs, borderLeftWidth: 3, borderLeftColor: colors.accent },
-  systemError: { borderLeftColor: colors.danger },
-  tool: { backgroundColor: colors.surface, borderRadius: radius.m, padding: space.s, marginVertical: 2, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border },
+  assistant: { backgroundColor: colors.assistantBubble, alignSelf: 'flex-start', borderBottomLeftRadius: radius.s, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.hairline },
+  text: { color: colors.text, fontSize: type.size.body, lineHeight: 21 },
+  meta: { color: colors.textDim, fontSize: type.size.caption, marginBottom: 2 },
+  note: { color: colors.textDim, fontSize: type.size.small, marginTop: space.xs },
+  system: { backgroundColor: colors.cardRaised, borderRadius: radius.m, padding: space.m, marginVertical: space.xs, borderLeftWidth: 3, borderLeftColor: colors.accent },
+  systemError: { borderLeftColor: colors.danger, backgroundColor: colors.dangerSoft },
+  tool: { backgroundColor: colors.card, borderRadius: radius.m, padding: space.s, marginVertical: 2, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.hairline },
   toolRow: { flexDirection: 'row', alignItems: 'center', gap: space.s },
-  toolName: { color: colors.text, fontFamily: mono, fontSize: 13, fontWeight: '700' },
-  toolSummary: { color: colors.textDim, fontFamily: mono, fontSize: 13, flex: 1 },
-  toolResult: { color: colors.text, fontFamily: mono, fontSize: 12, marginTop: space.s },
+  toolName: { color: colors.text, fontFamily: type.mono, fontSize: type.size.small, fontWeight: '700' },
+  toolSummary: { color: colors.textDim, fontFamily: type.mono, fontSize: type.size.small, flex: 1 },
+  toolResult: { color: colors.text, fontFamily: type.mono, fontSize: 12, marginTop: space.s },
   divider: { flexDirection: 'row', alignItems: 'center', gap: space.s, marginVertical: space.m },
-  rule: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: colors.border },
-  dividerText: { color: colors.textDim, fontSize: 12, maxWidth: '70%' },
+  rule: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: colors.hairline },
+  dividerText: { color: colors.textDim, fontSize: type.size.caption, maxWidth: '70%' },
 });

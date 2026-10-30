@@ -5,7 +5,7 @@ import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import type { AppRelease } from '../../core/api';
-import { colors, space } from '../../ui/theme';
+import { colors, space } from '../../core/theme';
 import { noteSections } from './model';
 
 export function ReleaseNotes({ release }: { release: AppRelease }) {

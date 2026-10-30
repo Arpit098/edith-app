@@ -7,7 +7,7 @@ import type { EventBus } from '../../core/events';
 import { localEvent } from '../../core/events';
 import { useStore } from '../../core/store';
 import { Button } from '../../ui/Button';
-import { colors, space } from '../../ui/theme';
+import { colors, space } from '../../core/theme';
 import type { WakewordModel, WakewordState } from './model';
 import { Slider } from './Slider';
 
@@ -31,7 +31,7 @@ export function WakeWordSettings({ model, bus }: { model: WakewordModel; bus: Ev
           disabled={!installed}
           onValueChange={(on) => void model.setEnabled(on)}
           accessibilityLabel="Hey Edith"
-          trackColor={{ false: colors.border, true: colors.accent }}
+          trackColor={{ false: colors.hairline, true: colors.accent }}
           thumbColor={colors.text}
         />
       </View>

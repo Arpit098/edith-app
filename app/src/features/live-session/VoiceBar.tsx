@@ -6,7 +6,7 @@ import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 
 import { useStore } from '../../core/store';
 import { Button } from '../../ui/Button';
-import { colors, radius, space } from '../../ui/theme';
+import { colors, radius, space } from '../../core/theme';
 import { MAX_RECORDING_MS, type VoiceModel, type VoiceState } from './voice';
 
 const selectPhase = (s: VoiceState) => s.phase;
@@ -46,11 +46,11 @@ export const VoiceBar = memo(function VoiceBar({ voice, onStop }: { voice: Voice
 });
 
 const styles = StyleSheet.create({
-  bar: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: space.s, minHeight: 44, paddingHorizontal: space.s, backgroundColor: colors.surface, borderRadius: radius.m },
+  bar: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: space.s, minHeight: 44, paddingHorizontal: space.s, backgroundColor: colors.card, borderRadius: radius.m },
   dot: { width: 10, height: 10, borderRadius: 5, backgroundColor: colors.danger },
   dotDim: { opacity: 0.35 },
   time: { color: colors.text, fontVariant: ['tabular-nums'], fontSize: 15, minWidth: 40 },
-  meter: { flex: 1, height: 6, borderRadius: 3, backgroundColor: colors.border, overflow: 'hidden' },
+  meter: { flex: 1, height: 6, borderRadius: 3, backgroundColor: colors.hairline, overflow: 'hidden' },
   meterFill: { height: 6, borderRadius: 3, backgroundColor: colors.accent },
   warn: { color: colors.warn, fontSize: 12 },
   label: { color: colors.textDim, fontSize: 14 },
