@@ -6,6 +6,7 @@ import { colors, radius, space, type, useChrome } from '../../core/theme';
 import { Button } from '../../ui/Button';
 import { Empty } from '../../ui/Empty';
 import { Glass, useBackdrop } from '../../ui/Glass';
+import { SettleIn } from '../../ui/motion';
 import { toast } from '../../ui/toast';
 import { ItemView } from './ItemView';
 import { sendStatus, summarize, tickOf, type Item, type LiveModel, type LiveState } from './model';
@@ -30,12 +31,17 @@ export function LiveScreen({ model, voice, attach }: { model: LiveModel; voice: 
   const turns = useStore(model.store, selectTurns); // changes only when a turn changes phase (not per progress event)
   const onRetry = useCallback((key: string) => void model.retry(key), [model]);
   const renderItem = useCallback(
-    ({ item }: { item: Item }) =>
-      item.kind === 'user' ? (
-        <ItemView item={item} onPress={onPress} tick={tickOf(item, turns)} status={sendStatus(item, turns)} onRetry={onRetry} />
-      ) : (
-        <ItemView item={item} onPress={onPress} />
-      ),
+    ({ item, index }: { item: Item; index: number }) => (
+      // The newest message, if it just arrived, settles in on a spring; history and rows scrolled
+      // back into view don't move.
+      <SettleIn animate={index === 0 && Date.now() / 1000 - item.ts < FRESH_S}>
+        {item.kind === 'user' ? (
+          <ItemView item={item} onPress={onPress} tick={tickOf(item, turns)} status={sendStatus(item, turns)} onRetry={onRetry} />
+        ) : (
+          <ItemView item={item} onPress={onPress} />
+        )}
+      </SettleIn>
+    ),
     [onPress, onRetry, turns],
   );
   const loadOlder = useCallback(() => void model.loadOlder(), [model]);
@@ -86,6 +92,7 @@ export function LiveScreen({ model, voice, attach }: { model: LiveModel; voice: 
 
 const TURN_BAR_SPACE = 52; // the floating status pill plus its margins
 const COMPOSER_HEIGHT = 68; // until the composer has measured itself
+const FRESH_S = 4; // a message this new (by its timestamp) arrived just now
 
 const selectLoadingOlder = (s: LiveState) => s.loadingOlder;
 

@@ -8,6 +8,7 @@ import { formatBytes } from '../../common/format';
 import { useStore } from '../../core/store';
 import { Button } from '../../ui/Button';
 import { Icon } from '../../ui/Icon';
+import { GrowIn } from '../../ui/motion';
 import { colors, radius, space } from '../../core/theme';
 import type { AttachmentsModel, Draft, DraftsState } from './attachments';
 
@@ -22,11 +23,12 @@ export const AttachMenu = memo(function AttachMenu({ attach, onDone }: { attach:
     void attach.add(source);
   };
   return (
-    <View style={styles.menu} accessibilityRole="menu">
+    // Grows out of the paperclip (bottom left), like a sheet from its trigger.
+    <GrowIn origin="left bottom" style={styles.menu}>
       <Button small icon="camera-outline" label="Camera" onPress={() => add('camera')} disabled={picking} />
       <Button small icon="image-outline" label="Photos" onPress={() => add('library')} disabled={picking} />
       <Button small icon="music-note-outline" label="Audio file" onPress={() => add('audio')} disabled={picking} />
-    </View>
+    </GrowIn>
   );
 });
 

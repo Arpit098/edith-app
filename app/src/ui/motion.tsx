@@ -1,7 +1,7 @@
 // Liquid motion (PLAN.md §4.11): springs on the UI thread (Reanimated worklets: no JS per frame).
 // With Android's "Remove animations" on (GlassSettings.reduceMotion) everything is at its end state.
 
-import { memo, useEffect, type ReactNode } from 'react';
+import { memo, useEffect, useState, type ReactNode } from 'react';
 import { Pressable, type PressableProps, type StyleProp, type ViewStyle } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
 
@@ -55,17 +55,24 @@ export const GrowIn = memo(function GrowIn({ origin = 'left bottom', style, chil
   return <Animated.View style={[style, { transformOrigin: origin }, animated]}>{children}</Animated.View>;
 });
 
-/** Settles into place from a little below on mount, when `animate` (a new message, not history). */
-export const SettleIn = memo(function SettleIn({ animate, style, children }: { animate: boolean; style?: StyleProp<ViewStyle>; children?: ReactNode }) {
+/**
+ * Settles into place from a little below on mount, when `animate` (a new message, not history or a
+ * row scrolled back into view). Decided once at mount: a row that doesn't animate gets no wrapper.
+ */
+export function SettleIn({ animate, children }: { animate: boolean; children: ReactNode }) {
   const reduce = useReduceMotion();
-  const run = animate && !reduce;
-  const p = useSharedValue(run ? 0 : 1);
+  const [run] = useState(animate && !reduce);
+  return run ? <Settling>{children}</Settling> : <>{children}</>;
+}
+
+function Settling({ children }: { children: ReactNode }) {
+  const p = useSharedValue(0);
   useEffect(() => {
-    if (run) p.value = withSpring(1, motion.settle);
-  }, [p, run]);
+    p.value = withSpring(1, motion.settle);
+  }, [p]);
   const animated = useAnimatedStyle(() => ({
     opacity: Math.min(1, p.value * 2),
     transform: [{ translateY: (1 - p.value) * 18 }, { scale: 0.96 + 0.04 * p.value }],
   }));
-  return <Animated.View style={[style, animated]}>{children}</Animated.View>;
-});
+  return <Animated.View style={animated}>{children}</Animated.View>;
+}
