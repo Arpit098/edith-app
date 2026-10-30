@@ -22,8 +22,8 @@ const liveSession: FeatureModule = {
   screens: [{ name: 'live', title: 'Live', component: Screen, tab: true, icon: 'message-text-outline' }],
   settings: [{ title: 'Voice input', component: Settings }],
   setup: ({ bus, api, ports }) => {
-    const m = createLiveModel(bus, api);
-    const v = createVoiceModel({ bus, api, storage: ports.storage, recorder: ports.recorder, stt: ports.stt });
+    const m = createLiveModel(bus, api, ports.storage);
+    const v = createVoiceModel({ bus, send: (text, o) => m.send(text, o), storage: ports.storage, recorder: ports.recorder, stt: ports.stt });
     model = m;
     voice = v;
     return () => {

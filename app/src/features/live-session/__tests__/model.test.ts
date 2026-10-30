@@ -241,7 +241,7 @@ describe('createLiveModel', () => {
     ctx.bus.publish(ev('command.reply', { ref: 'app:9', text: 'later reply' }));
     ctx.bus.publish(ev('command.reply', { ref: 'someone-else', text: 'not mine' }));
     expect(m.store.get().items[0]).toMatchObject({ kind: 'system', text: 'later reply' });
-    expect(m.store.get().items).toHaveLength(2);
+    expect(m.store.get().items).toHaveLength(3); // the sent message, the system message and the later reply
     m.dispose();
   });
 });
