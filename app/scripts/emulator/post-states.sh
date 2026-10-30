@@ -17,6 +17,14 @@ APK=$1 STATES=$2 OUT=$3 API_LOG=$4
 PKG=com.arpit.edith
 RECEIVER=$PKG/com.arpit.edith.system.DebugNotificationsReceiver
 mkdir -p "$OUT"
+FAILED=()
+
+# On the way out (pass or fail): what Android has, for the artifact.
+on_exit() {
+  adb shell dumpsys notification --noredact >"$OUT/dumpsys-notification.txt" 2>&1 || true
+  adb shell dumpsys activity services "$PKG" >"$OUT/dumpsys-services.txt" 2>&1 || true
+}
+trap on_exit EXIT
 
 wait_until() { # <description> <command…>: until the command succeeds
   local what=$1 delay=0.2 deadline=$((SECONDS + 20))
@@ -66,12 +74,17 @@ shot() {
 
 # Both views of the current state: the status bar (Live Updates chip) and the open shade, which is
 # open once the notification's title ($2) is on screen.
+# A failed check here is recorded and the run goes on, so every state still gets its screenshots
+# (plus the screen's UI tree, to see why); the job fails at the end.
 shots() {
   adb shell cmd statusbar collapse
-  wait_until "the shade to close" off_screen "$2"
+  wait_until "the shade to close" off_screen "$2" || FAILED+=("$1: shade did not close")
   shot "$1-statusbar"
   adb shell cmd statusbar expand-notifications
-  wait_until "the shade to show \"$2\"" on_screen "$2"
+  if ! wait_until "the shade to show \"$2\"" on_screen "$2"; then
+    FAILED+=("$1: \"$2\" not in the shade")
+    ui >"$OUT/$1-shade-ui.xml" || true
+  fi
   shot "$1-shade"
   adb shell cmd statusbar collapse
 }
@@ -169,3 +182,8 @@ found=$(activities)
 echo "EDITH activities: $found"
 [ "$found" = 1 ] || { echo "::error::expected one EDITH activity, found $found"; exit 1; }
 echo "::endgroup::"
+
+if ((${#FAILED[@]})); then
+  printf '::error::%s\n' "${FAILED[@]}"
+  exit 1
+fi
