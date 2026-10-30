@@ -40,7 +40,7 @@ import subprocess
 import sys
 import time
 
-from .panes import Panes, is_claude, proc_stat
+from .panes import Panes, proc_stat, same_process
 from .profiles import Profiles, write_private
 
 READY = re.compile(r"^\s*❯", re.M)  # Claude's input box
@@ -60,14 +60,14 @@ class System:
         return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env)
 
     def open_claude(self, pid, proc_start):
-        """A pidfd for `pid` if it is still the Claude that started at `proc_start`, else None (it
-        ended, or the pid now belongs to another process). Holding the pidfd, the pid can't be reused
-        under us."""
+        """A pidfd for `pid` if it is still the process that started at `proc_start` (the Claude seen
+        when the switch was asked for), else None (it ended, or the pid now belongs to another
+        process). Holding the pidfd, the pid can't be reused under us."""
         try:
             fd = os.pidfd_open(pid)
         except ProcessLookupError:
             return None
-        if not is_claude(pid, proc_start):
+        if same_process(pid, proc_start) is None:
             os.close(fd)
             return None
         return fd
@@ -237,7 +237,13 @@ class Switch:
         self.report("starting_edith")
         self.start_edith()
         self.wait_ready("EDITH", self._edith_screen(), True, self.sys.monotonic() + self.plan.get("ready_timeout", 90))
-        self.profiles.save_current()  # her refresh, if she needed one, is the profile's token from now on
+        if not self.profiles.matches_live(pid):
+            # She refreshed the token: that is the profile's token from now on, but only if she was
+            # the only Claude running (anything else could have written the file).
+            if self.panes.others(set()):
+                self.foreign = True
+                raise StepError("another Claude was running while EDITH started, so the new login can't be trusted")
+            self.profiles.save_current()
         self.report("starting_agents")
         self.start_agents()
         self.report("checking")

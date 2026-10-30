@@ -43,10 +43,14 @@ def proc_stat(pid: int) -> tuple[str, str] | None:
     return comm, fields[19]  # field 22 overall: the 20th after "pid (comm)"
 
 
-def is_claude(pid: int, proc_start, stat=proc_stat) -> bool:
-    """Whether `pid` is still the Claude that wrote its session file (not a reused pid)."""
+def same_process(pid: int, proc_start, stat=proc_stat) -> str | None:
+    """The process name of `pid` if it is still the process that wrote its session file (its start
+    time is the file's procStart, so the pid wasn't reused), else None. The name isn't required to be
+    "claude": a Claude under another name must still count, or a switch would go ahead around it."""
     seen = stat(pid)
-    return bool(seen) and seen[0] == "claude" and (proc_start is None or seen[1] == str(proc_start))
+    if not seen or (proc_start not in (None, "") and seen[1] != str(proc_start)):
+        return None
+    return seen[0]
 
 
 class Panes:
@@ -70,9 +74,10 @@ class Panes:
                 d = json.load(f)
         except (OSError, ValueError):
             return None
-        if not isinstance(d, dict) or not is_claude(pid, d.get("procStart"), self._stat):
+        if not isinstance(d, dict):
             return None
-        return d
+        comm = same_process(pid, d.get("procStart"), self._stat)
+        return dict(d, comm=comm) if comm is not None else None
 
     def _claude_in(self, pane_pid: int) -> tuple[int, dict] | None:
         """The Claude process of a pane: the pane's own process (`exec claude`) or one of its children."""
@@ -104,7 +109,7 @@ class Panes:
             screen = self._tmux(self.cmd, "capture-pane", "-p", "-t", pane)
             seen = read_screen(screen) if screen is not None else {"state": "idle", "blocked": None}
             found.append({"name": name, "pane": pane, "pid": pid, "proc_start": str(s.get("procStart") or "") or None,
-                          "cwd": s.get("cwd") or path, "session_id": sid, "status": s.get("status"),
+                          "cwd": s.get("cwd") or path, "session_id": sid, "status": s.get("status"), "comm": s["comm"],
                           "state": seen["state"], "blocked": seen["blocked"]})
         return sorted(found, key=lambda a: (a["name"], a["pane"]))
 
@@ -114,7 +119,7 @@ class Panes:
         for _, _, pane_pid, _ in self._pane_pids(self.edith_cmd):
             hit = self._claude_in(pane_pid)
             if hit:
-                out.append({"pid": hit[0], "status": hit[1].get("status")})
+                out.append({"pid": hit[0], "status": hit[1].get("status"), "comm": hit[1]["comm"]})
         return out
 
     def others(self, known: set[int]) -> list[dict]:
@@ -139,11 +144,16 @@ class Panes:
         other than `idle` (unknown ones included) counts as busy."""
         agents, why = self.agents(), []
         for a in agents:
-            if a["blocked"] == "permission":
+            if a["comm"] != "claude":
+                why.append(f"{a['name']}'s process isn't named claude ({a['comm']}), so it can't be checked")
+            elif a["blocked"] == "permission":
                 why.append(f"{a['name']} is waiting for approval")
             elif a["state"] == "busy" or a["status"] != "idle":
                 why.append(f"{a['name']} is busy")
-        if any(e["status"] != "idle" for e in self.edith()):
+        edith = self.edith()
+        if any(e["comm"] != "claude" for e in edith):
+            why.append("EDITH's process isn't named claude, so it can't be checked")
+        elif any(e["status"] != "idle" for e in edith):
             why.append("EDITH's Claude is busy (background work)")
         for o in self.others({a["pid"] for a in agents}):
             why.append(f"another Claude is running (pid {o['pid']}{', in ' + o['cwd'] if o.get('cwd') else ''})")

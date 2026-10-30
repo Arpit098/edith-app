@@ -41,7 +41,8 @@ are queued, an approval is waiting, an agent is busy or waiting for approval (ea
 Claude is busy with background work, another Claude is running outside tmux, a switch is already
 running, or the account is already in use. Busy is read from each Claude's own session file
 (`~/.claude/sessions/<pid>.json`): anything but `idle` counts as busy, background subagents and shells
-included. An agent that only hit its usage limit doesn't block. The switch checks all of this again
+included. A Claude whose process isn't named `claude` blocks too (it can't be checked). An agent that
+only hit its usage limit doesn't block. The switch checks all of this again
 right before it stops anything, and ends `failed` (nothing changed) if it no longer holds.
 
 **While it runs** EDITH takes no new work: messages from the app and Telegram wait in her queue (each

@@ -17,7 +17,7 @@ from edith.core import ApiError, Event, EventBus, Ports, Registry
 from edith.core.registry import load_features
 from edith.features import accounts
 from edith.features.accounts.login import Login, LoginError, failure_line
-from edith.features.accounts.panes import Panes, is_claude, proc_stat
+from edith.features.accounts.panes import Panes, proc_stat, same_process
 from edith.features.accounts.profiles import ProfileError, Profiles
 from edith.features.accounts.runner import Switch
 from edith.ports.agent import RunInfo
@@ -263,13 +263,13 @@ def session_file(claude_dir, pid, sid, cwd, status="idle"):
                    "status": status}, f)
 
 
-def fake_stat(dead=(), reused=()):
+def fake_stat(dead=(), reused=(), names=None):
     """/proc/<pid>/stat as Claude's: start time "<pid>000"; `dead` pids are gone, `reused` belong to
-    another process now."""
+    another process now; `names` gives some pids another process name."""
     def stat(pid):
         if pid in dead:
             return None
-        return ("bash", "1") if pid in reused else ("claude", f"{pid}000")
+        return ("bash", "1") if pid in reused else ((names or {}).get(pid, "claude"), f"{pid}000")
     return stat
 
 
@@ -297,7 +297,7 @@ class PanesTest(unittest.TestCase):
                          [("edith-app", "%2", 201, "201000", "/w/app", None, "busy"),
                           ("edith-dev", "%1", 101, "101000", "/w/dev", SID, "idle")])
         self.assertEqual(p.others({a["pid"] for a in agents_}), [{"pid": 555, "cwd": "/elsewhere"}])
-        self.assertEqual(p.edith(), [{"pid": 901, "status": "idle"}])
+        self.assertEqual(p.edith(), [{"pid": 901, "status": "idle", "comm": "claude"}])
         self.assertFalse(any("send-keys" in c for c in tmux.calls))
 
     def test_busy_is_anything_but_idle_in_the_session_file(self):
@@ -311,21 +311,37 @@ class PanesTest(unittest.TestCase):
             session_file(self.h.claude_dir, pid, SID, cwd)
         self.assertEqual(p.blockers()[1], [])
 
-    def test_proc_stat_and_is_claude(self):
+    def test_proc_stat_and_same_process(self):
         comm, start = proc_stat(os.getpid())
         self.assertTrue(start.isdigit())
-        self.assertFalse(is_claude(os.getpid(), start))  # this is python, not claude
+        self.assertEqual(same_process(os.getpid(), start), comm)  # the start time decides, not the name
+        self.assertIsNone(same_process(os.getpid(), str(int(start) + 1)))
         self.assertIsNone(proc_stat(2 ** 22 + 12345))     # no such pid
-        self.assertTrue(is_claude(7, "7000", stat=fake_stat()))
-        self.assertFalse(is_claude(7, "6999", stat=fake_stat()))  # the pid was reused since
+        self.assertEqual(same_process(7, "7000", stat=fake_stat()), "claude")
+        self.assertIsNone(same_process(7, "6999", stat=fake_stat()))  # the pid was reused since
+
+    def test_a_claude_under_another_name_still_counts_and_blocks(self):
+        tmux = FakeTmux({"%1": ("edith-dev", 101, "/w/dev", IDLE_SCREEN)})
+        session_file(self.h.claude_dir, 101, SID, "/w/dev")
+        session_file(self.h.claude_dir, 900, SID, "/home/x/edith")
+        session_file(self.h.claude_dir, 555, SID, "/elsewhere")
+        p = Panes(self.h.claude_dir, run=tmux, children=lambda pid: [], stat=fake_stat(names={101: "node", 900: "node", 555: "node"}))
+        agents_, why = p.blockers()
+        self.assertEqual([(a["name"], a["comm"]) for a in agents_], [("edith-dev", "node")])  # not skipped
+        self.assertEqual(why, ["edith-dev's process isn't named claude (node), so it can't be checked",
+                               "EDITH's process isn't named claude, so it can't be checked",
+                               "another Claude is running (pid 555, in /elsewhere)"])
 
 
 class FakePanes:
-    def __init__(self, agents, why=()):
-        self.agents, self.why = agents, list(why)
+    def __init__(self, agents, why=(), others=()):
+        self.agents, self.why, self.running = agents, list(why), list(others)
 
     def blockers(self):
         return [dict(a) for a in self.agents], list(self.why)
+
+    def others(self, known):
+        return list(self.running)
 
 
 class FakeSystem:
@@ -485,6 +501,17 @@ class SwitchTest(unittest.TestCase):
         self.assertEqual(events[-1]["state"], "rolled_back")
         self.assertIn("edith-dev", events[-1]["detail"])
 
+    def test_a_refresh_is_only_trusted_while_edith_runs_alone(self):
+        def on_run(cmd):
+            if tuple(cmd) == EDITH_RESTART[1] and self.email_now() == "user2@example.com":
+                self.h.write_live_creds(creds("2r"))
+        system = FakeSystem(self.h.home, self.email_now, on_run=on_run)
+        panes = FakePanes(self.AGENTS, others=[{"pid": 555, "cwd": "/elsewhere"}])  # someone else was running
+        self.assertEqual(self.switch(system, panes), "rolled_back")
+        self.assertIn("another Claude was running while EDITH started", self.events()[-1]["detail"])
+        self.assertEqual(self.saved_token(self.second), f"{TOKENS[1]}-2")  # the changed file isn't saved as account 2's
+        self.assertFalse([c for c in system.calls if c[0] == "run" and "respawn-pane" in c[1] and c[1][-1].endswith(SID)][2:])
+
     def test_credentials_overwritten_while_starting_are_caught(self):
         def on_run(cmd):  # something on the old login writes its token over the new one as the agents start
             if "respawn-pane" in cmd and "%2" in cmd and self.email_now() == "user2@example.com":
@@ -554,16 +581,19 @@ class FakeAgent:
     max_side_lanes = 2
 
     def __init__(self):
-        self.runs, self.queued, self.holds = [], 0, []
+        self.runs, self.queued, self.holds, self.order = [], 0, [], []
 
     def status(self):
+        self.order.append("status")
         return list(self.runs), self.queued
 
     def hold(self):
         self.holds.append("hold")
+        self.order.append("hold")
 
     def release(self):
         self.holds.append("release")
+        self.order.append("release")
 
 
 class RoutesTest(unittest.TestCase):
@@ -683,7 +713,9 @@ class RoutesTest(unittest.TestCase):
         self.assertIn("another Claude is running (pid 777, in /somewhere)", self.refused(target))
         os.unlink(os.path.join(self.h.claude_dir, "sessions", "777.json"))
         self.assertIn("already in use", self.refused(self.h.profiles.active()))
-        self.assertEqual((self.launched, self.agent.holds), ([], []))
+        self.assertEqual(self.launched, [])
+        self.assertEqual(self.agent.holds, ["hold", "release"] * 7)  # held before each check, released on refusal
+        self.assertEqual(self.agent.order[:3], ["hold", "status", "release"])
 
     def test_switch_holds_the_agent_and_starts_a_transient_unit(self):
         target = self.second()
@@ -692,6 +724,7 @@ class RoutesTest(unittest.TestCase):
         self.assertEqual(self.agent.holds, ["hold"])
         cmd = self.launched[0]
         self.assertEqual(cmd[:3], ["systemd-run", "--user", "--unit"])
+        self.assertEqual(cmd[cmd.index("-p") + 1], "TimeoutStopSec=300")  # time for the runner's finally
         self.assertEqual(cmd[-3:-1], ["-m", "edith.features.accounts.runner"])
         plan_file = cmd[-1]
         self.assertEqual((mode(os.path.dirname(plan_file)), mode(plan_file)), (0o700, 0o600))
@@ -739,7 +772,7 @@ class RoutesTest(unittest.TestCase):
         self.assertEqual(self.agent.holds, ["hold"])
         sent = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
         sent.sendto(json.dumps({"run": "r", "state": "done", "step": "checking"}).encode(),
-                    os.path.join(self.state, "accounts", "switch.sock"))
+                    os.path.join(self.state, "accounts", "switch-r.sock"))
         sent.close()
         self.assertTrue(self.wait_for(lambda: self.agent.holds == ["hold", "release"]))
 
@@ -748,6 +781,45 @@ class RoutesTest(unittest.TestCase):
         with open(os.path.join(self.state, "accounts", "switch.json"), "w") as f:
             json.dump({"run": "r", "unit": "gone", "state": "running", "step": "checking", "ts": 1.0}, f)
         self.assertEqual(self.call("GET", "/v1/accounts")["switch"]["state"], "failed")
+
+    def test_any_failure_after_holding_releases(self):
+        target = self.second()
+        real = accounts.write_private
+
+        def broken(path, data, mode=0o600):
+            if os.path.basename(path).startswith("plan-"):
+                raise OSError("disk full")
+            return real(path, data, mode)
+        with mock.patch.object(accounts, "write_private", broken):
+            with self.assertRaises(OSError):
+                self.call("POST", "/v1/accounts/{id}/switch", {"id": target})
+        self.assertEqual(self.agent.holds, ["hold", "release"])
+        def launch(cmd):  # after the listener started: an error nobody expected
+            raise RuntimeError("no systemd-run")
+        self.launch = launch
+        with self.assertRaises(RuntimeError):
+            self.call("POST", "/v1/accounts/{id}/switch", {"id": target})
+        self.assertTrue(self.wait_for(lambda: self.agent.holds == ["hold", "release"] * 2))
+        self.assertEqual(self.call("GET", "/v1/accounts")["switch"]["state"], "failed")
+
+    def test_an_old_listener_cant_end_a_newer_switchs_hold(self):
+        target = self.second()
+        first = self.call("POST", "/v1/accounts/{id}/switch", {"id": target})["run"]
+        self.active_units.clear()  # its unit died: the switch counts as failed, a new one may start
+        second = self.call("POST", "/v1/accounts/{id}/switch", {"id": target})["run"]
+        self.assertNotEqual(first, second)
+        sent = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        sent.sendto(json.dumps({"run": first, "state": "failed", "step": "stopping"}).encode(),
+                    os.path.join(self.state, "accounts", f"switch-{first}.sock"))
+        self.assertTrue(self.wait_for(lambda: not os.path.exists(os.path.join(self.state, "accounts", f"switch-{first}.sock"))))
+        self.assertEqual(self.agent.holds, ["hold", "hold"])  # the old listener ended without releasing
+        sent.sendto(json.dumps({"run": first, "state": "done", "step": "checking"}).encode(),  # another run's report
+                    os.path.join(self.state, "accounts", f"switch-{second}.sock"))
+        sent.sendto(json.dumps({"run": second, "state": "done", "step": "checking"}).encode(),
+                    os.path.join(self.state, "accounts", f"switch-{second}.sock"))
+        sent.close()
+        self.assertTrue(self.wait_for(lambda: self.agent.holds == ["hold", "hold", "release"]))
+        self.assertEqual([e.data["run"] for e in self.events if e.data.get("state") == "done"], [second])
 
     def test_systemd_run_failing(self):
         target = self.second()
