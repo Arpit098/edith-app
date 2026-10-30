@@ -80,6 +80,17 @@ describe('scripts/ota.js', () => {
     expect(() => buildUpdate({ ...base, dir })).toThrow(/no android bundle/);
   });
 
+  it('carries the release notes: an object in update.json, a JSON string in the signed metadata', () => {
+    const releaseNotes = { new: ['Attach photos'], fixes: ['Messages no longer vanish'], changes: [], details: ['feat: x'] };
+    const built = buildUpdate({ ...base, dir: fixture(), releaseNotes });
+    const manifest = JSON.parse(built.manifestBytes.toString('utf8'));
+    expect(built.update.release_notes).toEqual(releaseNotes);
+    expect(JSON.parse(manifest.metadata.release_notes)).toEqual(releaseNotes);
+    expect(typeof manifest.metadata.release_notes).toBe('string');
+    const without = JSON.parse(buildUpdate({ ...base, dir: fixture() }).manifestBytes.toString('utf8'));
+    expect(without.metadata).toEqual({ channel: 'main', sha: base.sha });
+  });
+
   it('derives stable ids', () => {
     expect(stableUuid('a', 'b')).toBe(stableUuid('a', 'b'));
     expect(stableUuid('a', 'b')).not.toBe(stableUuid('a', 'c'));
