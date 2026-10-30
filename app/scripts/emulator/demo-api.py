@@ -50,16 +50,14 @@ HISTORY = [
     ev("message.user", 40, {"text": "Now run the server tests and tell me if anything fails", "voice": False, "ref": "app:4", "delivery": "main", "attachments": []}, "app"),
     ev("message.delivered", 39, {"ref": "app:4", "delivery": "main", "rid": "r4"}),
     ev("message.reaction", 38, {"ref": "app:4", "emoji": "👀"}),
-    ev("turn.started", 38, {"ref": "app:4", "lane": "main"}),
-    ev("tool.call", 30, {"id": "t4", "name": "Bash", "summary": "cd server && make test"}),
 ]
 
 CURSOR = HISTORY[-1]["data"]["cursor"]
 ROUTES = {
     "/v1/status": {
-        "main": "busy",
-        "queued": 0,
-        "runs": [{"ref": "app:4", "lane": "main", "seconds": 40, "step": "$ make test"}],
+        "main": "idle",  # idle until POST /demo/work: a running task animates without end, and
+        "queued": 0,      # uiautomator (the screens script's eyes) only reads a UI that goes idle
+        "runs": [],
         "tmux": "running",
         "conversation": True,
         "session": {"id": SID, "title": "Disk space and tests"},
@@ -84,10 +82,25 @@ ROUTES = {
     },
 }
 
-# The running turn, live: progress every few seconds while a client listens.
-LIVE = [
-    {"type": "turn.progress", "data": {"ref": "app:4", "lane": "main", "steps": 3, "step": "$ make test", "elapsed": 41}},
+# POST /demo/work (from the runner, no auth): the last message's task starts, live on every open
+# stream, then shows progress every few seconds.
+WORK = [
+    ("turn.started", {"ref": "app:4", "lane": "main"}),
+    ("tool.call", {"id": "t4", "name": "Bash", "summary": "cd server && make test"}),
 ]
+working = threading.Event()
+clients = set()  # send functions of the open streams
+clients_lock = threading.Lock()
+
+
+def broadcast(kind, data):
+    with clients_lock:
+        targets = list(clients)
+    for send in targets:
+        try:
+            send({"type": kind, "ts": time.time(), "session_id": SID, "origin": "app", "data": data})
+        except OSError:
+            pass
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -108,6 +121,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        if self.path == "/demo/work" and self.client_address[0] in ("127.0.0.1", "::1"):
+            if not working.is_set():
+                working.set()
+                for kind, data in WORK:
+                    broadcast(kind, data)
+            return self.answer(200, {"working": True})
         self.answer(404, {"error": "the demo is read-only"})
 
     def answer(self, code, obj):
@@ -140,12 +159,13 @@ class Handler(BaseHTTPRequestHandler):
 
         def live():
             n = 0
-            while not stop.wait(4.0):  # a demo heartbeat of progress, ended with the socket
-                n += 1
-                for e in LIVE:
-                    d = {**e["data"], "elapsed": e["data"]["elapsed"] + 4 * n}
-                    send({"type": e["type"], "ts": time.time(), "session_id": SID, "origin": "app", "data": d})
+            while not stop.wait(4.0):  # progress while the demo task runs, ended with the socket
+                if working.is_set():
+                    n += 1
+                    send({"type": "turn.progress", "ts": time.time(), "session_id": SID, "origin": "app", "data": {"ref": "app:4", "lane": "main", "steps": 3, "step": "$ make test", "elapsed": 4 * n}})
 
+        with clients_lock:
+            clients.add(send)
         threading.Thread(target=live, daemon=True).start()
         try:
             while True:
@@ -168,6 +188,8 @@ class Handler(BaseHTTPRequestHandler):
             pass
         finally:
             stop.set()
+            with clients_lock:
+                clients.discard(send)
             self.close_connection = True
 
 

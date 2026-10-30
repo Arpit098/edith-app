@@ -48,7 +48,9 @@ save_logs() {
   tail -120 "$OUT/logcat-$tag.txt"
   echo "::endgroup::"
 }
-ui() { adb shell uiautomator dump /sdcard/ui.xml >/dev/null && adb exec-out cat /sdcard/ui.xml; }
+# uiautomator dumps only a UI that goes idle; when it can't, it fails and leaves the last file
+# behind, so the old one is deleted first (a stale screen must never pass for the current one).
+ui() { adb shell rm -f /sdcard/ui.xml && adb shell uiautomator dump /sdcard/ui.xml >/dev/null && adb exec-out cat /sdcard/ui.xml; }
 # A CPU-rendered emulator is slow enough that System UI (or another app) sometimes hits an ANR
 # right after boot; its "isn't responding" dialog covers the screen. Answer "Wait" and go on.
 dismiss_anr() {
@@ -221,8 +223,12 @@ sleep 1
 tap Sessions || return 1
 sleep 1.2
 tap Live || return 1
+# Last, the task starts (the demo API's /demo/work): the working blob and the spinner. From here
+# the UI never goes idle, so nothing reads the screen with uiautomator after this.
+curl -s -X POST localhost:8787/demo/work >/dev/null
 wait $rec || true
 adb pull /sdcard/clip.mp4 "$OUT/phase-2b-clip.mp4"
+shot 08-live-working # the task running: blob, spinner, the status pill's step
 }
 # Each part runs even if one before it failed (a failure is recorded, its screen saved), so the
 # artifact always has what could be made; the job fails at the end.
