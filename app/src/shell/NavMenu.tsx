@@ -94,7 +94,7 @@ export function NavMenu({ open, items, current, top, backdrop, onSelect, onClose
     <View style={StyleSheet.absoluteFill} pointerEvents={open ? 'box-none' : 'none'}>
       <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityLabel="Close the menu" importantForAccessibility="no" />
       <Animated.View style={[styles.sheetSlot, { top, transformOrigin: 'right top' }, sheet]}>
-        <Glass level="regular" backdrop={backdrop} radius={radius.l} style={styles.sheet}>
+        <Glass level="panel" backdrop={backdrop} radius={radius.l} style={styles.sheet}>
           <View accessibilityRole="menu">
             {items.map((item) => {
               const on = item.name === current;

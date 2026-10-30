@@ -39,9 +39,11 @@ export const colors = {
   diffHunk: '#A9CBEF',
   overlay: 'rgba(5, 7, 10, 0.66)', // over a thumbnail while it uploads
   overlayStrong: 'rgba(5, 7, 10, 0.8)', // small controls on a thumbnail (remove)
+  panelDark: 'rgba(10, 12, 16, 0.78)', // a text panel inside other glass (the attach menu in the composer)
 } as const;
 
-export type GlassLevel = 'thin' | 'regular' | 'thick';
+/** thin/regular/thick: chrome (the full frost and lens); panel: glass with text on it (heavy frost, dark tint). */
+export type GlassLevel = 'thin' | 'regular' | 'thick' | 'panel';
 
 export interface GlassStyle {
   blur: number; // blur radius, dp (the frost: strong enough that text behind can't be read)
@@ -103,6 +105,23 @@ export const glass: Record<GlassLevel, GlassStyle> = {
     specular: 0.4,
     rimWidth: 1.2,
   },
+  panel: {
+    // Glass carrying text (the status card, the navigation menu): the same frost, but a dark tint
+    // at 0.8, so whatever is behind reads only as soft colour and never competes with the text;
+    // a gentle lens, so text near the rim doesn't swim.
+    blur: 32,
+    tint: 'rgba(14, 17, 22, 0.80)',
+    flat: 'rgba(18, 21, 26, 0.96)',
+    edge: ['rgba(255, 255, 255, 0.24)', 'rgba(255, 255, 255, 0.05)'],
+    highlight: 'rgba(255, 255, 255, 0.06)',
+    refraction: 6,
+    bezel: 14,
+    dispersion: 0.4,
+    saturation: 1.4,
+    lift: 0.02,
+    specular: 0.4,
+    rimWidth: 1.2,
+  },
 };
 
 /** 'rgba(r, g, b, a)' or '#rrggbb' → [r, g, b, a] in 0..1, the form the native glass view takes. */
@@ -118,7 +137,12 @@ export function rgbaOf(css: string): number[] {
 /** The opaque colour under the frost: the app's background (the backdrop can be transparent between things). */
 export const glassBase: number[] = rgbaOf(colors.bg);
 
-export const glassTint: Record<GlassLevel, number[]> = { thin: rgbaOf(glass.thin.tint), regular: rgbaOf(glass.regular.tint), thick: rgbaOf(glass.thick.tint) };
+export const glassTint: Record<GlassLevel, number[]> = {
+  thin: rgbaOf(glass.thin.tint),
+  regular: rgbaOf(glass.regular.tint),
+  thick: rgbaOf(glass.thick.tint),
+  panel: rgbaOf(glass.panel.tint),
+};
 
 export const radius = { s: 8, m: 14, l: 22, pill: 999 } as const;
 
