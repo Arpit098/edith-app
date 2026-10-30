@@ -34,7 +34,7 @@ token_file = "~/.config/edith/app-token" # 0600, 32+ random characters
 
 [features]
 enabled = ["sessions", "approvals", "control", "reminders", "mail", "calendar", "changes", "quick_actions", "voice",
-           "app_updates", "message_log"]
+           "app_updates", "message_log", "wakeword"]
 
 [features.app_updates]
 # The release signing certificate's SHA-256 (public). Only APKs signed with it are offered.
