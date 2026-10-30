@@ -35,8 +35,18 @@ has_title() { adb shell dumpsys notification --noredact | grep -qF "android.titl
 has_text() { adb shell dumpsys notification --noredact | grep -qF "$1"; }
 service_running() { adb shell dumpsys activity services "$PKG" | grep -q "EdithSessionService"; }
 service_stopped() { ! service_running; }
-shade_open() { adb shell dumpsys window | grep -E "mCurrentFocus|mFocusedWindow" | grep -q NotificationShade; }
-shade_closed() { ! shade_open; }
+# What is on screen, from uiautomator (the shade isn't a focused window on Android 16, so `dumpsys
+# window` can't tell whether it is open).
+ui() { adb shell uiautomator dump /sdcard/ui.xml >/dev/null && adb exec-out cat /sdcard/ui.xml; }
+on_screen() { ui | grep -qF "text=\"$1\""; }
+off_screen() { ! on_screen "$1"; }
+top_activity() { adb shell dumpsys activity activities | grep -m1 -E "topResumedActivity|ResumedActivity:"; }
+launcher_on_top() { top_activity | grep -qi launcher; }
+edith_on_top() { top_activity | grep -qF "$PKG/"; }
+home() {
+  adb shell input keyevent KEYCODE_HOME
+  wait_until "the launcher" launcher_on_top
+}
 logged() { grep -qF "$1" "$API_LOG"; }
 
 # A screenshot once two frames in a row match (the shade has settled), at most 10 tries.
@@ -54,13 +64,14 @@ shot() {
   echo "screenshot $1.png"
 }
 
-# Both views of the current state: the status bar (Live Updates chip) and the open shade.
+# Both views of the current state: the status bar (Live Updates chip) and the open shade, which is
+# open once the notification's title ($2) is on screen.
 shots() {
   adb shell cmd statusbar collapse
-  wait_until "the shade to close" shade_closed
+  wait_until "the shade to close" off_screen "$2"
   shot "$1-statusbar"
   adb shell cmd statusbar expand-notifications
-  wait_until "the shade to open" shade_open
+  wait_until "the shade to show \"$2\"" on_screen "$2"
   shot "$1-shade"
   adb shell cmd statusbar collapse
 }
@@ -68,8 +79,7 @@ shots() {
 # Tap the centre of the first on-screen node whose text or description is $1 (uiautomator).
 tap() {
   local xy
-  adb shell uiautomator dump /sdcard/ui.xml >/dev/null
-  xy=$(adb exec-out cat /sdcard/ui.xml | python3 -c '
+  xy=$(ui | python3 -c '
 import re, sys, xml.etree.ElementTree as ET
 want = sys.argv[1].lower()
 for n in ET.parse(sys.stdin).iter("node"):
@@ -92,6 +102,9 @@ send() { # <kind> [json]
 
 activities() { adb shell dumpsys activity activities | grep -cE "Hist +#[0-9]+: ActivityRecord\{[^}]*$PKG/" || true; }
 
+adb shell input keyevent KEYCODE_WAKEUP
+adb shell wm dismiss-keyguard
+home # boot is over once the launcher is up (a screenshot before that is black)
 adb install -r -g "$APK" # -g: POST_NOTIFICATIONS granted, as after Arpit's "Allow"
 adb shell settings put global heads_up_notifications_enabled 0 # heads-up pop-ups would cover the status bar
 adb shell am start -W -n "$PKG/.MainActivity" >/dev/null # in the foreground, as when Arpit sends a message:
@@ -115,9 +128,9 @@ for i in $(seq 0 $((count - 1))); do
     else
       wait_until "the foreground service to stop ($name)" service_stopped
     fi
-    [ "$i" = 0 ] && adb shell input keyevent KEYCODE_HOME # EDITH in the background from here on
+    [ "$i" = 0 ] && home # EDITH in the background from here on
   fi
-  shots "$((i + 1))-$name"
+  shots "$((i + 1))-$name" "$(jq -r .title <<<"$payload")"
   echo "::endgroup::"
   if [ "$name" = status-speaking ]; then
     send clear
@@ -132,12 +145,12 @@ for tag in $(jq -r '.states[] | select(.kind == "notify" and .payload.channel !=
 done
 wait_until "the other notifications to go" bash -c "! adb shell dumpsys notification --noredact | grep -qF 'android.title=String (EDITH replied)'"
 adb shell cmd statusbar expand-notifications
-wait_until "the shade to open" shade_open
+wait_until "the shade to show Allow" on_screen Allow
 tap Allow
 wait_until "the Allow to reach the App API" logged "permission p2 allow=true"
 wait_until "the notification to say Allowed" has_text "Allowed"
 shot "$((count + 1))-approval-allowed-shade"
-adb shell dumpsys window | grep -E "mCurrentFocus" | grep -q NotificationShade || { echo "::error::Allow opened something"; exit 1; }
+if edith_on_top; then echo "::error::Allow opened EDITH"; exit 1; fi
 adb shell cmd statusbar collapse
 echo "::endgroup::"
 
@@ -147,10 +160,10 @@ for n in 1 2; do
   send notify "$reply"
   wait_until "the reply notification" has_title "EDITH replied"
   adb shell cmd statusbar expand-notifications
-  wait_until "the shade to open" shade_open
+  wait_until "the shade to show the reply" on_screen "EDITH replied"
   tap "EDITH replied"
-  wait_until "EDITH to come forward ($n)" bash -c "adb shell dumpsys window | grep -E 'mCurrentFocus' | grep -q '$PKG/'"
-  adb shell input keyevent KEYCODE_HOME
+  wait_until "EDITH to come forward ($n)" edith_on_top
+  home
 done
 found=$(activities)
 echo "EDITH activities: $found"
