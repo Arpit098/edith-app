@@ -74,6 +74,8 @@ function Main({ loaded, connection }: { loaded: LoadedFeatures; connection: Conn
     const screen = linkScreen(url, (name) => routes.has(name), home);
     if (screen) go(screen);
   });
+  // A feature's own link to a screen (e.g. Settings → Train wake word).
+  useEffect(() => connection.bus.on('app.open', (e) => routes.has(String(e.data.screen)) && go(String(e.data.screen)), 'shell'), [connection, routes, go]);
 
   const keyboard = useKeyboardVisible();
   const [visited, setVisited] = useState<ReadonlySet<string>>(() => new Set([nav.tab]));
