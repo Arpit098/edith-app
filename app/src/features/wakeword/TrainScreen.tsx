@@ -8,7 +8,7 @@ import { formatIST } from '../../common/format';
 import { shallowEqual, useStore } from '../../core/store';
 import { Button } from '../../ui/Button';
 import { Icon } from '../../ui/Icon';
-import { colors, radius, space } from '../../core/theme';
+import { colors, radius, space, useChrome } from '../../core/theme';
 import type { TrainClip, WakewordModel, WakewordState } from './model';
 import { STEPS, stepOf, type ClipKind, type Step } from './plan';
 
@@ -30,9 +30,10 @@ export function TrainScreen({ model }: { model: WakewordModel }) {
   const current = recording?.kind ?? open ?? firstOpen;
   useEffect(() => void model.refreshStatus(), [model]);
   const failed = clips.filter((c) => c.status === 'failed');
+  const chromeInsets = useChrome(); // the floating header and tab bar
 
   return (
-    <ScrollView contentContainerStyle={styles.body}>
+    <ScrollView contentContainerStyle={[styles.body, { paddingTop: chromeInsets.top + space.m, paddingBottom: chromeInsets.bottom + space.l }]}>
       <StatusPanel model={model} clips={clips} />
       {STEPS.map((step) => (
         <StepCard key={step.kind} step={step} count={countOf(clips, step.kind)} expanded={step.kind === current} onOpen={() => !recording && setOpen(step.kind)}>
@@ -180,7 +181,7 @@ function Bar({ value, tone = 'ok' }: { value: number; tone?: 'ok' | 'accent' }) 
 }
 
 const styles = StyleSheet.create({
-  body: { padding: space.m, gap: space.m },
+  body: { paddingHorizontal: space.m, gap: space.m },
   card: { backgroundColor: colors.card, borderRadius: radius.m, padding: space.m, gap: space.s },
   cardOpen: { borderWidth: 1, borderColor: colors.accent },
   row: { flexDirection: 'row', alignItems: 'center', gap: space.s },

@@ -20,10 +20,21 @@ class EdithGlassModule : Module() {
   private val context: Context
     get() = appContext.reactContext ?: throw Exceptions.ReactContextLost()
 
+  // The battery-saver receiver and the context it's registered with: the application context, taken
+  // when registering, because the React context getter throws once the JS reloads (ReactContextLost)
+  // and a broadcast arriving then must not crash the app.
   private var powerReceiver: BroadcastReceiver? = null
+  private var receiverContext: Context? = null
   private var stats: FrameStats? = null
 
-  private fun powerSave(): Boolean = (context.getSystemService(Context.POWER_SERVICE) as PowerManager).isPowerSaveMode
+  private fun powerSave(c: Context): Boolean = (c.getSystemService(Context.POWER_SERVICE) as PowerManager).isPowerSaveMode
+
+  private fun unregisterPower() {
+    val r = powerReceiver ?: return
+    receiverContext?.let { c -> runCatching { c.unregisterReceiver(r) } }
+    powerReceiver = null
+    receiverContext = null
+  }
 
   override fun definition() = ModuleDefinition {
     Name("EdithGlass")
@@ -31,30 +42,29 @@ class EdithGlassModule : Module() {
 
     Constant("sdkInt") { Build.VERSION.SDK_INT }
 
-    Function("isPowerSaveMode") { powerSave() }
+    Function("isPowerSaveMode") { powerSave(context.applicationContext) }
 
     // The broadcast is registered only while JS listens (no receiver otherwise).
     OnStartObserving("onPowerSaveChanged") {
       if (powerReceiver != null) return@OnStartObserving
+      val app = context.applicationContext
       val r = object : BroadcastReceiver() {
         override fun onReceive(c: Context, intent: Intent) {
-          sendEvent("onPowerSaveChanged", mapOf("on" to powerSave()))
+          runCatching { sendEvent("onPowerSaveChanged", mapOf("on" to powerSave(app))) }
         }
       }
       val filter = IntentFilter(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED)
       // A system broadcast: delivered to a not-exported receiver, which other apps can't reach.
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        context.registerReceiver(r, filter, Context.RECEIVER_NOT_EXPORTED)
+        app.registerReceiver(r, filter, Context.RECEIVER_NOT_EXPORTED)
       } else {
-        context.registerReceiver(r, filter)
+        app.registerReceiver(r, filter)
       }
       powerReceiver = r
+      receiverContext = app
     }
 
-    OnStopObserving("onPowerSaveChanged") {
-      powerReceiver?.let { runCatching { context.unregisterReceiver(it) } }
-      powerReceiver = null
-    }
+    OnStopObserving("onPowerSaveChanged") { unregisterPower() }
 
     Function("startFrameStats") {
       val window = appContext.currentActivity?.window ?: throw CodedException("NO_WINDOW", "No activity window to measure", null)
@@ -69,8 +79,7 @@ class EdithGlassModule : Module() {
     }
 
     OnDestroy {
-      powerReceiver?.let { runCatching { context.unregisterReceiver(it) } }
-      powerReceiver = null
+      unregisterPower()
       stats?.stop { }
       stats = null
     }

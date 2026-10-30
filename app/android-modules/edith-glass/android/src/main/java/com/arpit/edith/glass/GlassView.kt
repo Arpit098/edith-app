@@ -125,23 +125,27 @@ class GlassView(context: Context, appContext: AppContext) : ExpoView(context, ap
   override fun draw(canvas: Canvas) {
     if (capturing > 0) return // we're being recorded as part of another glass's backdrop
     val b = backdrop()
+    var drew = false
     if (!failed && b != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && canvas.isHardwareAccelerated && width > 0 && height > 0) {
       // Glass is decoration: whatever goes wrong drawing it (a GPU driver refusing the effect, say),
-      // this view stops trying and the JS fallback underneath shows. The app never crashes for it.
+      // this view stops trying and draws flat. The app never crashes for it.
       try {
         drawGlass(canvas, b)
+        drew = true
       } catch (e: RuntimeException) {
         failed = true
         Log.w(TAG, "glass off for this view: ${e.message}")
       }
     }
-    if (failed) drawFlat(canvas)
+    // No glass this frame (no backdrop yet or one that contains us, no hardware canvas, or a
+    // failure): the flat panel, since JS made the surface transparent for the glass.
+    if (!drew && width > 0 && height > 0) drawFlat(canvas)
     super.draw(canvas)
   }
 
   private var failed = false
 
-  /** After a failure: the tint, nearly opaque, so the surface still reads as a panel (JS made it transparent). */
+  /** Without glass: the tint, nearly opaque, so the surface still reads as a panel. */
   private fun drawFlat(canvas: Canvas) {
     val r = cornerRadiusDp * density
     clip.rewind()
