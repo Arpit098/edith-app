@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
@@ -25,7 +26,7 @@ data class LiveStatus(
 /**
  * EDITH's live status as one ongoing notification (PLAN.md §4.11).
  *
- * Android 16+: a promoted ongoing notification ("Live Update", `setRequestPromotedOngoing`) with
+ * Android 16+: a promoted ongoing notification ("Live Update", the `EXTRA_REQUEST_PROMOTED_ONGOING` extra) with
  * `ProgressStyle` and a short chip text; OxygenOS 16 shows these in the Live Alerts pill once Arpit
  * allows it for EDITH. Older Android: the same notification, just not promoted.
  *
@@ -97,7 +98,7 @@ class LiveStatusNotifier(private val context: Context) {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) builder.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
     s.startedAt?.let { builder.setWhen(it).setUsesChronometer(true) }
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA) {
-      builder.setRequestPromotedOngoing(true)
+      builder.addExtras(Bundle().apply { putBoolean(EXTRA_REQUEST_PROMOTED_ONGOING, true) })
       if (s.chip.isNotEmpty()) builder.setShortCriticalText(s.chip)
       if (s.progress) builder.setStyle(Notification.ProgressStyle().setProgressIndeterminate(true))
     } else if (s.progress) {
@@ -110,6 +111,9 @@ class LiveStatusNotifier(private val context: Context) {
     const val CHANNEL_ID = "edith_live"
     const val NOTIFICATION_ID = 7110
     private const val STALE_AFTER_MS = 30L * 60 * 1000 // no update for 30 min: EDITH is gone, drop it
+    // Notification.EXTRA_REQUEST_PROMOTED_ONGOING (Android 16), by value: the platform Builder has no
+    // setter for it (only NotificationCompat does), the extra is how a Live Update is requested.
+    private const val EXTRA_REQUEST_PROMOTED_ONGOING = "android.requestPromotedOngoing"
     // Settings.ACTION_APP_NOTIFICATION_PROMOTION_SETTINGS (Android 16), by value
     private const val ACTION_PROMOTION_SETTINGS = "android.settings.APP_NOTIFICATION_PROMOTION_SETTINGS"
 
