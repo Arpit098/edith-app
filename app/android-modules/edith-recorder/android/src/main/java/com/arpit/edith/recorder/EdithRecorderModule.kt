@@ -76,6 +76,8 @@ class EdithRecorderModule : Module() {
       file != null && file.parentFile in dirs && file.delete()
     }
 
+    AsyncFunction("keptFiles") { keptDir().listFiles()?.filter { it.isFile }?.map { "file://${it.absolutePath}" } ?: emptyList() }
+
     AsyncFunction("cancel") {
       session?.let {
         session = null

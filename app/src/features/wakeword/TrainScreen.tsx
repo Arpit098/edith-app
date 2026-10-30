@@ -130,7 +130,7 @@ function Recorder({ model, step }: { model: WakewordModel; step: Step }) {
       <Text style={styles.text}>{step.prompt}</Text>
       {mine?.phase === 'waiting' ? (
         <View style={styles.row}>
-          <Text style={[styles.dim, styles.flex]}>Get in place: recording starts in {Math.round(step.delayMs / 1000)} seconds.</Text>
+          <Countdown until={mine.startsAt} />
           <Button small label="Cancel" onPress={() => void model.cancel()} />
         </View>
       ) : mine ? (
@@ -148,6 +148,25 @@ function Recorder({ model, step }: { model: WakewordModel; step: Step }) {
           <Button label="Record" icon="microphone" variant="primary" onPress={() => void model.record(step.kind)} />
         </View>
       )}
+    </View>
+  );
+}
+
+const secondsLeft = (until: number) => Math.max(0, Math.ceil((until - Date.now()) / 1000));
+
+/** 5, 4, 3, 2, 1: one timer per second, only while a delayed take waits (it stops at 0). */
+function Countdown({ until }: { until: number }) {
+  const [seconds, setSeconds] = useState(() => secondsLeft(until));
+  useEffect(() => {
+    if (seconds <= 0) return;
+    // Wake exactly when the shown number should drop, then re-render with the new one.
+    const t = setTimeout(() => setSeconds(secondsLeft(until)), until - Date.now() - (seconds - 1) * 1000);
+    return () => clearTimeout(t);
+  }, [seconds, until]);
+  return (
+    <View style={[styles.row, styles.flex]} accessibilityLiveRegion="polite">
+      <Text style={styles.count}>{seconds || '•'}</Text>
+      <Text style={[styles.dim, styles.flex]}>{seconds ? 'Get in place: recording starts soon.' : 'Starting…'}</Text>
     </View>
   );
 }
@@ -172,6 +191,7 @@ const styles = StyleSheet.create({
   text: { color: colors.text, fontSize: 15 },
   dim: { color: colors.textDim, fontSize: 13 },
   warn: { color: colors.warn },
+  count: { color: colors.accent, fontSize: 28, fontWeight: '700', minWidth: 28, textAlign: 'center' },
   error: { color: colors.danger, fontSize: 14 },
   model: { gap: space.xs, marginTop: space.xs },
   recorder: { gap: space.m, marginTop: space.xs },

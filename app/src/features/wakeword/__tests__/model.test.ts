@@ -2,7 +2,7 @@ import { ApiError } from '../../../core/api';
 import { localEvent } from '../../../core/events';
 import type { AudioAnalysis, KeyValueStore, RecordedAudio, Recorder, RecorderEvent, WakeWord } from '../../../core/ports';
 import { fakeContext, flush } from '../../../testing/fakes';
-import { createWakewordModel, MAX_ATTEMPTS, STORE_KEY, type WakewordModel } from '../model';
+import { createWakewordModel, MAX_ATTEMPTS, MAX_LOCAL_CLIPS, STORE_KEY, type WakewordModel } from '../model';
 import { checkClip } from '../plan';
 
 const good: AudioAnalysis = { peakDbfs: -8, rmsDbfs: -30, clipped: 0, sha256: 'a'.repeat(64), bytes: 48_000 };
@@ -27,13 +27,17 @@ class FakeRecorder implements Recorder {
   allowed = true;
   started: { maxMs: number; keep?: boolean }[] = [];
   discarded: string[] = [];
+  cancelled = 0;
+  files: string[] = []; // what kept() reports
   next: RecordedAudio | null = null;
+  startGate: Promise<void> | null = null; // start() waits on it when set
   private handlers = new Set<(e: RecorderEvent) => void>();
   async ensurePermission() {
     return this.allowed;
   }
   async start(opts: { maxMs: number; keep?: boolean }) {
     this.started.push(opts);
+    if (this.startGate) await this.startGate;
   }
   onEvent(h: (e: RecorderEvent) => void) {
     this.handlers.add(h);
@@ -45,9 +49,14 @@ class FakeRecorder implements Recorder {
   async stop() {
     return this.next;
   }
-  async cancel() {}
+  async cancel() {
+    this.cancelled++;
+  }
   async discard(uri: string) {
     this.discarded.push(uri);
+  }
+  async kept() {
+    return this.files;
   }
 }
 
@@ -76,6 +85,7 @@ const clipAnswer = (sha: string) => ({ clip: { sha256: sha, kind: 'positive_near
 function setup(opts: { data?: MemoryData; online?: boolean; wakeWord?: WakeWord } = {}) {
   const ctx = fakeContext();
   ctx.transport.configure({ baseUrl: 'http://edith:8787', token: 't' });
+  ctx.transport.on('GET /v1/wakeword/sessions', { sessions: [], usage: { bytes: 0, max_bytes: 1 } });
   const recorder = new FakeRecorder();
   const data = opts.data ?? new MemoryData();
   let online = opts.online ?? true;
@@ -123,6 +133,7 @@ describe('wake word model', () => {
     jest.useFakeTimers();
     try {
       const { recorder, m } = setup();
+      await flush();
       await m.record('positive_far' as never);
       expect(m.store.get().recording).toMatchObject({ kind: 'positive_far', phase: 'waiting' });
       expect(recorder.started).toEqual([]);
@@ -190,14 +201,16 @@ describe('wake word model', () => {
   it('says the server needs an update when the routes are missing (404), and tries again on the next connect', async () => {
     const { ctx, recorder, m } = setup();
     await flush();
-    ctx.transport.on('POST /v1/wakeword/sessions', () => {
+    const missing = () => {
       throw new ApiError(404, 'not found');
-    });
+    };
+    ctx.transport.on('GET /v1/wakeword/sessions', missing).on('POST /v1/wakeword/sessions', missing);
     await recordTake(m, recorder, take('s1'));
     expect(m.store.get().server).toBe('needs_update');
     expect(m.store.get().clips[0]!.status).toBe('queued'); // kept for later
     ctx.transport
       .on('GET /v1/wakeword/model', { state: 'no_recordings', model: null })
+      .on('GET /v1/wakeword/sessions', { sessions: [] })
       .on('POST /v1/wakeword/sessions', { id: 'sess' })
       .on('UPLOAD /v1/wakeword/sessions/sess/clips?kind=positive_near', clipAnswer('s1'));
     ctx.bus.publish(localEvent('app.connected', { first: false }));
@@ -284,9 +297,100 @@ describe('wake word model', () => {
 
   it('asks for the microphone and says so when refused', async () => {
     const { recorder, m } = setup();
+    await flush();
     recorder.allowed = false;
     await m.record('positive_near');
     expect(recorder.started).toEqual([]);
     expect(m.store.get().error).toMatch(/microphone/);
+  });
+
+  it('finds its own session after a lost answer instead of making a second one', async () => {
+    const { ctx, recorder, m } = setup();
+    await flush();
+    const label = m.store.get().label;
+    expect(label).toMatch(/^Phone [0-9a-f]{8}$/);
+    let posts = 0;
+    ctx.transport.on('POST /v1/wakeword/sessions', () => {
+      posts++;
+      throw new ApiError(0, 'timed out'); // created on edith, but the answer never came back
+    });
+    jest.useFakeTimers();
+    try {
+      await recordTake(m, recorder, take('s1'));
+      ctx.transport
+        .on('GET /v1/wakeword/sessions', { sessions: [{ id: 'other', label: 'Phone 00000000' }, { id: 'mine', label }] })
+        .on('UPLOAD /v1/wakeword/sessions/mine/clips?kind=positive_near', clipAnswer('s1'));
+      jest.advanceTimersByTime(30_000);
+      await flush();
+    } finally {
+      jest.useRealTimers();
+    }
+    expect(posts).toBe(1);
+    expect(m.store.get().sessionId).toBe('mine');
+    expect(m.store.get().clips[0]!.status).toBe('uploaded');
+  });
+
+  it('deletes kept files that no saved clip points at, at startup', async () => {
+    const data = new MemoryData();
+    data.map.set(STORE_KEY, JSON.stringify({ label: 'Phone x', sessionId: null, clips: [{ sha256: 'q', kind: 'noise', uri: 'file:///clips/q.wav', seconds: 30, status: 'queued', error: null }] }));
+    const ctx = fakeContext();
+    const recorder = new FakeRecorder();
+    recorder.files = ['file:///clips/q.wav', 'file:///clips/orphan.wav'];
+    const m = createWakewordModel({ bus: ctx.bus, transport: ctx.transport, online: () => false, recorder, data });
+    await flush();
+    expect(recorder.discarded).toEqual(['file:///clips/orphan.wav']);
+    expect(m.store.get()).toMatchObject({ loaded: true, label: 'Phone x' });
+  });
+
+  it('cancels a take whose stop came while the recorder was still starting', async () => {
+    const { recorder, m } = setup({ online: false });
+    await flush();
+    let open!: () => void;
+    recorder.startGate = new Promise((r) => (open = r));
+    const recording = m.record('positive_near');
+    await flush();
+    await m.stop(); // pressed before start() returned
+    open();
+    await recording;
+    expect(recorder.cancelled).toBe(1);
+    expect(m.store.get().recording).toBeNull();
+  });
+
+  it('keeps an uploaded clip uploaded when its local file can’t be deleted', async () => {
+    const { ctx, recorder, m } = setup();
+    await flush();
+    recorder.discard = async () => {
+      throw new Error('disk full');
+    };
+    ctx.transport.on('POST /v1/wakeword/sessions', { id: 'sess' }).on('UPLOAD /v1/wakeword/sessions/sess/clips?kind=positive_near', clipAnswer('s1'));
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
+    await recordTake(m, recorder, take('s1'));
+    expect(m.store.get().clips[0]).toMatchObject({ status: 'uploaded', error: null });
+  });
+
+  it('stops recording when too many takes wait on the phone', async () => {
+    const data = new MemoryData();
+    const clips = Array.from({ length: MAX_LOCAL_CLIPS }, (_, i) => ({ sha256: `q${i}`, kind: 'positive_near', uri: `file:///clips/q${i}.wav`, seconds: 1, status: 'queued', error: null }));
+    data.map.set(STORE_KEY, JSON.stringify({ label: 'Phone x', sessionId: null, clips }));
+    const { recorder, m } = setup({ data, online: false });
+    recorder.files = clips.map((c) => c.uri);
+    await flush();
+    await m.record('positive_near');
+    expect(recorder.started).toEqual([]);
+    expect(m.store.get().error).toMatch(/waiting to upload/);
+  });
+
+  it('says why a take can’t be redone while it uploads', async () => {
+    const { ctx, recorder, m } = setup();
+    await flush();
+    let finish!: (v: unknown) => void;
+    ctx.transport.on('POST /v1/wakeword/sessions', { id: 'sess' }).on('UPLOAD /v1/wakeword/sessions/sess/clips?kind=positive_near', () => new Promise((r) => (finish = r)));
+    await recordTake(m, recorder, take('s1'));
+    expect(m.store.get().uploading?.sha256).toBe('s1');
+    await m.remove('s1');
+    expect(m.store.get().clips).toHaveLength(1);
+    expect(m.store.get().error).toMatch(/uploading right now/);
+    finish(clipAnswer('s1'));
+    await flush();
   });
 });

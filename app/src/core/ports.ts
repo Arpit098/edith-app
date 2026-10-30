@@ -222,6 +222,8 @@ export interface Recorder {
   cancel(): Promise<void>;
   /** Delete a file this recorder made (nothing for any other path). */
   discard?(uri: string): Promise<void>;
+  /** The `keep` files on the phone now (to tidy ones nothing points at). */
+  kept?(): Promise<string[]>;
 }
 
 export interface WakeWord {

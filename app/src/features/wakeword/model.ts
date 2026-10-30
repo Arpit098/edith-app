@@ -13,6 +13,7 @@ import { checkClip, stepOf, type ClipKind } from './plan';
 
 export const STORE_KEY = 'wakeword.v1';
 export const MAX_ATTEMPTS = 6; // retryable upload failures in a row before a clip waits for "Retry"
+export const MAX_LOCAL_CLIPS = 60; // takes kept on the phone, not uploaded yet (each up to about 1 MB)
 const BACKOFF = { baseMs: 1_000, maxMs: 30_000 };
 const UPLOAD_TIMEOUT_MS = 60_000; // a 30 s noise clip is about 1 MB
 export const DEFAULT_SENSITIVITY = 0.5;
@@ -45,9 +46,11 @@ export type Take = { kind: ClipKind; kept: true; sha256: string } | { kind: Clip
 
 export interface WakewordState {
   loaded: boolean;
+  label: string; // this install's session label: a lost answer to "create" finds its session again
   sessionId: string | null;
   clips: TrainClip[]; // kept takes, oldest first
-  recording: { kind: ClipKind; phase: 'waiting' | 'recording'; elapsedMs: number; level: number } | null;
+  /** `startsAt` (unix ms): when a delayed take begins recording, for the countdown. */
+  recording: { kind: ClipKind; phase: 'waiting' | 'recording'; elapsedMs: number; level: number; startsAt: number } | null;
   last: Take | null; // the newest take's verdict
   uploading: { sha256: string; sent: number; total: number } | null;
   /** ok; needs_update: the server has no wake word routes yet (404); unknown before the first answer. */
@@ -60,6 +63,7 @@ export interface WakewordState {
 }
 
 interface Saved {
+  label: string;
   sessionId: string | null;
   clips: TrainClip[];
   enabled: boolean;
@@ -86,6 +90,12 @@ function routeMissing(e: unknown): boolean {
 }
 
 const numOrNull = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+
+/** This install's session label: unique, within the contract's 60 characters. */
+function newLabel(): string {
+  const hex = Array.from({ length: 8 }, () => Math.floor(Math.random() * 16).toString(16)).join('');
+  return `Phone ${hex}`;
+}
 
 export function modelStatusFrom(r: Record<string, unknown>): ModelStatus {
   const state = r.state === 'trained' || r.state === 'waiting_for_training' ? r.state : 'no_recordings';
@@ -117,6 +127,7 @@ export function createWakewordModel(deps: {
   const { bus, transport, recorder, data, wakeWord } = deps;
   const store = createStore<WakewordState>({
     loaded: false,
+    label: '',
     sessionId: null,
     clips: [],
     recording: null,
@@ -136,6 +147,7 @@ export function createWakewordModel(deps: {
   let startTimer: ReturnType<typeof setTimeout> | null = null;
   let stopping = false;
   let starting = false; // between the tap and the recorder starting (permission, delay)
+  let take = 0; // the take being started: a stop or cancel meanwhile makes it stale
 
   const patch = (p: Partial<WakewordState>) => store.set((s) => ({ ...s, ...p }));
   const patchClip = (sha256: string, p: Partial<TrainClip>) => store.set((s) => ({ ...s, clips: s.clips.map((c) => (c.sha256 === sha256 ? { ...c, ...p } : c)) }));
@@ -146,8 +158,8 @@ export function createWakewordModel(deps: {
   function save() {
     const s = store.get();
     if (!s.loaded || !data) return;
-    if (savedRef && savedRef.sessionId === s.sessionId && savedRef.clips === s.clips && savedRef.enabled === s.enabled && savedRef.sensitivity === s.sensitivity) return;
-    savedRef = { sessionId: s.sessionId, clips: s.clips, enabled: s.enabled, sensitivity: s.sensitivity };
+    if (savedRef && savedRef.label === s.label && savedRef.sessionId === s.sessionId && savedRef.clips === s.clips && savedRef.enabled === s.enabled && savedRef.sensitivity === s.sensitivity) return;
+    savedRef = { label: s.label, sessionId: s.sessionId, clips: s.clips, enabled: s.enabled, sensitivity: s.sensitivity };
     void data.set(STORE_KEY, JSON.stringify(savedRef)).catch((e) => console.warn('[edith] wake word state not saved', e));
   }
   const unsave = store.subscribe(save);
@@ -163,14 +175,28 @@ export function createWakewordModel(deps: {
     if (disposed) return;
     const clips = Array.isArray(saved.clips) ? saved.clips.filter((c) => c && typeof c.sha256 === 'string') : [];
     const installed = store.get().installed;
+    await dropOrphans(clips);
+    if (disposed) return;
     patch({
       loaded: true,
+      label: typeof saved.label === 'string' && saved.label ? saved.label : newLabel(),
       sessionId: typeof saved.sessionId === 'string' ? saved.sessionId : null,
       clips,
       enabled: !!saved.enabled && !!installed, // never on without a model
       sensitivity: typeof saved.sensitivity === 'number' ? Math.min(1, Math.max(0, saved.sensitivity)) : DEFAULT_SENSITIVITY,
     });
     pump();
+  }
+
+  /** Kept files no queued clip points at (a crash between recording and saving): deleted at startup. */
+  async function dropOrphans(clips: TrainClip[]) {
+    if (!recorder?.kept || !recorder.discard) return;
+    try {
+      const wanted = new Set(clips.map((c) => c.uri).filter((u): u is string => !!u));
+      for (const uri of await recorder.kept()) if (!wanted.has(uri)) await recorder.discard(uri);
+    } catch (e) {
+      console.warn('[edith] wake word clips not tidied', e); // harmless: tried again next start
+    }
   }
 
   // ---- recording ----
@@ -184,7 +210,12 @@ export function createWakewordModel(deps: {
     }) ?? (() => {});
 
   async function record(kind: ClipKind) {
-    if (!recorder || store.get().recording || starting) return;
+    if (!recorder || !store.get().loaded || store.get().recording || starting) return;
+    const local = store.get().clips.filter((c) => c.uri).length;
+    if (local >= MAX_LOCAL_CLIPS) {
+      patch({ error: `${local} takes are waiting to upload. Connect to edith so they can go up before recording more.` });
+      return;
+    }
     starting = true;
     let allowed = false;
     try {
@@ -197,16 +228,25 @@ export function createWakewordModel(deps: {
       return;
     }
     const step = stepOf(kind);
-    patch({ recording: { kind, phase: 'waiting', elapsedMs: 0, level: 0 }, last: null, error: null });
+    const mine = ++take;
+    const startsAt = Date.now() + step.delayMs;
+    patch({ recording: { kind, phase: 'waiting', elapsedMs: 0, level: 0, startsAt }, last: null, error: null });
+    const current = () => mine === take && store.get().recording !== null;
     const begin = async () => {
       startTimer = null;
-      if (store.get().recording?.kind !== kind) return; // cancelled while waiting
+      if (!current()) return; // cancelled while waiting
       try {
         await recorder.start({ maxMs: step.maxMs, keep: true });
-        patch({ recording: { kind, phase: 'recording', elapsedMs: 0, level: 0 } });
       } catch (e) {
-        patch({ recording: null, error: `Couldn’t start recording: ${e instanceof Error ? e.message : String(e)}` });
+        if (current()) patch({ recording: null, error: `Couldn’t start recording: ${e instanceof Error ? e.message : String(e)}` });
+        return;
       }
+      // Stop or cancel pressed while the recorder was starting: don't leave the take running.
+      if (!current()) {
+        await recorder.cancel();
+        return;
+      }
+      patch({ recording: { kind, phase: 'recording', elapsedMs: 0, level: 0, startsAt } });
     };
     if (step.delayMs > 0) startTimer = setTimeout(() => void begin(), step.delayMs);
     else await begin();
@@ -250,6 +290,7 @@ export function createWakewordModel(deps: {
     if (!r) return;
     if (startTimer) clearTimeout(startTimer);
     startTimer = null;
+    take++; // a start still in flight sees it is stale and cancels itself
     patch({ recording: null });
     if (r.phase === 'recording') await recorder?.cancel();
   }
@@ -259,9 +300,13 @@ export function createWakewordModel(deps: {
   const clipsPath = (sid: string, kind: ClipKind) => `/v1/wakeword/sessions/${encodeURIComponent(sid)}/clips?kind=${kind}`;
 
   async function ensureSession(): Promise<string> {
-    const have = store.get().sessionId;
+    const { sessionId: have, label } = store.get();
     if (have) return have;
-    const s = await transport.request<Record<string, unknown>>('POST', '/v1/wakeword/sessions', { label: 'From the phone' });
+    // A session made before whose answer was lost: find it by this install's label, never make a second
+    // one (they count toward edith's cap of 20).
+    const listing = await transport.request<Record<string, unknown>>('GET', '/v1/wakeword/sessions');
+    const found = (Array.isArray(listing.sessions) ? listing.sessions : []).find((x: Record<string, unknown>) => x?.label === label) as Record<string, unknown> | undefined;
+    const s = found ?? (await transport.request<Record<string, unknown>>('POST', '/v1/wakeword/sessions', { label }));
     const id = str(s.id);
     if (!id) throw new ApiError(502, 'edith sent no session id');
     patch({ sessionId: id });
@@ -290,6 +335,7 @@ export function createWakewordModel(deps: {
   }
 
   async function uploadOne(clip: TrainClip) {
+    let uploaded = false;
     try {
       const sid = await ensureSession();
       if (!clip.uri) throw new ApiError(400, 'the recording is gone from the phone');
@@ -300,9 +346,9 @@ export function createWakewordModel(deps: {
         onProgress: (sent, total) => patch({ uploading: { sha256: clip.sha256, sent, total } }),
       });
       attempts = 0;
+      uploaded = true;
       patchClip(clip.sha256, { status: 'uploaded', uri: null, error: null });
       if (store.get().server !== 'ok') patch({ server: 'ok' });
-      await recorder?.discard?.(clip.uri); // edith has it now (and the trainer checks its hash)
     } catch (e) {
       if (routeMissing(e)) {
         patch({ server: 'needs_update' }); // waits for the next connect
@@ -317,6 +363,9 @@ export function createWakewordModel(deps: {
         patchClip(clip.sha256, { status: 'failed', error: e instanceof Error ? e.message : String(e) });
       }
     }
+    // Outside the upload's try: a file that can't be deleted never makes an uploaded clip "failed"
+    // (an orphan is tidied at the next start).
+    if (uploaded && clip.uri) await recorder?.discard?.(clip.uri).catch((e) => console.warn('[edith] uploaded clip not deleted', e));
   }
 
   function retry(sha256: string) {
@@ -326,7 +375,11 @@ export function createWakewordModel(deps: {
 
   async function remove(sha256: string) {
     const clip = store.get().clips.find((c) => c.sha256 === sha256);
-    if (!clip || store.get().uploading?.sha256 === sha256) return;
+    if (!clip) return;
+    if (store.get().uploading?.sha256 === sha256) {
+      patch({ error: 'That take is uploading right now. Redo it once the upload finishes (a few seconds).' });
+      return;
+    }
     const sid = store.get().sessionId;
     if (clip.status === 'uploaded' && sid) {
       try {

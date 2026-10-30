@@ -9,6 +9,7 @@ interface NativeRecorder {
   start(maxMs: number, keep: boolean): Promise<void>;
   stop(): Promise<{ uri: string; durationMs: number; bytes: number; peakDbfs: number; rmsDbfs: number; clipped: number; sha256: string } | null>;
   discard(uri: string): Promise<boolean>;
+  keptFiles(): Promise<string[]>;
   cancel(): Promise<void>;
   addListener(event: 'onRecording', listener: (e: { elapsedMs: number; level: number; capped?: boolean }) => void): { remove(): void };
 }
@@ -39,6 +40,7 @@ export function createAndroidRecorder(): Recorder | null {
     async discard(uri) {
       await native.discard(uri);
     },
+    kept: () => native.keptFiles(),
     cancel: () => native.cancel(),
   };
 }
