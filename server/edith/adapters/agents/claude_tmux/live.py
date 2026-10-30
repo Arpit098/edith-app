@@ -14,6 +14,8 @@ import os
 import re
 import threading
 
+from edith.common.text import HEADER_LINE, clean_prompt, reply_parts
+
 from .transcript import Tail, describe_tool, read_backward, read_forward
 from .watch import Watch
 
@@ -40,10 +42,11 @@ def text_of(content):
 
 
 class LiveView:
-    def __init__(self, paths, session, publish, origin_of):
+    def __init__(self, paths, session, publish, origin_of, known=lambda rid: False):
         """session() -> tmux-session.json as a dict; publish(type, origin, session_id, data);
-        origin_of(run_id) -> "telegram" | "app" | None."""
-        self.paths, self.session, self.publish, self.origin_of = paths, session, publish, origin_of
+        origin_of(run_id) -> "telegram" | "app" | None; known(run_id): the message was accepted from a
+        frontend, so its message.user is already out."""
+        self.paths, self.session, self.publish, self.origin_of, self.known = paths, session, publish, origin_of, known
         self._tools: dict[str, str] = {}
         self.watch = None
         self.ready = threading.Event()  # set once it is watching: nothing written after that is missed
@@ -78,7 +81,7 @@ class LiveView:
     def entry(self, e, cursor=None):
         """Publish the events of one transcript entry; `cursor` (see history()) goes in their data."""
         sid = e.get("sessionId") or self.session().get("session_id")
-        for type, origin, data in events_of(e, self._tools, self.origin_of):
+        for type, origin, data in events_of(e, self._tools, self.origin_of, self.known):
             if cursor:
                 data["cursor"] = cursor
             self.publish(type, origin, sid, data)
@@ -88,8 +91,9 @@ def origin_from(text, origin_of):
     m = REF.search(text)
     if m and origin_of(m.group(1)):
         return origin_of(m.group(1))
-    if text.startswith("[App message"):
-        return "app"
+    header = HEADER_LINE.search(text)
+    if header:
+        return "app" if text[header.start():].startswith("[App") else "telegram"
     return "telegram" if m else "terminal"
 
 
@@ -99,7 +103,7 @@ def remember(tools, tool_id, name):
         tools.pop(next(iter(tools)))
 
 
-def events_of(e, tools, origin_of=lambda ref: None):
+def events_of(e, tools, origin_of=lambda ref: None, known=lambda rid: False):
     """[(type, origin, data)] for one transcript entry. `tools` maps tool_use ids to names (for
     naming results) and is updated; it is bounded to MAX_TOOL_IDS."""
     if e.get("isSidechain") or e.get("isMeta"):
@@ -116,15 +120,27 @@ def events_of(e, tools, origin_of=lambda ref: None):
                         "summary": (summary or "").strip().split("\n", 1)[0][:200]}))
             return out
         text = text_of(content)
-        if not text or text.lstrip().startswith("<"):
-            return []  # slash-command and system wrappers
-        return [("message.user", origin_from(text, origin_of), {"text": REF.sub("", text).strip(), "voice": "[voice]" in text})]
+        stripped = text.lstrip()
+        if not text or stripped.startswith("<") and not stripped.startswith("<pasted_content"):
+            return []  # slash-command and system wrappers (long pastes are unwrapped by clean_prompt)
+        m = REF.search(text)
+        rid = m.group(1) if m else None
+        if rid and known(rid):
+            return []  # a frontend's message: its message.user went out when it was accepted
+        clean = clean_prompt(text)
+        if not clean["text"] and not clean["attachments"]:
+            return []
+        return [("message.user", origin_from(text, origin_of),
+                 {"text": clean["text"], "voice": clean["voice"], "rid": rid, "attachments": clean["attachments"],
+                  "replying_to": clean["replying_to"]})]
     if e.get("type") == "assistant" and isinstance(content, list):
         for b in content:
             if not isinstance(b, dict):
                 continue
             if b.get("type") == "text" and b.get("text", "").strip():
-                out.append(("message.assistant", "system", {"text": b["text"]}))
+                parts = reply_parts(b["text"])
+                if parts["text"]:
+                    out.append(("message.assistant", "system", {"text": parts["text"], "files": parts["files"], "lane": "main"}))
             elif b.get("type") == "tool_use":
                 name, inp = b.get("name", ""), b.get("input") or {}
                 remember(tools, b.get("id"), name)
