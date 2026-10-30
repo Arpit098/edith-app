@@ -3,7 +3,7 @@
 import { StyleSheet, Switch, Text, View } from 'react-native';
 
 import { useStore } from '../../core/store';
-import { colors, space } from '../../ui/theme';
+import { colors, space } from '../../core/theme';
 import type { VoiceModel, VoiceState } from './voice';
 
 const selectAutoSend = (s: VoiceState) => s.autoSend;
@@ -22,7 +22,7 @@ export function VoiceSettings({ voice }: { voice: VoiceModel }) {
       <Switch
         value={autoSend}
         onValueChange={(on) => void voice.setAutoSend(on)}
-        trackColor={{ false: colors.border, true: colors.accent }}
+        trackColor={{ false: colors.hairline, true: colors.accent }}
         thumbColor={colors.text}
         accessibilityLabel="Send right after speaking"
       />

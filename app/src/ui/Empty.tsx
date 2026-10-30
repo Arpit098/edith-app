@@ -2,7 +2,7 @@ import { memo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { Icon } from './Icon';
-import { colors, space } from './theme';
+import { colors, space } from '../core/theme';
 
 export const Empty = memo(function Empty({ icon, title, detail }: { icon: string; title: string; detail?: string }) {
   return (

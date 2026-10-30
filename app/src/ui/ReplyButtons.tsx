@@ -5,7 +5,7 @@ import { StyleSheet, View } from 'react-native';
 
 import type { ButtonRows } from '../core/events';
 import { Button } from './Button';
-import { space } from './theme';
+import { space } from '../core/theme';
 
 export const ReplyButtons = memo(function ReplyButtons({ rows, onPress }: { rows: ButtonRows; onPress: (action: string) => Promise<unknown> }) {
   const [pressing, setPressing] = useState<string | null>(null);

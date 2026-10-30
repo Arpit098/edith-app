@@ -7,7 +7,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import type { AppVisibility, OngoingStatus } from '../../core/ports';
 import { Button } from '../../ui/Button';
 import { Icon } from '../../ui/Icon';
-import { colors, radius, space } from '../../ui/theme';
+import { colors, radius, space } from '../../core/theme';
 
 export function LiveAlertsSettings({ status, visibility }: { status: OngoingStatus; visibility?: AppVisibility }) {
   const [allowed, setAllowed] = useState(() => status.canPromote());
@@ -41,7 +41,7 @@ export function LiveAlertsSettings({ status, visibility }: { status: OngoingStat
 
 const styles = StyleSheet.create({
   box: { gap: space.s, marginTop: space.xs },
-  banner: { gap: space.s, padding: space.m, borderRadius: radius.m, borderWidth: 1, borderColor: colors.warn, backgroundColor: colors.surfaceHigh },
+  banner: { gap: space.s, padding: space.m, borderRadius: radius.m, borderWidth: 1, borderColor: colors.warn, backgroundColor: colors.cardRaised },
   row: { flexDirection: 'row', alignItems: 'center', gap: space.s },
   flex: { flex: 1 },
   text: { color: colors.text, fontSize: 15 },

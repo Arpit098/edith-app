@@ -251,6 +251,32 @@ export interface KeyValueStore {
 /** Small secrets (the token): Android Keystore-encrypted, a few KB at most per value. */
 export type SecureStorage = KeyValueStore;
 
+/** What the glass may cost: the Android version, and battery saver (glass goes flat while it's on). */
+export interface DevicePower {
+  readonly sdkInt: number;
+  powerSave(): boolean;
+  onPowerSaveChange(handler: (on: boolean) => void): () => void;
+}
+
+/** Frame times of the app's window over a stretch of use (Android FrameMetrics). */
+export interface FrameReport {
+  frames: number;
+  seconds: number;
+  refreshHz: number;
+  p50Ms: number;
+  p95Ms: number;
+  p99Ms: number;
+  maxMs: number;
+  jankyFrames: number; // past the frame's deadline
+  jankyPercent: number;
+}
+
+export interface FrameMeter {
+  start(): void;
+  /** Null if it wasn't started. */
+  stop(): Promise<FrameReport | null>;
+}
+
 export interface Ports {
   transport: Transport;
   storage: SecureStorage;
