@@ -4,8 +4,9 @@ from .calendar import Calendar, CalendarEvent, CalendarInfo, CreatedEvent, NewEv
 from .frontend import Frontend
 from .mail import MailBox, MailMessage, MailSummary
 from .notifier import Notifier
+from .presence import Presence
 from .stt import SpeechToText, SttError, Transcript
 
 __all__ = ["AgentBackend", "Calendar", "CalendarEvent", "CalendarInfo", "CreatedEvent", "Frontend", "MailBox",
-           "MailMessage", "MailSummary", "NewEvent", "Notifier", "RunInfo", "SpeechToText", "SttError", "StopResult",
+           "MailMessage", "MailSummary", "NewEvent", "Notifier", "Presence", "RunInfo", "SpeechToText", "SttError", "StopResult",
            "Transcript", "TurnHandle"]

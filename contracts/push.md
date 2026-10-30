@@ -6,8 +6,11 @@ message as a local notification.
 
 ## When edith pushes
 
-The `notifications` feature pushes only while **no `/v1/stream` client is connected** (the app
-open or held by its foreground service shows the news itself). It follows `app.clients` (contracts/events.md).
+The `notifications` feature pushes only while **the app isn't connected** (the app open, or held by
+its foreground service, shows the news itself). It asks the App API at push time, on its worker
+thread: only clients that connected as `/v1/stream?client=app` count (a tool on the stream doesn't
+silence pushes), and one not heard from in the last 2 s gets a protocol ping and counts only if it
+answers within 3 s, so a half-open socket (a phone asleep or off the network) never holds a push back.
 
 | Event | Pushed when | Tag |
 |---|---|---|
@@ -17,7 +20,9 @@ open or held by its foreground service shows the news itself). It follows `app.c
 | `permission.resolved` | its request was pushed: a `cancel` for `perm:<id>` | `perm:<id>` |
 | `reminder.due` | always | `rem:<id>:<due>` (once per due time of a repeating reminder) |
 
-Each tag is pushed at most once (a cancel aside). One worker thread publishes, so the bus never
+Each tag is pushed at most once (a cancel aside), and counts as pushed only once ntfy took it: a
+publish that failed, or one skipped because the app was there, can go when the next event with that
+tag comes. An approval answered before its push went out is never sent. One worker thread publishes, so the bus never
 waits on ntfy. A publish has a 5 s timeout; an unreachable ntfy (or a 5xx/429) is retried after 1 s
 and 2 s, then the push is dropped and logged. Approvals go at ntfy priority 4, cancels at 1, the rest at 3.
 
@@ -28,6 +33,10 @@ and 2 s, then the push is dropped and logged. Approvals go at ntfy priority 4, c
 - One topic, `edith` by default (`[adapter.ntfy] topic`).
 - The phone subscribes with `GET /<topic>/json?since=<last message id>` (one long-lived stream), so
   nothing is missed across reconnects. ntfy keeps messages 1 h (`cache-duration`).
+- In the 15-minute check mode (Settings → Push) there is no stream: a periodic job fetches
+  `GET /<topic>/json?poll=1&since=<last message id>` and shows what came. Android may stretch the
+  period in deep sleep; anything older than the 1 h cache is then gone (the always-on mode doesn't
+  have this gap).
 
 ## Message
 

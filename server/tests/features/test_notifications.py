@@ -27,11 +27,23 @@ class FakeNotifier:
         return self.sent.get(timeout=5)
 
 
+class FakePresence:
+    def __init__(self):
+        self.count = 0
+        self.asked = queue.Queue()  # one item per push the worker checked
+
+    def app_clients(self, wait=3.0):
+        self.asked.put(self.count)
+        return self.count
+
+
 class FeatureTest(unittest.TestCase):
     def setUp(self):
         self.bus, registry = EventBus(), Registry()
         self.ntfy, self.telegram = FakeNotifier(), FakeNotifier("telegram")
-        report = load_features(["notifications"], self.bus, Ports(notifiers=[self.telegram, self.ntfy]), registry, {})
+        self.presence = FakePresence()
+        ports = Ports(notifiers=[self.telegram, self.ntfy], presence=self.presence)
+        report = load_features(["notifications"], self.bus, ports, registry, {})
         self.assertEqual(report.failed, {})
         self.jobs = JobRunner(list(registry.jobs.values()))
         self.jobs.start()
@@ -57,11 +69,14 @@ class FeatureTest(unittest.TestCase):
         self.assertTrue(self.telegram.sent.empty())  # only the notifiers in `via` (default ntfy)
 
     def test_nothing_is_pushed_while_the_app_listens(self):
-        self.publish("app.clients", origin="system", count=1)
+        self.presence.count = 1
         self.publish("turn.done", ref="r1", text="seen in the app")
-        self.publish("app.clients", origin="system", count=0)
+        self.assertEqual(self.presence.asked.get(timeout=5), 1)  # asked at push time, and not pushed
+        self.presence.count = 0
         self.publish("turn.done", ref="r2", text="app closed")
         self.assertEqual(self.data()["tag"], "turn:r2")  # FIFO: r1 would have come first
+        self.publish("turn.done", ref="r1", text="seen in the app")  # not marked sent, so it can go later
+        self.assertEqual(self.data()["tag"], "turn:r1")
 
     def test_an_approval_is_pushed_and_cancelled_once_answered(self):
         self.publish("permission.request", origin="telegram", id="p0", tool="Bash", detail="ls")
@@ -71,7 +86,7 @@ class FeatureTest(unittest.TestCase):
         self.assertEqual((title, priority), ("Approve Bash? (parallel task)", "high"))
         self.assertEqual(data, {"v": 1, "tag": "perm:p1", "channel": "approvals", "title": "Approve Bash? (parallel task)",
                                 "text": "npm test", "link": "edith://approvals", "permission": "p1"})
-        self.publish("app.clients", origin="system", count=1)  # answered in the app, which opened meanwhile
+        self.presence.count = 1  # answered in the app, which opened meanwhile: the cancel still goes
         self.publish("permission.resolved", id="p1", decision="allow")
         _, _, priority, data = self.ntfy.next()
         self.assertEqual((priority, data), ("min", {"v": 1, "tag": "perm:p1", "cancel": True}))

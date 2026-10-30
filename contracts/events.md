@@ -35,7 +35,6 @@ Every event on the bus, and on the app's `/v1/stream` WebSocket, has this shape:
 | `turn.retrying` | `{ref, lane, reason}` | A turn starts over (a side lane whose conversation is gone runs again fresh); frontends drop that turn's status message |
 | `voice.turn` | `{ref}` | The App API accepted a `POST /v1/messages` with `voice: true` (sent before the turn's own events). Origin `app` |
 | `voice.reply` | `{ref, outcome, speak}` | What the app says aloud for that voice turn (see "Voice" below). Origin `app` |
-| `app.clients` | `{count}` | A `/v1/stream` client connects or leaves; `count` is how many are connected now. Origin `system`. Server-side only: not sent on `/v1/stream`. The `notifications` feature pushes only while it is 0 (contracts/push.md) |
 
 Fields the agent adds (new fields only; existing meanings unchanged):
 - `turn.started`, `turn.progress`, `turn.done`, `turn.stopped` and `turn.failed` carry `lane` (`main`
@@ -184,7 +183,7 @@ Base `http://<edith's Tailscale IP>:8787`, reachable over Tailscale only. Every 
 |---|---|---|---|
 | POST | `/v1/messages` | `{text, voice?: bool, queue?: bool, attachments?: [id]}` | `{ref, lane}`; the turn's events then arrive on the stream with this `ref`. `attachments`: ids from `POST /v1/attachments` (contracts/attachments.md) |
 | POST | `/v1/attachments` | the raw file (image or audio), `x-filename?` | `{id, name, type, size, sha256}` (contracts/attachments.md) |
-| GET | `/v1/stream` | WebSocket | every event above as one JSON text message `{type, ts, session_id, origin, data}`; the server pings every 25 s (protocol ping) when the line is quiet. The app may send `{"type": "ping", "id"?: any}`; the answer is `{"type": "pong", "ts", "session_id": null, "origin": "system", "data": {"id"?}}` (`id` echoed). Any frame from the app counts as alive; three quiet periods without one and the server drops it. Other text from the app is ignored |
+| GET | `/v1/stream` | WebSocket | every event above as one JSON text message `{type, ts, session_id, origin, data}`; the server pings every 25 s (protocol ping) when the line is quiet. The app connects as `/v1/stream?client=app` (the push decision counts only those, contracts/push.md). The app may send `{"type": "ping", "id"?: any}`; the answer is `{"type": "pong", "ts", "session_id": null, "origin": "system", "data": {"id"?}}` (`id` echoed). Any frame from the app counts as alive; two quiet periods without one (a ping left unanswered for 25 s) and the server drops it. Other text from the app is ignored |
 | POST | `/v1/stop` | | `{running, dropped: [ref]}` |
 | GET | `/v1/status` | | `{main: busy/idle, queued, runs: [{ref, lane, seconds, step}], tmux: running/down, conversation: bool, session: {id, title} \| null}` |
 | GET | `/v1/status/details` | | `{ts, edith, lanes, session, agents, server}`: the status panel (contracts/status.md) |

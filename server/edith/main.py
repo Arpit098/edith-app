@@ -33,6 +33,7 @@ def build(config: dict):
     report = load_features(features.get("enabled", []), bus, ports, registry, features)
     frontends = [f for f in (load_adapter("frontends", name, settings.get(name, {}))
                              for name in adapters.get("frontends", [])) if f]
+    ports.presence = next((f for f in frontends if hasattr(f, "app_clients")), None)  # read by features at run time
     return bus, registry, ports, frontends, report
 
 

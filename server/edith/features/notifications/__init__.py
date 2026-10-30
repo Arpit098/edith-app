@@ -1,8 +1,8 @@
 """Pushes for the app while it is closed (Phase 5; contracts/push.md): replies and failures of app
 turns, approvals (and their cancel once answered) and reminders, through the notifier ports.
 
-Only while no /v1/stream client is connected (app.clients); the app shows everything itself while it
-is open. Each tag is pushed once. Publishing runs on one worker thread, so a slow or unreachable ntfy
+Only while the app isn't connected (ports.presence, asked at push time); the app shows everything
+itself while it is open. Each tag is pushed once it is delivered. Publishing runs on one worker thread, so a slow or unreachable ntfy
 never holds up the bus.
 
     [features.notifications]
@@ -81,7 +81,6 @@ def setup(ctx: Context) -> None:
     if not notifiers:
         ctx.log("no notifier among %s: nothing is pushed", sorted(via))
         return
-    listeners = [0]               # /v1/stream clients connected now (app.clients)
     pushed: OrderedDict = OrderedDict()  # tag -> None, newest last
     lock = threading.Lock()       # the bus calls handlers from several threads
 
@@ -93,6 +92,10 @@ def setup(ctx: Context) -> None:
             with lock:
                 if tag not in pending:
                     return  # answered while it waited: nothing to show
+        if not cancel and ctx.ports.presence and ctx.ports.presence.app_clients():
+            with lock:
+                pending.discard(tag)  # the app is there and shows it itself
+            return
         priority = "min" if cancel else "high" if msg.get("channel") == "approvals" else "default"
         data = {"v": 1, **msg}
         delivered = False
@@ -121,9 +124,6 @@ def setup(ctx: Context) -> None:
                 with lock:
                     pending.discard(msg["tag"])  # may be pushed again by a later event
 
-    def on_clients(ev: Event) -> None:
-        listeners[0] = int(ev.data.get("count") or 0)
-
     def on_event(ev: Event) -> None:
         if ev.type == "permission.resolved":
             tag = f"perm:{ev.data.get('id')}"
@@ -135,8 +135,6 @@ def setup(ctx: Context) -> None:
                     return
             enqueue({"tag": tag, "cancel": True})  # answered or timed out: take it off the phone
             return
-        if listeners[0]:
-            return  # the app is listening and shows it itself
         msg = message(ev)
         if msg is None:
             return
@@ -146,7 +144,6 @@ def setup(ctx: Context) -> None:
             pending.add(msg["tag"])
         enqueue(msg)
 
-    ctx.subscribe("app.clients", on_clients)
     for t in ("turn.done", "turn.failed", "permission.request", "permission.resolved", "reminder.due"):
         ctx.subscribe(t, on_event)
 

@@ -5,7 +5,7 @@ import base64
 import json
 import os
 import pathlib
-import queue
+import threading
 import shutil
 import socket
 import struct
@@ -119,10 +119,10 @@ class Api:
         except urllib.error.HTTPError as e:
             return e.code, json.loads(e.read() or b"{}")
 
-    def stream(self, token=TOKEN, key=None):
+    def stream(self, token=TOKEN, key=None, path="/v1/stream"):
         s = socket.create_connection((self.host, self.port), timeout=5)
         key = key or base64.b64encode(os.urandom(16)).decode()
-        s.sendall((f"GET /v1/stream HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+        s.sendall((f"GET {path} HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
                    f"Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n"
                    + (f"Authorization: Bearer {token}\r\n" if token else "") + "\r\n").encode())
         head = b""
@@ -415,17 +415,27 @@ class StreamTest(unittest.TestCase):
                 self.assertEqual(json.loads(read_frame(s)[1])["data"], {"id": i})
             self.assertTrue(self.a.api._clients)  # still connected
 
-    def test_clients_joining_and_leaving_are_published_but_not_streamed(self):
-        counts = queue.Queue()
-        self.a.bus.subscribe("app.clients", lambda ev: counts.put((ev.origin, ev.data)))
-        s, _, _ = self.a.stream()
-        self.assertEqual(counts.get(timeout=5), ("system", {"count": 1}))
-        s.sendall(ws.client_frame(ws.OP_PING, b"x"))  # its own app.clients was not sent: the pong is first
-        self.assertEqual(read_frame(s), (ws.OP_PONG, b"x"))
-        s.sendall(ws.client_frame(ws.OP_CLOSE, struct.pack("!H", 1000)))
-        self.assertEqual(read_frame(s)[0], ws.OP_CLOSE)
-        s.close()
-        self.assertEqual(counts.get(timeout=5), ("system", {"count": 0}))
+    def test_app_clients_counts_only_app_clients_that_answer(self):
+        self.assertEqual(self.a.api.app_clients(wait=0.1), 0)
+        other, _, _ = self.a.stream()  # a tool on /v1/stream, not the app
+        self.addCleanup(other.close)
+        app, _, _ = self.a.stream(path="/v1/stream?client=app")
+        self.addCleanup(app.close)
+        self.assertTrue(self.a.wait(lambda: len(self.a.api._clients) == 2))
+        self.assertEqual(self.a.api.app_clients(wait=0.1), 1)  # just connected: heard from
+        for c in self.a.api._clients:
+            c.heard -= 60  # quiet for a minute: it gets a ping
+        answered = []
+        t = threading.Thread(target=lambda: answered.append(self.a.api.app_clients(wait=5)))
+        t.start()
+        self.assertEqual(read_frame(app)[0], ws.OP_PING)
+        app.sendall(ws.client_frame(ws.OP_PONG, b"edith"))
+        t.join(5)
+        self.assertEqual(answered, [1])
+        for c in self.a.api._clients:
+            c.heard -= 60
+        self.assertEqual(self.a.api.app_clients(wait=0.2), 0)  # half-open: the ping goes unanswered
+        self.assertEqual(read_frame(app)[0], ws.OP_PING)
 
     def test_unauthorized_and_bad_handshake(self):
         s, head, _ = self.a.stream(token=None)
