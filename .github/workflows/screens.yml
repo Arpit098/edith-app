@@ -109,6 +109,11 @@ jobs:
           target: google_apis
           arch: x86_64
           profile: pixel_7
+          # The runner's 4 cores and enough memory: with the defaults the system process itself
+          # stalled after boot ("Process system isn't responding").
+          cores: 4
+          ram-size: 4096M
+          heap-size: 576M
           disable-animations: false
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           working-directory: app

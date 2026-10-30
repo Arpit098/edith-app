@@ -120,6 +120,11 @@ demo() { adb shell am broadcast -a com.android.systemui.demo -e command "$@" >/d
 
 adb shell input keyevent KEYCODE_WAKEUP
 adb shell wm dismiss-keyguard
+# Let the fresh image settle before the app starts: no crash/ANR dialogs over the screen, no
+# package verification, and the post-boot app compilation done now (bounded) instead of under us.
+adb shell settings put global hide_error_dialogs 1
+adb shell settings put global package_verifier_enable 0
+timeout 600 adb shell cmd package bg-dexopt-job >/dev/null 2>&1 || echo "bg-dexopt-job didn't finish in 10 min: going on"
 adb shell input keyevent KEYCODE_HOME
 wait_until "the launcher" launcher_on_top
 adb install -r -g "$APK"
