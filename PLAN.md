@@ -311,6 +311,30 @@ show in the phone's "dynamic island".
   Playwright on edith) **before** the APK is built, the release APK shows the new icon and theme,
   and a voice or text task shows its live state in the Live Alerts pill on the 13R.
 
+### 4.12 Claude accounts (asked for 2026-10-30)
+
+Arpit has more than one Claude subscription. When one hits its usage limit, he switches the whole
+server (EDITH and every coding agent) to another from the app, instead of logging in again over SSH.
+
+- **Where:** Settings → Claude accounts lists the saved logins (label, email, plan), marks the one in
+  use, and has Switch, Add and Remove. Contract: contracts/accounts.md. Server feature: `accounts`.
+- **Profiles:** each login is a copy of Claude Code's credentials file plus its `oauthAccount`, in
+  `~/.config/edith/claude-accounts/<id>/` (700/600). Tokens never leave those files: not in the API,
+  logs, the audit log, tmux or git.
+- **Switch:** only when everything is idle (no turn, queue, approval, busy agent or other Claude);
+  otherwise it is refused, naming who is busy. It runs as a transient `systemd-run --user` unit, so it
+  finishes on its own: stop every agent's Claude and edith-claude, save the old login back (Claude
+  refreshes it), install the new one, respawn each agent pane with `claude --resume <its session>` in
+  its folder, restart edith-claude last, then check that each Claude is up on the new account. If it
+  doesn't come up, it rolls back to the old one. Steps arrive as `accounts.switch` events, and stay in
+  `GET /v1/accounts` for an app that reconnects afterwards.
+- **Add:** Claude's own `claude auth login` runs headless with a private config folder. The app shows
+  the sign-in link, Arpit signs in on the phone and pastes the code back, and the server saves the login.
+  (`setup-token` doesn't fit: it gives a bare token with no account details or refresh.)
+- **Remove:** deletes a saved login (not the one in use).
+- **Done when:** Arpit adds his second account from the phone, switches to it with EDITH and the agents
+  resuming their conversations, and switches back.
+
 ## 5. Repository layout (`Arpit098/edith-app`, private)
 
 The code is organised as **ports, adapters and feature folders**, so a feature can be added or

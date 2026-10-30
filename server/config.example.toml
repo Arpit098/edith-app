@@ -34,7 +34,7 @@ telegram_dir = "~/.claude/channels/telegram"   # bot token (.env) and access.jso
 
 [features]
 enabled = ["sessions", "approvals", "control", "reminders", "mail", "calendar", "changes", "quick_actions", "voice",
-           "app_updates", "message_log", "wakeword", "status"]
+           "app_updates", "message_log", "wakeword", "status", "accounts"]
 
 [features.app_updates]
 # The release signing certificate's SHA-256 (public). Only APKs signed with it are offered.
@@ -45,6 +45,13 @@ cert_sha256 = "2B:6C:D3:6E:EA:02:20:9B:55:D9:7D:7A:78:20:E1:F6:81:A6:B1:60:67:3A
 # agents = true            # list the coding agents' tmux sessions (default socket) in /v1/status/details
 # agents_socket = ""       # another tmux socket (-L) instead of the default one
 # live_dir = "~/edith-app-live"   # the checkout whose `git describe` is reported (default: the running code's)
+
+[features.accounts]
+# root = "~/.config/edith/claude-accounts"   # saved Claude logins (700/600); never in git
+# service = "edith-claude"     # EDITH's Claude: restarted last by a switch
+# agents_socket = ""           # the coding agents' tmux socket (-L), default socket when empty
+# ready_timeout = 90           # seconds for every Claude to reach its input box after a switch
+# login_ttl = 600              # seconds an unfinished "Add account" sign-in stays open
 
 # Per-feature settings go in [features.<name>], e.g.:
 # [features.reminders]
