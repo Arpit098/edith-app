@@ -76,7 +76,7 @@ class EdithRecorderModule : Module() {
       file != null && file.parentFile in dirs && file.delete()
     }
 
-    AsyncFunction("keptFiles") { keptDir().listFiles()?.filter { it.isFile }?.map { "file://${it.absolutePath}" } ?: emptyList() }
+    AsyncFunction("keptFiles") { -> keptFiles() }
 
     AsyncFunction("cancel") {
       session?.let {
@@ -92,6 +92,10 @@ class EdithRecorderModule : Module() {
   }
 
   private fun keptDir() = File(context.filesDir, "wakeword-clips").apply { mkdirs() }
+
+  /** URIs of the `keep` files, in the form stop() returns them. */
+  private fun keptFiles(): List<String> =
+    (keptDir().listFiles() ?: emptyArray<File>()).filter { it.isFile }.map { "file://${it.absolutePath}" }
 }
 
 private class Recording(private val file: File, private val maxMs: Int, private val emit: (Map<String, Any>) -> Unit) {
