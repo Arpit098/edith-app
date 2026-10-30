@@ -6,6 +6,7 @@ import { cursorOf, type ButtonRows, type EdithEvent, type EventBus, type Lane, t
 import { bool, buttonRows, num, str } from '../../core/guards';
 import type { KeyValueStore } from '../../core/ports';
 import { createStore, type Store } from '../../core/store';
+import type { SentAttachment } from './attachments';
 
 export const MAX_ITEMS = 400; // the transcript keeps the newest ones; older ones drop off
 export const PAGE = 100; // history events per request
@@ -38,6 +39,7 @@ export type Item =
       local: LocalSend | null; // set for messages this app sent
       echoed: boolean; // the server's message.user for it has arrived
       reaction: string | null; // EDITH's latest reaction (message.reaction)
+      attachments: SentAttachment[];
     }
   | { kind: 'assistant'; id: number; ts: number; text: string; lane: 'side' | null; ref: string | null }
   | { kind: 'tool'; id: number; ts: number; name: string; summary: string; status: 'running' | 'ok' | 'error'; result: string | null }
@@ -130,6 +132,24 @@ function setMainTool(s: LiveState, active: boolean, step: string | null): LiveSt
 
 const asLane = (v: unknown): Lane => (v === 'side' ? 'side' : 'main');
 
+const AUDIO_EXT = /\.(ogg|mp3|m4a|wav|aac)$/i;
+
+/** message.user.attachments (saved paths in edith's inbox) → what a bubble shows. */
+function savedAttachments(v: unknown): SentAttachment[] {
+  if (!Array.isArray(v)) return [];
+  return v
+    .filter((p): p is string => typeof p === 'string' && p !== '')
+    .map((p) => {
+      const name = p.split('/').pop() ?? p;
+      return { id: '', name, kind: AUDIO_EXT.test(name) ? 'audio' : 'image', uri: null };
+    });
+}
+
+/** The history's copy of a message sent from here keeps this phone's thumbnails (the server has only names). */
+function withThumbs(server: SentAttachment[], mine: SentAttachment[]): SentAttachment[] {
+  return mine.length ? mine : server;
+}
+
 /** The header the App API puts before app messages ("[App message from Arpit, <time>] [voice]\n"). */
 const APP_HEADER = /^\[App message from [^\]\n]*\](?: \[voice\])?\s*\n/;
 
@@ -221,8 +241,8 @@ export function sendStatus(item: Extract<Item, { kind: 'user' }>, turns: Record<
 }
 
 /** A message Arpit just sent: shown at once, before the server has it. */
-export function addLocal(s: LiveState, key: string, text: string, voice: boolean, ts: number): LiveState {
-  return push(s, ts, { kind: 'user', text, origin: 'app', voice, ref: null, delivery: null, local: { key, status: 'sending', error: null }, echoed: false, reaction: null });
+export function addLocal(s: LiveState, key: string, text: string, voice: boolean, ts: number, attachments: SentAttachment[] = []): LiveState {
+  return push(s, ts, { kind: 'user', text, origin: 'app', voice, ref: null, delivery: null, local: { key, status: 'sending', error: null }, echoed: false, reaction: null, attachments });
 }
 
 /** The POST answered: link the message to its turn. */
@@ -280,7 +300,7 @@ function apply(s: LiveState, e: EdithEvent): LiveState {
         const item = s.items[i] as Extract<Item, { kind: 'user' }>;
         return update(s, item.id, () => ({ ...item, echoed: true, ref: item.ref ?? ref, delivery: delivery ?? item.delivery }));
       }
-      return push(s, ts, { kind: 'user', text, origin: e.origin, voice: bool(d.voice), ref, delivery, local: null, echoed: true, reaction: null });
+      return push(s, ts, { kind: 'user', text, origin: e.origin, voice: bool(d.voice), ref, delivery, local: null, echoed: true, reaction: null, attachments: savedAttachments(d.attachments) });
     }
     case 'message.assistant': {
       const lane = d.lane === 'side' ? 'side' : null;
@@ -421,7 +441,7 @@ export function fromHistory(s: LiveState, page: HistoryPage): LiveState {
   for (const x of s.items) {
     if (x.kind !== 'user' || !x.local || !x.echoed || x.ref === null) continue;
     const copy = rebuilt.items.find((y) => y.kind === 'user' && y.ref === x.ref);
-    if (copy) rebuilt = update(rebuilt, copy.id, (y) => (y.kind === 'user' ? { ...y, local: x.local, reaction: y.reaction ?? x.reaction } : y));
+    if (copy) rebuilt = update(rebuilt, copy.id, (y) => (y.kind === 'user' ? { ...y, local: x.local, reaction: y.reaction ?? x.reaction, attachments: withThumbs(y.attachments, x.attachments) } : y));
   }
   for (const x of s.items.filter(isLocalOnly)) {
     if (x.kind === 'assistant') {
@@ -432,7 +452,7 @@ export function fromHistory(s: LiveState, page: HistoryPage): LiveState {
     // Matched by ref only: the history's copy of this message takes over, keeping its local state
     // (ticks, status). A message without a ref (in flight, waiting, failed) is always kept.
     const copy = x.ref === null ? undefined : rebuilt.items.find((y) => y.kind === 'user' && y.ref === x.ref);
-    if (copy) rebuilt = update(rebuilt, copy.id, (y) => (y.kind === 'user' ? { ...y, local: x.local, delivery: y.delivery ?? x.delivery } : y));
+    if (copy) rebuilt = update(rebuilt, copy.id, (y) => (y.kind === 'user' ? { ...y, local: x.local, delivery: y.delivery ?? x.delivery, attachments: withThumbs(y.attachments, x.attachments) } : y));
     else keep.push(x);
   }
   if (!keep.length) return rebuilt;
@@ -501,7 +521,7 @@ export interface LiveModel {
    * first). It shows at once and keeps a state (sending, queued, side lane, answered, failed); it
    * never throws: a failed send stays in the list with Retry.
    */
-  send(text: string, opts?: { voice?: boolean }): Promise<void>;
+  send(text: string, opts?: { voice?: boolean; attachments?: SentAttachment[] }): Promise<void>;
   /** Send a failed message again. */
   retry(key: string): Promise<void>;
   stop(): Promise<string>;
@@ -527,6 +547,7 @@ export interface OutboxEntry {
   error: string | null;
   ref: string | null;
   delivery: Delivery | null;
+  attachments?: SentAttachment[];
 }
 
 /** The messages to keep: sent from here, not yet in the server's record (echo), newest last. */
@@ -534,7 +555,7 @@ export function outboxOf(s: LiveState): OutboxEntry[] {
   const out: OutboxEntry[] = [];
   for (const x of s.items) {
     if (x.kind !== 'user' || !x.local || x.echoed) continue;
-    out.push({ key: x.local.key, text: x.text, voice: x.voice, ts: x.ts, status: x.local.status, error: x.local.error, ref: x.ref, delivery: x.delivery });
+    out.push({ key: x.local.key, text: x.text, voice: x.voice, ts: x.ts, status: x.local.status, error: x.local.error, ref: x.ref, delivery: x.delivery, attachments: x.attachments });
   }
   return out.reverse().slice(-MAX_OUTBOX);
 }
@@ -567,6 +588,7 @@ export function restoreOutbox(s: LiveState, entries: OutboxEntry[], now: number)
       local: { key: e.key, status, error },
       echoed: false,
       reaction: null,
+      attachments: Array.isArray(e.attachments) ? e.attachments : [],
     });
   }
   if (next === s) return s;
@@ -587,9 +609,9 @@ export function createLiveModel(bus: EventBus, api: Api, storage?: KeyValueStore
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
   /** POST a message already shown locally, then link it to its turn, or mark it waiting (offline) or failed. */
-  async function post(key: string, text: string, voice: boolean): Promise<'sent' | 'waiting' | 'failed'> {
+  async function post(key: string, text: string, voice: boolean, attachments: SentAttachment[] = []): Promise<'sent' | 'waiting' | 'failed'> {
     try {
-      const r = await api.send(text, voice ? { voice: true } : {});
+      const r = await api.send(text, { ...(voice ? { voice: true } : {}), ...(attachments.length ? { attachments: attachments.map((a) => a.id) } : {}) });
       store.set((s) => sentLocal(s, key, r.ref, r.lane));
       return 'sent';
     } catch (e) {
@@ -618,7 +640,7 @@ export function createLiveModel(bus: EventBus, api: Api, storage?: KeyValueStore
       for (let e = oldestWaiting(); e; e = oldestWaiting()) {
         const key = e.key;
         store.set((s) => setLocal(s, key, 'sending', null));
-        if ((await post(key, e.text, e.voice)) === 'waiting') return;
+        if ((await post(key, e.text, e.voice, e.attachments)) === 'waiting') return;
       }
       retryAttempt = 0;
     } finally {
@@ -766,20 +788,21 @@ export function createLiveModel(bus: EventBus, api: Api, storage?: KeyValueStore
     store,
     async send(text, opts = {}) {
       const key = `local-${++localSeq}`;
-      store.set((s) => addLocal(s, key, text, !!opts.voice, Date.now() / 1000));
+      const attachments = opts.attachments ?? [];
+      store.set((s) => addLocal(s, key, text, !!opts.voice, Date.now() / 1000, attachments));
       if (flushing || oldestWaiting()) {
         // Older messages are still on their way: this one queues behind them, keeping the order.
         store.set((s) => setLocal(s, key, 'waiting', null));
         await flush();
         return;
       }
-      await post(key, text, !!opts.voice);
+      await post(key, text, !!opts.voice, attachments);
     },
     async retry(key) {
       const item = store.get().items.find((x) => x.kind === 'user' && x.local?.key === key);
       if (!item || item.kind !== 'user' || item.local?.status !== 'failed') return;
       store.set((s) => update(s, item.id, (x) => (x.kind === 'user' ? { ...x, ref: null, delivery: null, local: { key, status: 'sending', error: null } } : x)));
-      await post(key, item.text, item.voice);
+      await post(key, item.text, item.voice, item.attachments);
     },
     async stop() {
       const r = await api.stop();

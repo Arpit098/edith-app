@@ -2,7 +2,7 @@
 // event re-renders only the rows it touched.
 
 import { memo, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { DiffView } from '../../ui/DiffView';
 import { Icon } from '../../ui/Icon';
@@ -10,6 +10,7 @@ import { ReplyButtons } from '../../ui/ReplyButtons';
 import { StatusTick } from '../../ui/StatusTick';
 import { colors, mono, radius, space } from '../../ui/theme';
 import { clockIST } from '../../common/format';
+import type { SentAttachment } from './attachments';
 import type { Item, SendStatus, Tick } from './model';
 
 const ORIGIN_LABEL: Record<string, string> = { telegram: 'Telegram', terminal: 'Terminal', app: '', system: '' };
@@ -44,9 +45,12 @@ export const ItemView = memo(function ItemView({ item, onPress, tick, status, on
         <View style={styles.userWrap}>
           <Pressable style={[styles.bubble, styles.user, failed && styles.userFailed]} onPress={retry} disabled={!retry} accessibilityHint={retry ? 'Send again' : undefined}>
             {from || item.voice ? <Text style={styles.meta}>{[from, item.voice ? '🎙 voice' : ''].filter(Boolean).join(' · ')}</Text> : null}
-            <Text style={styles.text} selectable>
-              {item.text}
-            </Text>
+            {item.attachments.length ? <SentAttachments list={item.attachments} /> : null}
+            {item.text ? (
+              <Text style={styles.text} selectable>
+                {item.text}
+              </Text>
+            ) : null}
             <View style={styles.footer}>
               <Text style={styles.time}>{clockIST(item.ts)}</Text>
               {tick ? (
@@ -140,7 +144,31 @@ function DiffCard({ path, diff }: { path: string; diff: string }) {
   );
 }
 
+/** A message's attachments: thumbnails for images sent from this phone, name chips otherwise. */
+const SentAttachments = memo(function SentAttachments({ list }: { list: SentAttachment[] }) {
+  return (
+    <View style={styles.attachments}>
+      {list.map((a, i) =>
+        a.kind === 'image' && a.uri ? (
+          <Image key={`${a.id}-${i}`} source={{ uri: a.uri }} style={styles.attachmentImage} accessibilityLabel={`Photo ${a.name}`} />
+        ) : (
+          <View key={`${a.id}-${i}`} style={styles.attachmentChip}>
+            <Icon name={a.kind === 'audio' ? 'music-note-outline' : 'image-outline'} size={14} color={colors.textDim} />
+            <Text style={styles.attachmentName} numberOfLines={1}>
+              {a.name}
+            </Text>
+          </View>
+        ),
+      )}
+    </View>
+  );
+});
+
 const styles = StyleSheet.create({
+  attachments: { flexDirection: 'row', flexWrap: 'wrap', gap: space.xs, marginBottom: space.xs },
+  attachmentImage: { width: 140, height: 140, borderRadius: radius.m },
+  attachmentChip: { flexDirection: 'row', alignItems: 'center', gap: space.xs, maxWidth: 220, backgroundColor: colors.surfaceHigh, borderRadius: radius.s, paddingHorizontal: space.s, paddingVertical: space.xs },
+  attachmentName: { color: colors.text, fontSize: 13, flexShrink: 1 },
   bubble: { borderRadius: radius.l, paddingHorizontal: space.m, paddingVertical: space.s + 2, marginVertical: space.xs, maxWidth: '88%' },
   userWrap: { alignSelf: 'flex-end', alignItems: 'flex-end', maxWidth: '88%', marginVertical: space.xs },
   user: { backgroundColor: colors.user, borderBottomRightRadius: radius.s, maxWidth: '100%', marginVertical: 0 },

@@ -6,6 +6,7 @@ import { StyleSheet, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { createAndroidInstaller } from './adapters/installer/android';
+import { createExpoMediaPicker } from './adapters/media/expo';
 import { createAndroidRecorder } from './adapters/recorder/android';
 import { createAsyncStorage } from './adapters/storage/async-storage';
 import { createSecureStorage } from './adapters/storage/secure-store';
@@ -31,7 +32,7 @@ function boot() {
   const bus = new EventBus();
   const api = createApi(transport);
   const connection = new Connection(transport, storage, bus);
-  const loaded = loadFeatures(features, { bus, ports: { transport, storage, data, installer, ota, recorder, stt }, api, connection });
+  const loaded = loadFeatures(features, { bus, ports: { transport, storage, data, installer, ota, recorder, stt, media: createExpoMediaPicker() }, api, connection });
   return { connection, loaded };
 }
 

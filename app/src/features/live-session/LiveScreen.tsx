@@ -9,6 +9,8 @@ import { toast } from '../../ui/toast';
 import { ItemView } from './ItemView';
 import { sendStatus, summarize, tickOf, type Item, type LiveModel, type LiveState } from './model';
 import { WorkingRow } from './WorkingRow';
+import { AttachmentBar, AttachMenu } from './AttachmentBar';
+import type { AttachmentsModel, DraftsState } from './attachments';
 import { VoiceBar } from './VoiceBar';
 import type { VoiceModel, VoiceState } from './voice';
 
@@ -17,7 +19,7 @@ const selectTurns = (s: LiveState) => s.turns;
 const selectTitle = (s: LiveState) => s.session?.title ?? null;
 const keyOf = (item: Item) => String(item.id);
 
-export function LiveScreen({ model, voice }: { model: LiveModel; voice: VoiceModel }) {
+export function LiveScreen({ model, voice, attach }: { model: LiveModel; voice: VoiceModel; attach: AttachmentsModel }) {
   const items = useStore(model.store, selectItems);
   const onPress = useCallback(
     (id: number, action: string) =>
@@ -60,7 +62,7 @@ export function LiveScreen({ model, voice }: { model: LiveModel; voice: VoiceMod
         // Outside the list: an inverted list would draw its empty component upside down.
         <Empty icon="message-processing-outline" title="Nothing yet" detail="EDITH's live session shows up here as it happens, from the app, Telegram or the terminal." />
       )}
-      <Composer model={model} voice={voice} />
+      <Composer model={model} voice={voice} attach={attach} />
     </View>
   );
 }
@@ -99,26 +101,37 @@ const selectVoicePhase = (s: VoiceState) => s.phase;
 const selectVoiceError = (s: VoiceState) => s.error;
 const selectVoiceAvailable = (s: VoiceState) => s.available;
 
-const Composer = memo(function Composer({ model, voice }: { model: LiveModel; voice: VoiceModel }) {
+const selectDrafts = (s: DraftsState) => s.drafts;
+
+const Composer = memo(function Composer({ model, voice, attach }: { model: LiveModel; voice: VoiceModel; attach: AttachmentsModel }) {
   const busy = useStore(model.store, selectBusy);
   const voicePhase = useStore(voice.store, selectVoicePhase);
   const voiceError = useStore(voice.store, selectVoiceError);
   const canTalk = useStore(voice.store, selectVoiceAvailable);
+  const drafts = useStore(attach.store, selectDrafts);
   const [text, setText] = useState('');
   const [fromVoice, setFromVoice] = useState(false); // the box holds words Arpit said: send them as voice
   const [stopping, setStopping] = useState(false);
+  const [menu, setMenu] = useState(false);
+
+  const uploading = drafts.some((d) => d.status === 'uploading');
+  const attachmentsReady = drafts.length > 0 && drafts.every((d) => d.status === 'ready');
+  // Text, ready attachments or both; never while an upload runs or one failed (retry or remove it first).
+  const canSend = (!!text.trim() || attachmentsReady) && (drafts.length === 0 || attachmentsReady);
 
   const edit = (t: string) => {
     setText(t);
     if (!t.trim()) setFromVoice(false);
   };
   const send = () => {
+    if (!canSend) return;
     const t = text.trim();
-    if (!t) return;
     // The message shows at once with its ticks; a failure stays on its bubble with Retry.
     setText('');
     setFromVoice(false);
-    void model.send(t, { voice: fromVoice });
+    const attachments = attach.ready();
+    attach.clear();
+    void model.send(t, { voice: fromVoice, attachments });
   };
   const stop = () => {
     setStopping(true);
@@ -132,10 +145,16 @@ const Composer = memo(function Composer({ model, voice }: { model: LiveModel; vo
     });
 
   const talking = voicePhase !== 'idle' && voicePhase !== 'starting';
+  const hasContent = !!text.trim() || drafts.length > 0;
   return (
     <View>
       {voiceError && !talking ? <Text style={styles.voiceError}>{voiceError}</Text> : null}
+      <AttachmentBar attach={attach} />
+      {menu && !talking ? <AttachMenu attach={attach} onDone={() => setMenu(false)} /> : null}
       <View style={styles.composer}>
+        {!talking ? (
+          <Button icon={menu ? 'close' : 'paperclip'} variant="ghost" onPress={() => setMenu((m) => !m)} accessibilityLabel={menu ? 'Close the attach menu' : 'Attach a photo or audio file'} />
+        ) : null}
         {talking ? (
           <VoiceBar voice={voice} onStop={stopTalking} />
         ) : (
@@ -151,11 +170,11 @@ const Composer = memo(function Composer({ model, voice }: { model: LiveModel; vo
           />
         )}
         {busy && !talking ? <Button icon="stop" variant="danger" onPress={stop} busy={stopping} accessibilityLabel="Stop" /> : null}
-        {canTalk && !talking && !text.trim() ? (
+        {canTalk && !talking && !hasContent ? (
           <Button icon="microphone" variant="secondary" onPress={() => void voice.start()} busy={voicePhase === 'starting'} accessibilityLabel="Talk to EDITH" />
         ) : null}
-        {!talking && (text.trim() || !canTalk) ? (
-          <Button icon="send" variant="primary" onPress={send} disabled={!text.trim()} accessibilityLabel="Send" />
+        {!talking && (hasContent || !canTalk) ? (
+          <Button icon="send" variant="primary" onPress={send} busy={uploading} disabled={!canSend} accessibilityLabel={uploading ? 'Send (waiting for the upload)' : 'Send'} />
         ) : null}
       </View>
     </View>
