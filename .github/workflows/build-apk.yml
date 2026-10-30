@@ -210,6 +210,11 @@ jobs:
           echo "$certs" | grep -i "certificate SHA-256 digest" || true
           digest=$(printf '%s\n' "$certs" | scripts/cert-digest.sh) || { echo "::error::Couldn't read one signing certificate from apksigner"; exit 1; }
           echo "Signing certificate SHA-256: $digest"
+          # The merged manifest's permissions, exactly as android-permissions.txt lists them (no
+          # storage or media permission, ever; tested in scripts/__tests__/check-permissions.test.ts).
+          aapt2="$(dirname "$apksigner")/aapt2"
+          "$aapt2" dump permissions "$apk" | scripts/check-permissions.sh android-permissions.txt \
+            || { echo "::error::The APK's permissions differ from app/android-permissions.txt (see above)"; exit 1; }
           if [ "$SIGNING" = release ] && [ "$digest" != "$RELEASE_CERT_SHA256" ]; then
             echo "::error::Release build is signed with $digest, expected $RELEASE_CERT_SHA256"; exit 1
           fi

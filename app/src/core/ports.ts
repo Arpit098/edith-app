@@ -38,6 +38,40 @@ export interface Transport {
   authorized(path: string): { url: string; headers: Record<string, string> } | null;
   /** POST a file as multipart/form-data (part `field`), answered with JSON. Sent once, never retried. */
   upload<T>(path: string, file: { uri: string; mime: string; name: string }, opts?: RequestOptions & { field?: string }): Promise<T>;
+  /**
+   * POST a file as the raw request body (with Content-Length; contracts/attachments.md), streamed from
+   * disk, answered with JSON. Sent once, never retried. Aborting `signal` cancels the upload.
+   */
+  uploadRaw<T>(
+    path: string,
+    file: { uri: string; mime: string; name: string },
+    opts?: RequestOptions & { onProgress?: (sent: number, total: number) => void; signal?: AbortSignal },
+  ): Promise<T>;
+}
+
+/** A file Arpit picked to attach. */
+export interface PickedFile {
+  kind: 'image' | 'audio';
+  uri: string;
+  name: string;
+  mime: string;
+  size: number; // bytes on disk (stat), 0 if it couldn't be read
+}
+
+/**
+ * The camera, the gallery and the file picker. Picked files are copies in the app's own cache
+ * folder (never the originals): the app deletes them when they're removed, and prunes the folder.
+ */
+export interface MediaPicker {
+  /** Null when Arpit cancels. Images come back as JPEG with the long edge at most 2048 px. */
+  pickImage(source: 'camera' | 'library'): Promise<PickedFile | null>;
+  pickAudio(): Promise<PickedFile | null>;
+  /** The file's size in bytes, or null when it's gone or unreadable. */
+  stat(uri: string): number | null;
+  /** Delete a picked file (only the app's own copies; nothing if it's already gone). */
+  discard(uri: string): void;
+  /** Delete old picked files, bounded by age and total size. Run once at startup. */
+  prune(): void;
 }
 
 export type InstallStatus = 'pending' | 'success' | 'cancelled' | 'incompatible' | 'failed';
@@ -139,9 +173,10 @@ export interface Ports {
   data?: KeyValueStore; // app data that isn't secret (the message outbox); absent in tests and web
   installer?: AppInstaller; // absent where the native module isn't (tests, web)
   ota?: OtaUpdates;
+  stt?: SpeechToText; // push-to-talk (and Phase 3 voice)
+  recorder?: Recorder;
+  media?: MediaPicker; // attachments
   // Built in later phases (PLAN.md §6); absent until then.
-  stt?: SpeechToText; // Phase 3
   tts?: TextToSpeech; // Phase 3
-  recorder?: Recorder; // Phase 3
   wakeWord?: WakeWord; // Phase 4
 }
