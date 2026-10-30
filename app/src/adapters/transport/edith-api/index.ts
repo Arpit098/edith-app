@@ -44,7 +44,7 @@ export function createEdithApiTransport(opts: EdithApiOptions = {}): Transport {
       server = config;
       stream.configure(config);
     },
-    request<T>(method: 'GET' | 'POST' | 'PATCH', path: string, body?: unknown, ropts: RequestOptions = {}) {
+    request<T>(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: string, body?: unknown, ropts: RequestOptions = {}) {
       return httpRequest<T>(server, method, path, body, ropts, http);
     },
     stream: (onEvent, onStatus) => stream.listen({ onEvent, onStatus }),
@@ -53,7 +53,7 @@ export function createEdithApiTransport(opts: EdithApiOptions = {}): Transport {
     authorized: (path) => (server ? { url: server.baseUrl + path, headers: { Authorization: `Bearer ${server.token}` } } : null),
     upload: <T,>(path: string, file: { uri: string; mime: string; name: string }, uopts: RequestOptions & { field?: string } = {}) =>
       httpUpload<T>(server, path, file, uopts.field ?? 'file', uopts.timeoutMs ?? http.timeoutMs, http.fetch),
-    uploadRaw: <T,>(path: string, file: { uri: string; mime: string; name: string }, ropts: RequestOptions & { onProgress?: (sent: number, total: number) => void; signal?: AbortSignal } = {}) =>
-      uploadRaw<T>(server, path, file, { timeoutMs: ropts.timeoutMs ?? UPLOAD_TIMEOUT_MS, onProgress: ropts.onProgress, signal: ropts.signal }, opts.createUploadTask ?? (createUploadTask as unknown as CreateUploadTask)),
+    uploadRaw: <T,>(path: string, file: { uri: string; mime: string; name: string }, ropts: RequestOptions & { onProgress?: (sent: number, total: number) => void; signal?: AbortSignal; headers?: Record<string, string> } = {}) =>
+      uploadRaw<T>(server, path, file, { timeoutMs: ropts.timeoutMs ?? UPLOAD_TIMEOUT_MS, onProgress: ropts.onProgress, signal: ropts.signal, headers: ropts.headers }, opts.createUploadTask ?? (createUploadTask as unknown as CreateUploadTask)),
   };
 }
