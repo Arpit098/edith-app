@@ -7,6 +7,10 @@ class FakeNotifier implements Notifier {
   posted: LocalNotification[] = [];
   cancelled: string[] = [];
   asked = 0;
+  showing: string[] = []; // what Android shows from before a restart
+  async active() {
+    return this.showing;
+  }
   post(n: LocalNotification) {
     this.posted.push(n);
   }
@@ -33,10 +37,11 @@ class FakeVisibility implements AppVisibility {
   }
 }
 
-function setup() {
+function setup(showing: string[] = []) {
   const ctx = fakeContext();
   ctx.transport.configure({ baseUrl: 'http://edith:8787', token: 'tok' });
   const notifier = new FakeNotifier();
+  notifier.showing = showing;
   const visibility = new FakeVisibility();
   const m = createNotifications({ bus: ctx.bus, api: ctx.api, notifier, transport: ctx.transport, visibility });
   return { ctx, notifier, visibility, m };
@@ -165,6 +170,32 @@ describe('notifications', () => {
   it('stops listening on dispose', () => {
     const { ctx, notifier, m } = setup();
     m.dispose();
+    ctx.bus.publish(ev('turn.done', { ref: 'r1', text: 'x' }, app));
+    expect(notifier.posted).toEqual([]);
+  });
+
+  it('a resync never brings back an approval answered while it was in flight, nor drops one asked meanwhile', async () => {
+    const { ctx, notifier } = setup();
+    let answer!: (v: unknown) => void;
+    ctx.transport.on('GET /v1/permissions', () => new Promise((r) => (answer = r)));
+    ctx.bus.publish(localEvent('app.connected', { first: false }));
+    await flush();
+    ctx.bus.publish(ev('permission.request', { id: 'a', tool: 'Bash' }));
+    ctx.bus.publish(ev('permission.resolved', { id: 'a', decision: 'allow' }));
+    ctx.bus.publish(ev('permission.request', { id: 'b', tool: 'Write' }));
+    answer({ pending: [{ id: 'a', tool: 'Bash', detail: '', ref: null, lane: null }] }); // taken before both
+    await flush();
+    expect(notifier.posted.map((n) => n.tag)).toEqual(['perm:a', 'perm:b']);
+    expect(notifier.cancelled).toEqual(['perm:a']); // by its permission.resolved; b stays
+  });
+
+  it('after a restart, takes over the approvals Android still shows and cancels the answered ones', async () => {
+    const { ctx, notifier } = setup(['perm:old', 'perm:live', 'turn:r1']);
+    ctx.transport.on('GET /v1/permissions', { pending: [{ id: 'live', tool: 'Bash', detail: 'ls', ref: null, lane: null }] });
+    ctx.bus.publish(localEvent('app.connected', { first: true }));
+    await flush();
+    expect(notifier.cancelled).toEqual(['perm:old']);
+    expect(notifier.posted).toEqual([]); // perm:live is already showing: not posted twice
     ctx.bus.publish(ev('turn.done', { ref: 'r1', text: 'x' }, app));
     expect(notifier.posted).toEqual([]);
   });

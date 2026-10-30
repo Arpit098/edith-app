@@ -8,6 +8,11 @@ import { num, str } from '../../core/guards';
 import type { OngoingStatus, OngoingStatusView, Transport } from '../../core/ports';
 
 export const MIN_UPDATE_MS = 1000; // Android rate-limits notification updates; one a second is plenty
+export const REANCHOR_MS = 1000; // move the timer only when the server's elapsed differs by this much
+export const IDLE_MS = 10 * 60 * 1000; // no event for this long while holding: ask the server if it's still busy
+export const MAX_HOLD_MS = 3 * 60 * 60 * 1000; // never keep EDITH alive longer than this in one go
+const CHECK_TIMEOUT_MS = 8000;
+const BUFFER_MAX = 500; // events kept while a resync is in flight, to replay over its snapshot
 
 interface Run {
   startedAt: number; // unix ms, phone clock (server and phone clocks may differ)
@@ -51,8 +56,10 @@ export function reduce(s: LiveStatusState, e: EdithEvent, now: number = Date.now
       const ref = str(d.ref);
       if (!ref) return s;
       const run = s.runs[ref] ?? { startedAt: now, lane: d.lane === 'side' ? 'side' : 'main', steps: 0, step: null, tool: null };
-      // The server's elapsed is the truth: re-anchor the timer on it.
-      const startedAt = d.elapsed == null ? run.startedAt : now - num(d.elapsed) * 1000;
+      // The server's elapsed is the truth: re-anchor the timer on it, but only when it is off by a
+      // second or more (each update re-posts the notification).
+      const anchored = d.elapsed == null ? run.startedAt : now - num(d.elapsed) * 1000;
+      const startedAt = Math.abs(anchored - run.startedAt) >= REANCHOR_MS ? anchored : run.startedAt;
       return { ...s, runs: { ...s.runs, [ref]: { ...run, startedAt, steps: num(d.steps, run.steps), step: d.step ? str(d.step) : run.step } } };
     }
     case 'tool.call':
@@ -90,7 +97,8 @@ const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…`
 /**
  * What the notification says, most urgent first: an approval, then voice, then the oldest running
  * turn (running <tool>, or thinking). The pill (chip) carries the state; the card adds the detail and
- * the elapsed time. Taps open the live chat, or the approvals while one waits.
+ * the elapsed time. Taps open the live chat, or the approvals while one waits. The status itself
+ * never makes a sound: an approval alerts once, through its own notification (features/notifications).
  */
 export function viewOf(s: LiveStatusState): OngoingStatusView | null {
   const runs = Object.values(s.runs);
@@ -107,11 +115,10 @@ export function viewOf(s: LiveStatusState): OngoingStatusView | null {
       startedAt,
       progress: false,
       link: 'edith://approvals',
-      alert: true,
       keepAlive,
     };
   }
-  const plain = { startedAt, link: 'edith://live', alert: false, keepAlive };
+  const plain = { startedAt, link: 'edith://live', keepAlive };
   if (s.voice === 'listening') return { ...plain, title: 'EDITH is listening', text: 'Speak now', chip: 'Listening', progress: false };
   if (s.voice === 'speaking') return { ...plain, title: 'EDITH is speaking', text: 'Reading the answer aloud', chip: 'Speaking', progress: false };
   if (!runs.length) return null;
@@ -148,8 +155,15 @@ export function createLiveStatus(deps: { bus: EventBus; api: Api; status: Ongoin
   let release: (() => void) | null = null;
   let askedPermission = false;
   let sync = 0; // a newer resync wins over an older one still in flight
+  let buffered: EdithEvent[] | null = null; // events that arrived while a resync was in flight
+  // Keep-alive guards: EDITH must never be held forever (server down, a lost turn.done).
+  let holdingSince = 0; // unix ms the current keep-alive began, 0 when not holding
+  let lastEventAt = 0;
+  let guard: ReturnType<typeof setTimeout> | null = null;
+  let checking = false;
+  let check = 0; // an idle check still in flight is ignored once the hold ends or a newer one starts
 
-  function render() {
+  function render(force = false) {
     const view = viewOf(state);
     if (!view) {
       if (pending) clearTimeout(pending);
@@ -158,6 +172,7 @@ export function createLiveStatus(deps: { bus: EventBus; api: Api; status: Ongoin
       shown = null;
       release?.(); // idle: the stream may sleep in the background again
       release = null;
+      armGuard();
       return;
     }
     release ??= transport.holdOpen(); // keep events coming while the status is up
@@ -165,25 +180,95 @@ export function createLiveStatus(deps: { bus: EventBus; api: Api; status: Ongoin
       askedPermission = true;
       void status.ensurePermission().catch(() => false);
     }
-    if (sameView(view, shown) || pending) return;
+    armGuard();
+    if ((!force && sameView(view, shown)) || pending) return;
     // Starting or stopping the foreground service is never held back: only plain updates are throttled.
     const wait = shown && shown.keepAlive === view.keepAlive ? lastShownAt + MIN_UPDATE_MS - Date.now() : 0;
     if (wait > 0) {
       pending = setTimeout(() => {
         pending = null;
-        flush();
+        flush(force);
       }, wait);
       return;
     }
-    flush();
+    flush(force);
   }
 
-  function flush() {
+  function flush(force = false) {
     const view = viewOf(state); // the newest, not the one that scheduled this
-    if (!view || sameView(view, shown)) return;
-    status.show(view);
+    if (!view || (!force && sameView(view, shown))) return;
+    status.show(view); // a re-post also renews the native side's own timeout
     shown = view;
     lastShownAt = Date.now();
+  }
+
+  /**
+   * One timer while holding, at the first of: the idle deadline, the max hold, and the refresh (a
+   * held status is re-posted at least every IDLE_MS, so the native side's 20 min deadline, which
+   * stops the foreground service, only fires when JS is gone).
+   */
+  function armGuard() {
+    const holding = viewOf(state)?.keepAlive ?? false;
+    if (!holding) {
+      holdingSince = 0;
+      if (guard) clearTimeout(guard);
+      guard = null;
+      check++; // an idle check in flight no longer matters
+      return;
+    }
+    const now = Date.now();
+    if (!holdingSince) holdingSince = now;
+    if (guard || checking) return;
+    const due = Math.min(lastEventAt + IDLE_MS, holdingSince + MAX_HOLD_MS, lastShownAt + IDLE_MS);
+    guard = setTimeout(onGuard, Math.max(0, due - now));
+  }
+
+  function onGuard() {
+    guard = null;
+    const now = Date.now();
+    if (holdingSince && now >= holdingSince + MAX_HOLD_MS) {
+      drop(); // held too long, whatever the server says
+      return;
+    }
+    if (now < lastEventAt + IDLE_MS) {
+      if (now >= lastShownAt + IDLE_MS) flush(true); // busy but unchanged: renew the native deadlines
+      armGuard(); // events came meanwhile: not idle
+      return;
+    }
+    // Quiet for IDLE_MS: a long tool may simply be running. Ask the server rather than guess.
+    checking = true;
+    const mine = ++check;
+    Promise.all([api.status({ timeoutMs: CHECK_TIMEOUT_MS }), api.permissions()]).then(
+      ([st, waiting]) => {
+        checking = false;
+        if (mine !== check) return armGuard();
+        lastEventAt = Date.now();
+        apply(snapshot(st.runs, waiting));
+        render(true); // re-post: renews the notification's native timeout
+      },
+      () => {
+        checking = false;
+        if (mine === check) drop(); // the server is unreachable: nothing is known to be running
+      },
+    );
+  }
+
+  /** Stop claiming work: no runs, no approvals (a later event or resync brings them back). */
+  function drop() {
+    apply({ ...state, runs: {}, approvals: {} });
+    armGuard();
+  }
+
+  function snapshot(runsNow: Awaited<ReturnType<Api['status']>>['runs'], waiting: Awaited<ReturnType<Api['permissions']>>): LiveStatusState {
+    const now = Date.now();
+    const runs: Record<string, Run> = {};
+    for (const r of runsNow) {
+      const had = state.runs[r.ref];
+      runs[r.ref] = { startedAt: now - r.seconds * 1000, lane: r.lane, steps: had?.steps ?? 0, step: r.step, tool: had?.tool ?? null };
+    }
+    const approvals: LiveStatusState['approvals'] = {};
+    for (const p of waiting) approvals[p.id] = { tool: p.tool, detail: p.detail };
+    return { ...state, runs, approvals };
   }
 
   function apply(next: LiveStatusState) {
@@ -192,27 +277,33 @@ export function createLiveStatus(deps: { bus: EventBus; api: Api; status: Ongoin
     render();
   }
 
+  function onEvent(e: EdithEvent) {
+    if (e.type === 'app.connected') return;
+    if (!e.type.startsWith('app.')) lastEventAt = Date.now();
+    if (buffered && buffered.length < BUFFER_MAX) buffered.push(e);
+    apply(reduce(state, e));
+  }
+
   const offs = [
-    bus.subscribe('*', (e) => apply(reduce(state, e)), 'live-status'),
+    bus.subscribe('*', onEvent, 'live-status'),
     bus.on(
       'app.connected',
       () => {
-        // Events sent while disconnected are gone: take the server's view of runs and approvals.
+        // Events sent while disconnected are gone: take the server's view of runs and approvals,
+        // then replay what arrived while it was in flight (a turn.done then must not be undone).
         const mine = ++sync;
+        buffered = [];
+        lastEventAt = Date.now();
         Promise.all([api.status(), api.permissions()]).then(
           ([st, waiting]) => {
             if (mine !== sync) return;
-            const now = Date.now();
-            const runs: Record<string, Run> = {};
-            for (const r of st.runs) {
-              const had = state.runs[r.ref];
-              runs[r.ref] = { startedAt: now - r.seconds * 1000, lane: r.lane, steps: had?.steps ?? 0, step: r.step, tool: had?.tool ?? null };
-            }
-            const approvals: LiveStatusState['approvals'] = {};
-            for (const p of waiting) approvals[p.id] = { tool: p.tool, detail: p.detail };
-            apply({ ...state, runs, approvals });
+            const replay = buffered ?? [];
+            buffered = null;
+            apply(replay.reduce((s, e) => reduce(s, e), snapshot(st.runs, waiting)));
           },
-          () => {}, // keep what we have; the next connect tries again
+          () => {
+            if (mine === sync) buffered = null; // keep what we have; the next connect tries again
+          },
         );
       },
       'live-status',
@@ -224,6 +315,9 @@ export function createLiveStatus(deps: { bus: EventBus; api: Api; status: Ongoin
     dispose() {
       offs.forEach((off) => off());
       if (pending) clearTimeout(pending);
+      if (guard) clearTimeout(guard);
+      sync++;
+      check++;
       if (shown) status.clear();
       release?.();
     },

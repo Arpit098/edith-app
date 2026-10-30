@@ -11,16 +11,20 @@ interface NativeSystem {
   clearStatus(): void;
   notify(json: string): void;
   cancel(tag: string): void;
+  activeTags(): string[];
   notificationsEnabled(): boolean;
   canPromote(): boolean;
   openPromotionSettings(): void;
 }
 
-/** Null where the native module isn't built in (jest, web). */
+const MIN_SDK = 26; // notification channels and foreground-service starts (Android 8); the app's minSdk is 24
+
+/** Null where the native module isn't built in (jest, web), or on Android older than 8. */
 export function createAndroidSystem(): { status: OngoingStatus; notifier: Notifier } | null {
   const native = requireOptionalNativeModule<NativeSystem>('EdithSystem');
   if (!native) return null;
   const sdkInt = Number(native.sdkInt);
+  if (sdkInt < MIN_SDK) return null;
   // One question for both ports: two features asking at once must not stack two dialogs.
   let asking: Promise<boolean> | null = null;
   const ensurePermission = (): Promise<boolean> => {
@@ -44,6 +48,7 @@ export function createAndroidSystem(): { status: OngoingStatus; notifier: Notifi
     // JSON, not a record: the native side keeps it in the action buttons to redraw the notification.
     post: (n: LocalNotification) => native.notify(JSON.stringify(n)),
     cancel: (tag) => native.cancel(tag),
+    active: async () => native.activeTags(),
     ensurePermission,
   };
   return { status, notifier };

@@ -7,7 +7,6 @@
       "payload": {
         "startedAt": 1800000000000,
         "link": "edith://live",
-        "alert": false,
         "keepAlive": true,
         "title": "EDITH is thinking",
         "text": "Working out what to do",
@@ -21,7 +20,6 @@
       "payload": {
         "startedAt": 1799999961000,
         "link": "edith://live",
-        "alert": false,
         "keepAlive": true,
         "title": "Running Bash",
         "text": "$ npm test · step 3",
@@ -39,7 +37,6 @@
         "startedAt": 1799999964000,
         "progress": false,
         "link": "edith://approvals",
-        "alert": true,
         "keepAlive": true
       }
     },
@@ -49,7 +46,6 @@
       "payload": {
         "startedAt": null,
         "link": "edith://live",
-        "alert": false,
         "keepAlive": false,
         "title": "EDITH is speaking",
         "text": "Reading the answer aloud",

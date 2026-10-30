@@ -44,7 +44,7 @@ function states(): State[] {
       canPromote: () => true,
       openPromotionSettings: () => {},
     };
-    const notifier: Notifier = { post: (payload) => posted.push({ name, kind: 'notify', payload }), cancel: () => {}, ensurePermission: async () => true };
+    const notifier: Notifier = { post: (payload) => posted.push({ name, kind: 'notify', payload }), cancel: () => {}, active: async () => [], ensurePermission: async () => true };
     const ctx = fakeContext();
     ctx.transport.configure({ baseUrl: MOCK_API, token: 'ci-token' });
     const model = kind === 'status' ? createLiveStatus({ bus: ctx.bus, api: ctx.api, status, transport: ctx.transport }) : createNotifications({ bus: ctx.bus, api: ctx.api, notifier, transport: ctx.transport });

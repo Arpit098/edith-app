@@ -3,6 +3,7 @@ package com.arpit.edith.system
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.os.Build
@@ -19,7 +20,6 @@ data class LiveStatus(
   val startedAt: Long?, // unix ms: shown as a running timer (no per-second updates)
   val progress: Boolean, // indeterminate progress (a task is running)
   val link: String, // opened on tap
-  val alert: Boolean, // make a sound/peek once (an approval is waiting)
   val keepAlive: Boolean, // a turn runs or an approval waits: hold the foreground service
 )
 
@@ -31,7 +31,8 @@ data class LiveStatus(
  * allows it for EDITH. Older Android: the same notification, just not promoted.
  *
  * Updates come from stream events (JS throttles them); the elapsed time is a chronometer, so the
- * notification never needs a per-second refresh. While `keepAlive` is set the notification belongs
+ * notification never needs a per-second refresh. The status never makes a sound (an approval alerts
+ * through its own notification). While `keepAlive` is set the notification belongs
  * to [EdithSessionService], which keeps EDITH (and its stream) running in the background. All
  * changes run in order on the main thread, where the service lives too.
  */
@@ -70,7 +71,18 @@ class LiveStatusNotifier(private val context: Context) {
     } else {
       Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
     }.putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    context.startActivity(intent)
+    try {
+      context.startActivity(intent)
+    } catch (e: ActivityNotFoundException) {
+      // a build without the promotion page: EDITH's notification settings instead
+      try {
+        context.startActivity(
+          Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
+      } catch (ignored: ActivityNotFoundException) {
+        // no settings app to open
+      }
+    }
   }
 
   private fun post(notification: Notification) {
@@ -88,13 +100,14 @@ class LiveStatusNotifier(private val context: Context) {
       .setContentTitle(s.title)
       .setContentText(s.text)
       .setOngoing(true)
-      .setOnlyAlertOnce(!s.alert)
-      .setCategory(if (s.alert) Notification.CATEGORY_REMINDER else Notification.CATEGORY_PROGRESS)
+      .setOnlyAlertOnce(true)
+      .setCategory(Notification.CATEGORY_PROGRESS)
       .setContentIntent(Links.open(context, s.link))
       .setShowWhen(s.startedAt != null)
-    // A foreground service's notification lives as long as the service; any other one times out by
-    // itself if EDITH is killed mid-task, instead of claiming a task forever.
-    if (!s.keepAlive) builder.setTimeoutAfter(STALE_AFTER_MS)
+    // Never claims a task forever (EDITH killed mid-task, a lost turn.done): it times out by itself
+    // unless re-posted. JS re-posts a held status at least every 10 min (features/live-status), and
+    // EdithSessionService stops at the same deadline.
+    builder.setTimeoutAfter(if (s.keepAlive) KEEP_ALIVE_TIMEOUT_MS else STALE_AFTER_MS)
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) builder.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
     s.startedAt?.let { builder.setWhen(it).setUsesChronometer(true) }
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA) {
@@ -111,6 +124,7 @@ class LiveStatusNotifier(private val context: Context) {
     const val CHANNEL_ID = "edith_live"
     const val NOTIFICATION_ID = 7110
     private const val STALE_AFTER_MS = 30L * 60 * 1000 // no update for 30 min: EDITH is gone, drop it
+    const val KEEP_ALIVE_TIMEOUT_MS = 20L * 60 * 1000 // a held status not re-posted for 20 min: let go
     // Notification.EXTRA_REQUEST_PROMOTED_ONGOING (Android 16), by value: the platform Builder has no
     // setter for it (only NotificationCompat does), the extra is how a Live Update is requested.
     private const val EXTRA_REQUEST_PROMOTED_ONGOING = "android.requestPromotedOngoing"
@@ -120,7 +134,7 @@ class LiveStatusNotifier(private val context: Context) {
     fun ensureChannel(context: Context) {
       val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
       if (manager.getNotificationChannel(CHANNEL_ID) != null) return
-      // Default importance (not MIN/LOW) so the status can be promoted; silent unless an update asks to alert.
+      // Default importance (not MIN/LOW) so the status can be promoted; silent: it only reports.
       val channel = NotificationChannel(CHANNEL_ID, "EDITH live status", NotificationManager.IMPORTANCE_DEFAULT).apply {
         description = "What EDITH is doing right now: thinking, running a tool, waiting for approval, speaking"
         setSound(null, null)

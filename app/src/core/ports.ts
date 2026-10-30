@@ -53,7 +53,6 @@ export interface OngoingStatusView {
   startedAt: number | null; // unix ms (phone clock): a running timer, without per-second updates
   progress: boolean; // indeterminate progress
   link: string; // opened on tap, e.g. edith://approvals
-  alert: boolean; // peek once (an approval is waiting)
   keepAlive: boolean; // a turn runs or an approval waits: keep EDITH running (a foreground service)
 }
 
@@ -90,6 +89,8 @@ export interface LocalNotification {
 export interface Notifier {
   post(n: LocalNotification): void;
   cancel(tag: string): void;
+  /** Tags of EDITH's notifications Android shows now (some may be from before a restart). */
+  active(): Promise<string[]>;
   /** Ask once for permission to post notifications (Android 13+). */
   ensurePermission(): Promise<boolean>;
 }

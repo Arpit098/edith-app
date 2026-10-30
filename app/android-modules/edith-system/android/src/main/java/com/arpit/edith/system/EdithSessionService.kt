@@ -7,7 +7,9 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 
 /**
  * Keeps EDITH running while a turn is in progress or an approval waits, so the stream (and with it
@@ -15,7 +17,9 @@ import android.os.IBinder
  * of its own: it only holds the live status notification as a foreground service ("specialUse", see
  * the manifest) and stops the moment the turn is over.
  *
- * Driven by [LiveStatusNotifier] on the main thread only (so no locking). Android 12+ refuses to
+ * Driven by [LiveStatusNotifier] on the main thread only (so no locking). It never runs unbounded:
+ * if nothing re-posts the status for [LiveStatusNotifier.KEEP_ALIVE_TIMEOUT_MS] (JS hung or gone,
+ * a lost turn.done), a watchdog stops it, at the same time the notification times out. Android 12+ refuses to
  * start it from the background; then the status is a plain notification and EDITH may be paused
  * like any background app (accepted: a turn almost always starts from the open app).
  */
@@ -62,10 +66,19 @@ class EdithSessionService : Service() {
     private var wanted: Notification? = null // what the service should show; null: it should stop
     private var instance: EdithSessionService? = null
     private var starting = false
+    private val main = Handler(Looper.getMainLooper())
+    private var appContext: Context? = null
+    private val watchdog = Runnable {
+      release(remove = true)
+      appContext?.let { (it.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).cancel(LiveStatusNotifier.NOTIFICATION_ID) }
+    }
 
     /** Show `notification` as the live status and keep EDITH alive (main thread). */
     fun hold(context: Context, notification: Notification) {
       wanted = notification
+      appContext = context.applicationContext
+      main.removeCallbacks(watchdog) // each re-post renews the deadline
+      main.postDelayed(watchdog, LiveStatusNotifier.KEEP_ALIVE_TIMEOUT_MS)
       val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
       try {
         manager.notify(LiveStatusNotifier.NOTIFICATION_ID, notification) // updates the service's, or shows it plain
@@ -85,6 +98,7 @@ class EdithSessionService : Service() {
 
     /** Stop keeping EDITH alive (main thread). `remove`: also take the notification down. */
     fun release(remove: Boolean) {
+      main.removeCallbacks(watchdog)
       wanted = null
       starting = false
       val service = instance ?: return

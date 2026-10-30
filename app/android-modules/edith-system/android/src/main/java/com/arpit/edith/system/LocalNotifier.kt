@@ -91,6 +91,9 @@ class LocalNotifier(private val context: Context) {
 
   fun cancel(tag: String) = manager.cancel(tag, NOTIFICATION_ID)
 
+  /** Tags of the notifications this posted that Android still shows (e.g. from before a restart). */
+  fun activeTags(): List<String> = manager.activeNotifications.filter { it.id == NOTIFICATION_ID && it.tag != null }.map { it.tag }
+
   private fun actionIntent(n: LocalNotification, index: Int): PendingIntent {
     val intent = Intent(context, NotificationActionReceiver::class.java)
       .setAction("${context.packageName}.NOTIFICATION_ACTION")

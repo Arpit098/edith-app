@@ -16,10 +16,9 @@ class StatusRecord : Record {
   @Field val startedAt: Double? = null
   @Field val progress: Boolean = false
   @Field val link: String = "edith://live"
-  @Field val alert: Boolean = false
   @Field val keepAlive: Boolean = false
 
-  fun toStatus() = LiveStatus(title, text, chip, startedAt?.toLong(), progress, link, alert, keepAlive)
+  fun toStatus() = LiveStatus(title, text, chip, startedAt?.toLong(), progress, link, keepAlive)
 }
 
 /**
@@ -39,14 +38,19 @@ class EdithSystemModule : Module() {
     Constant("sdkInt") { Build.VERSION.SDK_INT }
 
     // JS is gone: nothing may claim a running task, and nothing should keep EDITH alive.
-    OnDestroy { appContext.reactContext?.let { LiveStatusNotifier(it.applicationContext).clear() } }
+    OnDestroy { if (SUPPORTED) appContext.reactContext?.let { LiveStatusNotifier(it.applicationContext).clear() } }
 
-    Function("showStatus") { s: StatusRecord -> status.show(s.toStatus()) }
-    Function("clearStatus") { status.clear() }
-    Function("notify") { json: String -> local.show(LocalNotification.parse(json)) }
-    Function("cancel") { tag: String -> local.cancel(tag) }
+    // Channels and foreground-service starts need Android 8 (API 26); the app's minSdk is 24. JS
+    // offers no ports below that (adapters/system/android), and these stay inert there too.
+    Function("showStatus") { s: StatusRecord -> if (SUPPORTED) status.show(s.toStatus()) }
+    Function("clearStatus") { if (SUPPORTED) status.clear() }
+    Function("notify") { json: String -> if (SUPPORTED) local.show(LocalNotification.parse(json)) }
+    Function("cancel") { tag: String -> if (SUPPORTED) local.cancel(tag) }
+    Function("activeTags") { if (SUPPORTED) local.activeTags() else emptyList() }
     Function("notificationsEnabled") { status.enabled() }
     Function("canPromote") { status.canPromote() }
-    Function("openPromotionSettings") { status.openPromotionSettings() }
+    Function("openPromotionSettings") { if (SUPPORTED) status.openPromotionSettings() }
   }
 }
+
+private val SUPPORTED = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O

@@ -33,7 +33,6 @@ class DebugNotificationsReceiver : BroadcastReceiver() {
     startedAt = if (o.isNull("startedAt")) null else o.getLong("startedAt"),
     progress = o.getBoolean("progress"),
     link = o.getString("link"),
-    alert = o.getBoolean("alert"),
     keepAlive = o.getBoolean("keepAlive"),
   )
 }

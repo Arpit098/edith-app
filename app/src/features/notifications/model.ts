@@ -27,6 +27,14 @@ export function preview(text: string, max = PREVIEW): string {
   return plain.length > max ? `${plain.slice(0, max - 1)}…` : plain;
 }
 
+/** The channel a tag of ours belongs to (tags made by this file: perm:, rem:, turn:). */
+function channelOf(tag: string): NotificationChannel | null {
+  if (tag.startsWith('perm:')) return 'approvals';
+  if (tag.startsWith('rem:')) return 'reminders';
+  if (tag.startsWith('turn:')) return 'replies';
+  return null;
+}
+
 const FAILED: Record<string, string> = {
   not_ready: "Claude isn't ready yet. Try again in a moment.",
   crashed: 'Claude stopped unexpectedly.',
@@ -57,6 +65,19 @@ export function createNotifications(deps: { bus: EventBus; api: Api; notifier: N
   let screen = '';
   let asked = false;
   let sync = 0; // a newer resync wins over an older one still in flight
+  const resolved = new Recent(SEEN_MAX); // approvals answered: a snapshot taken before that can't bring them back
+  // After a restart Android may still show approvals this process posted before: take them over.
+  const restored = notifier.active().then(
+    (tags) => {
+      for (const tag of tags) {
+        const channel = channelOf(tag);
+        if (!channel || posted.has(tag)) continue;
+        posted.set(tag, channel);
+        seen.add(tag); // keys and tags are the same string
+      }
+    },
+    () => {}, // nothing to take over
+  );
 
   /** Whether Arpit already sees this channel's news: the app is open on the chat, or (approvals) open at all. */
   function onScreen(channel: NotificationChannel): boolean {
@@ -146,7 +167,14 @@ export function createNotifications(deps: { bus: EventBus; api: Api; notifier: N
       'notifications',
     ),
     bus.on('permission.request', (e) => approval({ id: str(e.data.id), tool: str(e.data.tool), detail: str(e.data.detail), lane: e.data.lane }), 'notifications'),
-    bus.on('permission.resolved', (e) => cancel(`perm:${str(e.data.id)}`), 'notifications'),
+    bus.on(
+      'permission.resolved',
+      (e) => {
+        resolved.add(`perm:${str(e.data.id)}`);
+        cancel(`perm:${str(e.data.id)}`);
+      },
+      'notifications',
+    ),
     bus.on(
       'app.connected',
       () => {
@@ -154,14 +182,16 @@ export function createNotifications(deps: { bus: EventBus; api: Api; notifier: N
           asked = true;
           void notifier.ensurePermission().catch(() => false);
         }
-        // Approvals asked or answered while we were away.
+        // Approvals asked or answered while we were away. Only approvals shown before the request
+        // can be stale; one that arrives while it is in flight is newer than the snapshot.
         const mine = ++sync;
-        api.permissions().then(
-          (pending) => {
+        const before = restored.then(() => new Set([...posted].filter(([, c]) => c === 'approvals').map(([tag]) => tag)));
+        Promise.all([before, api.permissions()]).then(
+          ([shownBefore, pending]) => {
             if (mine !== sync) return;
             const ids = new Set(pending.map((p) => `perm:${p.id}`));
-            for (const [tag, channel] of [...posted]) if (channel === 'approvals' && !ids.has(tag)) cancel(tag);
-            pending.forEach(approval);
+            for (const tag of shownBefore) if (!ids.has(tag)) cancel(tag);
+            for (const p of pending) if (!resolved.has(`perm:${p.id}`)) approval(p);
           },
           () => {}, // keep what we have; the next connect tries again
         );
