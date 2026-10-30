@@ -3,12 +3,12 @@
 
     python3 train.py [--session latest|<id>] [--work ../work] [--device auto|mps|cuda|cpu] [--steps 25000]
 
-Run fetch.py (the recordings) and data.py (the training data) first. Steps, as in openWakeWord's own
+Run fetch.py (the recordings), data.py (the training data) and check.py (the preflight) first. Steps, as in openWakeWord's own
 train.py (its __main__ block, which hardcodes CUDA, is re-created here so the device can be MPS):
 1. Synthetic clips with Piper: "hey edith" in many voices (positives) and similar-sounding phrases
    (adversarial negatives). Skipped when they already exist.
-2. Arpit's recordings: 4 of every 5 positive clips go into the training positives (repeated
-   --real-repeat times, augmented like the synthetic ones); 2 of every 3 noise clips become background
+2. Arpit's recordings: 4 of every 5 positive clips, trimmed to the speech, go into the training
+   positives (repeated --real-repeat times, augmented like the synthetic ones); 2 of every 3 noise clips become background
    audio for augmentation and negative training windows. The rest are held out for the metrics only.
 3. Augmentation (noise, room reverb) and openWakeWord features for all clips.
 4. Training (auto_train) against the precomputed negative features, on the chosen device.
@@ -147,16 +147,19 @@ def main(argv=None):
                              file_names=[f"{os.urandom(8).hex()}.wav" for _ in range(n - have)])
 
     # Clip length, from the synthetic test positives (as openWakeWord computes it)
-    lengths = [len(scipy.io.wavfile.read(f)[1]) for f in random.sample(glob.glob(os.path.join(dirs["positive_test"], "*.wav")), 50)]
+    synthetic = glob.glob(os.path.join(dirs["positive_test"], "*.wav"))
+    lengths = [len(scipy.io.wavfile.read(f)[1]) for f in random.sample(synthetic, min(50, len(synthetic)))]
     total_length = int(round(np.median(lengths) / 1000) * 1000) + 12000
     total_length = 32000 if total_length < 32000 or abs(total_length - 32000) <= 4000 else total_length
 
-    # 2. Arpit's recordings
+    # 2. Arpit's recordings: trimmed to the speech, so the fixed clip length never cuts "Hey Edith"
     for c in pos_train:
+        with wave.open(os.path.join(clips_dir, f"{c['sha256']}.wav")) as w:
+            speech = lib.trim_speech(w.readframes(w.getnframes()), total_length - 4800)  # 0.3 s to spare
         for i in range(args.real_repeat):
             dest = os.path.join(dirs["positive_train"], f"real_{c['sha256'][:12]}_{i}.wav")
             if not os.path.exists(dest):
-                shutil.copyfile(os.path.join(clips_dir, f"{c['sha256']}.wav"), dest)
+                write_wav(dest, speech)
     background = os.path.join(out, "background")
     os.makedirs(background, exist_ok=True)
     for c in noise_train:

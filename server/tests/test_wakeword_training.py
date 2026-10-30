@@ -1,7 +1,9 @@
 """The stdlib parts of wakeword/training (they run on the Mac; tested here without any ML package):
 fetch.py against the real wakeword routes, data.py's .npy slice, and lib's helpers."""
+import contextlib
 import hashlib
 import http.server
+import io
 import importlib.util
 import json
 import os
@@ -28,7 +30,36 @@ def load(name):
     return module
 
 
-fetch, data = load("fetch"), load("data")
+fetch, data, check = load("fetch"), load("data"), load("check")
+
+
+def pcm(*parts):
+    """16 kHz 16-bit PCM from (seconds, amplitude) parts: 0 is silence, else a 400 Hz tone."""
+    import math
+    out = bytearray()
+    for seconds, amp in parts:
+        period = b"".join(int(amp * math.sin(2 * math.pi * i / 40)).to_bytes(2, "little", signed=True)
+                          for i in range(40))  # 400 Hz at 16 kHz repeats every 40 samples
+        n = int(seconds * 16000)
+        out += (period * (n // 40 + 1))[:n * 2]
+    return bytes(out)
+
+
+class TrimTest(unittest.TestCase):
+    def test_keeps_the_speech_with_a_little_padding(self):
+        out = lib.trim_speech(pcm((1.0, 0), (0.6, 8000), (2.0, 0)), 27200)
+        self.assertAlmostEqual(len(out) / 2 / 16000, 0.8, delta=0.05)  # 0.6 s of speech + 0.1 s either side
+        self.assertGreater(max(abs(int.from_bytes(out[i:i + 2], "little", signed=True)) for i in range(0, len(out), 2)), 7000)
+
+    def test_long_speech_keeps_the_loudest_stretch(self):
+        out = lib.trim_speech(pcm((1.5, 2000), (1.0, 12000), (1.5, 2000)), 16000)
+        self.assertEqual(len(out), 32000)  # exactly max_samples
+        self.assertGreater(sum(abs(int.from_bytes(out[i:i + 2], "little", signed=True)) > 10000
+                               for i in range(0, len(out), 2)), 5000)  # mostly the loud second
+
+    def test_silence_and_short_clips_pass(self):
+        self.assertEqual(lib.trim_speech(pcm((0.5, 0)), 27200), pcm((0.5, 0)))
+        self.assertEqual(lib.trim_speech(b"", 27200), b"")
 
 
 class Files(http.server.BaseHTTPRequestHandler):
@@ -109,6 +140,23 @@ class FetchTest(unittest.TestCase):
         with mock.patch.object(fetch, "download", tampered), self.assertRaises(lib.FetchError):
             fetch.fetch(self.base, TOKEN, self.sid, self.work, log=lambda m: None)
         self.assertEqual(os.listdir(pathlib.Path(self.work, "recordings", self.sid, "clips")), [])
+
+    def test_check_reports_what_is_missing_without_the_token(self):
+        fetch.fetch(self.base, TOKEN, "latest", self.work, log=lambda m: None)
+        token = pathlib.Path(self.work, "token")
+        token.write_text(TOKEN)
+        token.chmod(0o600)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = check.main(["--work", self.work, "--base-url", self.base, "--token-file", str(token)])
+        text = out.getvalue()
+        self.assertEqual(code, 1)  # no torch, no training data here
+        self.assertIn("MISSING pinned packages", text)
+        self.assertIn("MISSING negative features (data.py)", text)
+        self.assertIn('MISSING recordings (fetch.py): session', text)  # 2 "Hey Edith" clips here; it needs 10
+        self.assertIn('2 "Hey Edith", 1 noise', text)
+        self.assertIn("ok      edith reachable with the token: model state: waiting_for_training", text)
+        self.assertNotIn(TOKEN, text)
 
     def test_token_file_rules_and_errors(self):
         path = pathlib.Path(self.work, "token")

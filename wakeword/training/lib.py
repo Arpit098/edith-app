@@ -1,12 +1,14 @@
 """Small stdlib-only helpers shared by fetch.py, data.py and train.py (and tested on edith without
 any ML packages): HTTP with timeouts and retries, verified downloads, data splits, the .npy header,
 activation counting and the model's JSON."""
+import array
 import ast
 import hashlib
 import json
 import os
 import re
 import struct
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -114,6 +116,39 @@ def split(clips, every):
     ordered = sorted(clips, key=lambda c: c["sha256"])
     held = [c for i, c in enumerate(ordered) if i % every == every - 1]
     return [c for c in ordered if c not in held], held
+
+
+def trim_speech(pcm: bytes, max_samples, rate=16000, frame_ms=20, floor_db=30, pad_ms=100):
+    """16-bit mono PCM -> the part with speech, so a recording fits openWakeWord's fixed clip length
+    (which would otherwise cut a longer clip at a random end, possibly through "Hey Edith").
+    Speech = 20 ms frames within floor_db of the loudest frame, plus pad_ms either side; if that is
+    still longer than max_samples, the loudest max_samples-long stretch of it."""
+    samples = array.array("h", pcm)
+    if sys.byteorder == "big":
+        samples.byteswap()
+    step = rate * frame_ms // 1000
+    energy = [sum(s * s for s in samples[i:i + step]) / step for i in range(0, len(samples), step)]
+    if not energy or max(energy) == 0:
+        return pcm[:max_samples * 2]
+    gate = max(energy) / 10 ** (floor_db / 10)
+    loud = [i for i, e in enumerate(energy) if e >= gate]
+    pad = rate * pad_ms // 1000
+    start, end = max(0, loud[0] * step - pad), min(len(samples), (loud[-1] + 1) * step + pad)
+    if end - start > max_samples:  # the loudest window: a running sum over frames
+        frames = max_samples // step
+        first = loud[0]
+        sums = [sum(energy[first:first + frames])]
+        for i in range(first + 1, loud[-1] - frames + 2):
+            sums.append(sums[-1] - energy[i - 1] + energy[i + frames - 1])
+        best = first + max(range(len(sums)), key=sums.__getitem__)
+        start, end = best * step, min(len(samples), best * step + max_samples)
+    return samples[start:end].tobytes() if sys.byteorder == "little" else _swapped(samples[start:end])
+
+
+def _swapped(samples):
+    out = array.array("h", samples)
+    out.byteswap()
+    return out.tobytes()
 
 
 def activations(scores, threshold, refractory_frames=25):

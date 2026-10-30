@@ -53,18 +53,36 @@ python data.py                        # or: python data.py --negative-hours 500
 Downloads the Piper voice generator, openWakeWord's feature models, the negative features, the
 validation set and room impulse responses, each checked against its pinned SHA-256 (data.py lists them).
 
-## 4. Train
+## 4. Preflight
+
+```bash
+python check.py
+```
+
+One line per check: Python version, every package at its pinned version, the torch device (expect `mps`),
+the training data, the recordings (at least 10 "Hey Edith" clips and one noise clip) and edith reachable
+with the token. It ends with `all set: run train.py`; fix every `MISSING` line first (it says which step
+makes it).
+
+## 5. Train
 
 ```bash
 caffeinate -i python train.py         # keeps the Mac awake; the log shows "device: mps"
 ```
+
+- Arpit's recordings are trimmed to the speech (by loudness) before they join the synthetic clips, so
+  openWakeWord's fixed clip length (about 2 s) never cuts "Hey Edith" off. Every 5th "Hey Edith" clip and
+  every 3rd noise clip are never trained on; they are only used for the metrics.
+- Memory: the negative validation set is about 3 GB once loaded. 16 GB of RAM is enough; close big apps.
+- Only `hey_edith.onnx` is produced (the app runs ONNX). openWakeWord's TensorFlow Lite conversion is
+  skipped: it needs TensorFlow and `onnx-tf`, which aren't installed.
 
 - It takes hours the first time. Piper's synthetic clips are generated on the CPU and kept, so later
   runs skip that step. If it stops, run the same command again: finished steps are skipped.
 - Options: `--steps 50000` (longer training), `--real-repeat 20`, `--device cpu`, `--session <id>`.
 - The output: `wakeword/models/hey_edith.onnx`, `hey_edith.json` and `metrics.md`.
 
-## 5. Check the metrics
+## 6. Check the metrics
 
 `metrics.md` shows:
 - the false-reject rate on held-out recordings (every 5th "Hey Edith" clip, never trained on). The target
@@ -76,7 +94,7 @@ If a target is missed, tell Arpit the numbers and suggest what fits: more record
 whispered), `--steps 50000`, or the full negative set. Don't push a model that misses a target unless Arpit
 says so.
 
-## 6. Ship it
+## 7. Ship it
 
 ```bash
 cd "$(git rev-parse --show-toplevel)"
@@ -91,13 +109,19 @@ and asks him to say "Hey Edith" a few times to confirm. No attribution lines in 
 
 ## Fallback: on edith's CPU
 
-The same scripts run on edith (Python 3.12, no GPU), slowly and at low priority so EDITH isn't affected.
-Use a work dir outside the repo clone the bridge runs from, and the local App API address:
+The same scripts run on edith (Python 3.12, 4 ARM cores, 11 GB RAM, no GPU), slowly and at low priority so
+EDITH isn't affected. It needs Arpit's OK first: it installs packages (into a venv only, nothing system-wide)
+and runs for many hours. Use a work dir outside the repo clone the bridge runs from, and the local App API
+address:
 
 ```bash
 python3.12 -m venv ~/wakeword-work/venv && source ~/wakeword-work/venv/bin/activate
 pip install -r requirements.txt && pip install --no-deps -r requirements-nodeps.txt
 python fetch.py --base-url http://100.78.124.98:8787 --work ~/wakeword-work
 python data.py --work ~/wakeword-work --negative-hours 500
-nice -n 19 python train.py --work ~/wakeword-work --device cpu
+python check.py --work ~/wakeword-work --base-url http://100.78.124.98:8787
+nice -n 19 python train.py --work ~/wakeword-work --device cpu --n-samples 10000
 ```
+
+Memory is the limit on edith: keep `--negative-hours 500` and fewer synthetic clips, and stop the run if
+`free -g` shows less than 2 GB available.
