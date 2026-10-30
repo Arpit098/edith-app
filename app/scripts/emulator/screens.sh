@@ -1,0 +1,197 @@
+#!/usr/bin/env bash
+# CI screens job (.github/workflows/screens.yml), for Arpit's approval of Phase 2b (PLAN.md §4.11):
+# a release-mode APK on an Android 16 emulator, connected to the demo App API (demo-api.py), and:
+#   - screenshots of the main screens with real glass, and one with battery saver on (flat glass);
+#   - frame times (dumpsys gfxinfo) for the same scripted scrolling and tab switching, glass on and
+#     off. An emulator renders with SwiftShader (the CPU), so these numbers are only comparable with
+#     each other: phone numbers come from Settings → Performance on the 13R;
+#   - a short screen recording: tab switches (the droplet), scrolling under the glass, the attach menu.
+#
+# Usage: screens.sh <apk> <out dir>
+#
+# Waiting: adb can't subscribe to what's on screen, so this polls uiautomator with a doubling delay
+# (0.2 s → 2 s) and a 30 s timeout per wait. CI-only; the app itself never polls. The pauses in the
+# recording are there so a person can follow it, not to wait for anything.
+set -euo pipefail
+
+APK=$1 OUT=$2
+PKG=com.arpit.edith
+mkdir -p "$OUT"
+
+wait_until() { # <description> <command…>
+  local what=$1 delay=0.2 deadline=$((SECONDS + 30))
+  shift
+  until "$@" >/dev/null 2>&1; do
+    if ((SECONDS > deadline)); then
+      echo "::error::timed out waiting for $what"
+      ui >"$OUT/timeout-ui.xml" || true
+      adb exec-out screencap -p >"$OUT/timeout.png" || true
+      return 1
+    fi
+    sleep "$delay"
+    delay=$(awk -v d="$delay" 'BEGIN { d *= 2; print (d > 2 ? 2 : d) }')
+  done
+}
+
+ui() { adb shell uiautomator dump /sdcard/ui.xml >/dev/null && adb exec-out cat /sdcard/ui.xml; }
+on_screen() { ui | grep -qF "=\"$1\""; } # a node's text or content-desc
+top_activity() { adb shell dumpsys activity activities | grep -m1 -E "topResumedActivity|ResumedActivity:"; }
+launcher_on_top() { top_activity | grep -qi launcher; }
+keyboard_shown() { adb shell dumpsys input_method | grep -q "mInputShown=true"; }
+
+# Tap the centre of the first node whose content-desc (or, failing that, text) is $1.
+tap() {
+  local xy
+  xy=$(ui | python3 -c '
+import re, sys, xml.etree.ElementTree as ET
+want = sys.argv[1]
+nodes = list(ET.parse(sys.stdin).iter("node"))
+for attr in ("content-desc", "text"):
+    for n in nodes:
+        if n.get(attr) == want:
+            x1, y1, x2, y2 = map(int, re.findall(r"\d+", n.get("bounds")))
+            print((x1 + x2) // 2, (y1 + y2) // 2)
+            sys.exit()
+' "$1")
+  [ -n "$xy" ] || { echo "::error::no \"$1\" on screen"; return 1; }
+  adb shell input tap $xy
+}
+
+# A screenshot once two frames in a row match (springs have settled), at most 12 tries.
+shot() {
+  local file="$OUT/$1.png" prev="" now delay=0.2
+  for _ in $(seq 12); do
+    adb exec-out screencap -p >"$file.tmp"
+    now=$(md5sum <"$file.tmp")
+    [ "$now" = "$prev" ] && break
+    prev=$now
+    sleep "$delay"
+    delay=$(awk -v d="$delay" 'BEGIN { d *= 2; print (d > 1 ? 1 : d) }')
+  done
+  mv "$file.tmp" "$file"
+  echo "screenshot $1.png"
+}
+
+read -r W H < <(adb shell wm size | sed -n 's/.*: \([0-9]*\)x\([0-9]*\).*/\1 \2/p' | tail -1)
+scroll_up() { adb shell input swipe $((W / 2)) $((H * 35 / 100)) $((W / 2)) $((H * 70 / 100)) "${1:-400}"; } # older messages
+scroll_down() { adb shell input swipe $((W / 2)) $((H * 70 / 100)) $((W / 2)) $((H * 35 / 100)) "${1:-400}"; }
+
+battery_saver() { # on|off: the glass goes flat while it's on (edith-glass's PowerManager broadcast)
+  if [ "$1" = on ]; then
+    adb shell dumpsys battery unplug
+    adb shell settings put global low_power 1
+  else
+    adb shell settings put global low_power 0
+    adb shell dumpsys battery reset
+  fi
+}
+
+# Frame times for one scripted run: scroll the transcript up and down, then go round the tabs.
+measure() {
+  local label=$1
+  tap Live
+  wait_until "the live tab" on_screen "Reminder set for Monday 2 November at 9:00."
+  adb shell dumpsys gfxinfo "$PKG" reset >/dev/null
+  for _ in 1 2 3; do
+    scroll_up 300
+    scroll_down 300
+  done
+  for t in Sessions Tools Settings Live; do tap "$t"; done
+  adb shell dumpsys gfxinfo "$PKG" >"$OUT/gfxinfo-$label.txt"
+  {
+    echo "#### $label"
+    grep -E "Total frames rendered|Janky frames|50th percentile|90th percentile|95th percentile|99th percentile" "$OUT/gfxinfo-$label.txt" | head -6 | sed 's/^/    /'
+  } >>"$OUT/frames.md"
+}
+
+# A clean status bar: a fixed clock, full signal and battery, no notifications.
+adb shell settings put global sysui_demo_allowed 1
+demo() { adb shell am broadcast -a com.android.systemui.demo -e command "$@" >/dev/null; }
+
+adb shell input keyevent KEYCODE_WAKEUP
+adb shell wm dismiss-keyguard
+adb shell input keyevent KEYCODE_HOME
+wait_until "the launcher" launcher_on_top
+adb install -r -g "$APK"
+demo enter
+demo clock -e hhmm 0930
+demo battery -e level 100 -e plugged false
+demo network -e wifi show -e level 4
+demo notifications -e visible false
+
+adb shell am start -W -n "$PKG/.MainActivity" >/dev/null
+wait_until "the connect screen" on_screen "Server address"
+shot 00-connect
+tap "Server address"
+adb shell input text "10.0.2.2:8787"
+tap "Token"
+adb shell input text "ci-token"
+keyboard_shown && adb shell input keyevent KEYCODE_BACK
+tap Connect
+wait_until "the live session" on_screen "Reminder set for Monday 2 November at 9:00."
+keyboard_shown && adb shell input keyevent KEYCODE_BACK
+
+echo "::group::Screenshots"
+shot 01-live
+scroll_up
+shot 02-live-scrolled-under-the-glass
+scroll_down
+tap Sessions
+wait_until "sessions" on_screen "Morning briefing"
+shot 03-sessions
+tap Tools
+shot 04-tools
+tap Settings
+wait_until "settings" on_screen "Measure frames"
+shot 05-settings
+tap Live
+tap "Attach a photo or audio file"
+wait_until "the attach menu" on_screen "Camera"
+shot 06-attach-menu
+tap "Close the attach menu"
+battery_saver on
+tap Settings
+wait_until "flat glass in battery saver" on_screen "Glass: flat"
+tap Live
+shot 07-live-battery-saver-flat
+battery_saver off
+echo "::endgroup::"
+
+echo "::group::Frame times (emulator, SwiftShader)"
+echo "### Frame times on the emulator (SwiftShader: compare the two runs, not with a phone)" >"$OUT/frames.md"
+measure glass
+battery_saver on
+measure flat-battery-saver
+battery_saver off
+cat "$OUT/frames.md"
+echo "::endgroup::"
+
+echo "::group::Recording"
+tap Live
+wait_until "the live tab" on_screen "Reminder set for Monday 2 November at 9:00."
+adb shell screenrecord --time-limit 24 --bit-rate 8000000 /sdcard/clip.mp4 &
+rec=$!
+sleep 1.5
+for t in Sessions Tools Settings Live; do
+  tap "$t"
+  sleep 1.4
+done
+scroll_up 700
+sleep 1
+scroll_up 700
+sleep 1
+scroll_down 700
+sleep 1
+scroll_down 700
+sleep 1
+tap "Attach a photo or audio file"
+sleep 1.5
+tap "Close the attach menu"
+sleep 1
+tap Sessions
+sleep 1.2
+tap Live
+wait $rec || true
+adb pull /sdcard/clip.mp4 "$OUT/phase-2b-clip.mp4"
+echo "::endgroup::"
+demo exit
