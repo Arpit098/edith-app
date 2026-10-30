@@ -42,6 +42,7 @@ from edith.ports.agent import RunInfo, StopResult, TurnHandle
 
 from .live import LiveView, cursor, history
 from .sessions import Sessions
+from .stats import SessionStats
 from .tmux import Tmux
 from .transcript import Tail, tool_uses
 from .watch import Watch, wait_for
@@ -137,6 +138,10 @@ class ClaudeTmux:
     @functools.cached_property
     def sessions(self):
         return Sessions(self.paths.transcripts, self.state)
+
+    @functools.cached_property
+    def stats(self):
+        return SessionStats(entry_time)
 
     @functools.cached_property
     def key(self):
@@ -559,6 +564,11 @@ class ClaudeTmux:
 
     def find_session(self, arg):
         return self.sessions.find(arg)
+
+    def session_stats(self, session_id=None):
+        sid = session_id or self.current_session()
+        path = sid and SESSION_ID.fullmatch(sid) and os.path.join(self.paths.transcripts, f"{sid}.jsonl")
+        return self.stats.get(path) if path and os.path.exists(path) else None
 
     def session_title(self, session_id):
         return self.sessions.title(session_id)
