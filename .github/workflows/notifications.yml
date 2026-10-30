@@ -1,0 +1,116 @@
+# Notifications and Live Alerts on an Android 16 emulator (x86 runner, free and open source tools only):
+# builds a debug APK, posts each notification state the JS models make (app/scripts/emulator/
+# states.json), checks the foreground service, the Allow button and the tap target, and saves the
+# screenshots as the `notification-screenshots` artifact.
+#
+# It costs about half an hour of runner time, so it runs only on PRs that touch the notification code
+# (and by hand), never on main builds.
+name: notifications
+
+on:
+  pull_request:
+    paths:
+      - 'app/android-modules/edith-system/**'
+      - 'app/src/features/live-status/**'
+      - 'app/src/features/notifications/**'
+      - 'app/src/adapters/system/**'
+      - 'app/scripts/emulator/**'
+      - '.github/workflows/notifications.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: notifications-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: app
+
+jobs:
+  emulator:
+    name: Notification states on an emulator
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      # ccache for the C++ the build compiles (as in build-apk.yml).
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_NOHASHDIR: 'true'
+      CCACHE_COMPILERCHECK: content
+      CCACHE_SLOPPINESS: file_macro,time_macros,include_file_mtime,include_file_ctime,pch_defines
+      CCACHE_MAXSIZE: 1G
+      CMAKE_C_COMPILER_LAUNCHER: ccache
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: false
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ccache
+      - run: npm ci --no-audit --no-fund
+      - name: The states are the models' (states.json up to date)
+        run: npx jest --ci src/__tests__/emulator-states.test.ts
+      - name: ccache
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-emu-${{ runner.os }}-${{ hashFiles('app/package-lock.json') }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-emu-${{ runner.os }}-${{ hashFiles('app/package-lock.json') }}-
+            ccache-emu-${{ runner.os }}-
+
+      - name: Expo prebuild
+        run: npx expo prebuild --platform android --no-install
+        env:
+          CI: 1
+      # Debug: it carries the DebugNotificationsReceiver the script drives (src/debug, never in release).
+      - name: Gradle assembleDebug (x86_64)
+        working-directory: app/android
+        run: ./gradlew assembleDebug --no-daemon --build-cache -PreactNativeArchitectures=x86_64 "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g"
+
+      - name: KVM for the emulator
+        working-directory: .
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Mock App API (for the Allow button)
+        run: nohup python3 scripts/emulator/mock-api.py 8787 "$RUNNER_TEMP/api.log" >"$RUNNER_TEMP/api.out" 2>&1 &
+      - name: Post the states on Android 16
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 36
+          target: google_apis
+          arch: x86_64
+          profile: pixel_7
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          working-directory: app
+          script: ./scripts/emulator/post-states.sh android/app/build/outputs/apk/debug/app-debug.apk scripts/emulator/states.json out/screenshots "$RUNNER_TEMP/api.log"
+      - name: Screenshots in the summary
+        if: always()
+        run: |
+          {
+            echo "### Notification states"
+            ls out/screenshots 2>/dev/null | sed 's/^/- /' || echo "(none)"
+            echo; echo "App API calls from the notification buttons:"
+            cat "$RUNNER_TEMP/api.log" 2>/dev/null || echo "(none)"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: notification-screenshots
+          path: app/out/screenshots/
+          retention-days: 14
