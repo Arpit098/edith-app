@@ -1,4 +1,4 @@
-import { glass, glassMode, glassTint, rgbaOf } from '../theme';
+import { colors, glass, glassBase, glassMode, glassTint, rgbaOf } from '../theme';
 
 describe('glassMode (what the device can afford)', () => {
   it.each([
@@ -18,6 +18,7 @@ describe('glass tints for the native view', () => {
   it('parses rgba() and rgb() into 0..1', () => {
     expect(rgbaOf('rgba(255, 0, 51, 0.5)')).toEqual([1, 0, 0.2, 0.5]);
     expect(rgbaOf('rgb(0, 255, 0)')).toEqual([0, 1, 0, 1]);
+    expect(rgbaOf('#ff0033')).toEqual([1, 0, 0.2, 1]);
     expect(rgbaOf('#fff')).toEqual([0, 0, 0, 0]); // not a form the tokens use: no tint rather than a wrong one
   });
 
@@ -25,6 +26,26 @@ describe('glass tints for the native view', () => {
     for (const level of ['thin', 'regular', 'thick'] as const) {
       expect(glassTint[level]).toEqual(rgbaOf(glass[level].tint));
       expect(glassTint[level][3]).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe('the frost (Arpit, 13R: text showed through the glass sharp)', () => {
+  it('lays the backdrop over the opaque app background', () => {
+    expect(glassBase).toEqual(rgbaOf(colors.bg));
+    expect(glassBase[3]).toBe(1);
+  });
+
+  it('blurs 24–32 dp, lifts saturation 1.4–1.8x, splits RGB by under a dp, and the fallback is nearly opaque', () => {
+    for (const level of ['thin', 'regular', 'thick'] as const) {
+      const g = glass[level];
+      expect(g.blur).toBeGreaterThanOrEqual(24);
+      expect(g.blur).toBeLessThanOrEqual(32);
+      expect(g.saturation).toBeGreaterThanOrEqual(1.4);
+      expect(g.saturation).toBeLessThanOrEqual(1.8);
+      expect(g.dispersion).toBeGreaterThan(0);
+      expect(g.dispersion).toBeLessThanOrEqual(1);
+      expect(rgbaOf(g.flat)[3]).toBeGreaterThanOrEqual(0.9);
     }
   });
 });

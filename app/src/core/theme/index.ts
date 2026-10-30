@@ -22,8 +22,11 @@ export interface NativeGlassProps {
   bezel: number;
   dispersion: number;
   saturation: number;
+  lift: number;
   specular: number;
+  rimWidth: number;
   tint: number[];
+  base: number[]; // opaque: the app's background under the frost
   style?: object;
   pointerEvents?: 'none';
 }

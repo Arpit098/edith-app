@@ -50,7 +50,14 @@ class GlassView(context: Context, appContext: AppContext) : ExpoView(context, ap
     set(v) { field = v; changed() }
   var bezelDp = 16f
     set(v) { field = v; changed() }
-  var dispersion = 0f
+  var dispersionDp = 0f // red/blue split at the rim
+    set(v) { field = v; changed() }
+  var lift = 0f // added to every channel: the frost's glow
+    set(v) { field = v; changed() }
+  var rimWidthDp = 1f // the specular line's width at the edge
+    set(v) { field = v; changed() }
+  /** Straight RGBA, each 0..1: the opaque colour under the backdrop (the app's background). */
+  var base = floatArrayOf(0f, 0f, 0f, 1f)
     set(v) { field = v; changed() }
   var saturation = 1f
     set(v) { field = v; changed() }
@@ -75,6 +82,7 @@ class GlassView(context: Context, appContext: AppContext) : ExpoView(context, ap
   private var lensShader: RuntimeShader? = null // one per view: the AGSL compiles once, uniforms are set again
   private val clip = Path()
   private val tintPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+  private val basePaint = Paint(Paint.ANTI_ALIAS_FLAG)
   private val here = IntArray(2)
   private val there = IntArray(2)
   private var lastX = Int.MIN_VALUE
@@ -228,7 +236,13 @@ class GlassView(context: Context, appContext: AppContext) : ExpoView(context, ap
     clip.rewind()
     clip.addRoundRect(0f, 0f, width.toFloat(), height.toFloat(), r, r, Path.Direction.CW)
     canvas.save()
-    if (!lensOn) canvas.clipPath(clip) // the lens shapes and antialiases its own edge
+    if (!lensOn) {
+      canvas.clipPath(clip) // the lens shapes and antialiases its own edge
+      // The backdrop can be transparent between things: lay it over the app's background so the
+      // glass is opaque and the real (sharp) content behind it never shows through.
+      basePaint.setARGB(255, (base[0] * 255).toInt(), (base[1] * 255).toInt(), (base[2] * 255).toInt())
+      canvas.drawPath(clip, basePaint)
+    }
     canvas.translate(-margin.toFloat(), -margin.toFloat())
     canvas.drawRenderNode(n)
     canvas.restore()
@@ -281,10 +295,13 @@ class GlassView(context: Context, appContext: AppContext) : ExpoView(context, ap
     s.setFloatUniform("radius", (cornerRadiusDp * density).coerceAtMost(minOf(width, height) / 2f))
     s.setFloatUniform("bezel", (bezelDp * density).coerceAtLeast(1f))
     s.setFloatUniform("refraction", refractionDp * density)
-    s.setFloatUniform("dispersion", dispersion)
+    s.setFloatUniform("dispersion", dispersionDp * density)
     s.setFloatUniform("saturation", saturation)
+    s.setFloatUniform("lift", lift)
     s.setFloatUniform("tint", tint[0], tint[1], tint[2], tint[3])
+    s.setFloatUniform("base", base[0], base[1], base[2], 1f)
     s.setFloatUniform("specular", specular)
+    s.setFloatUniform("rimWidth", (rimWidthDp * density).coerceAtLeast(1f))
     // Chain: the inner effect (blur) runs first, the lens reads its result as `content`.
     return RenderEffect.createChainEffect(RenderEffect.createRuntimeShaderEffect(s, "content"), blur)
   }
