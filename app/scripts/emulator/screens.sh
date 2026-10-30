@@ -102,6 +102,15 @@ read -r W H < <(adb shell wm size | sed -n 's/.*: \([0-9]*\)x\([0-9]*\).*/\1 \2/
 scroll_up() { adb shell input swipe $((W / 2)) $((H * 35 / 100)) $((W / 2)) $((H * 70 / 100)) "${1:-400}"; } # older messages
 scroll_down() { adb shell input swipe $((W / 2)) $((H * 70 / 100)) $((W / 2)) $((H * 35 / 100)) "${1:-400}"; }
 
+# Scroll the current screen down until $1 is on it (Settings is longer than the screen), at most 6 swipes.
+scroll_to() {
+  for _ in 1 2 3 4 5 6; do
+    on_screen "$1" && return 0
+    adb shell input swipe $((W / 2)) $((H * 75 / 100)) $((W / 2)) $((H * 30 / 100)) 300
+  done
+  wait_until "\"$1\" on screen" on_screen "$1"
+}
+
 battery_saver() { # on|off: the glass goes flat while it's on (edith-glass's PowerManager broadcast)
   if [ "$1" = on ]; then
     adb shell dumpsys battery unplug
@@ -174,7 +183,7 @@ shot 03-sessions
 tap Tools || return 1
 shot 04-tools
 tap Settings || return 1
-wait_until "settings" on_screen "Measure frames" || return 1
+scroll_to "Measure frames" || return 1
 shot 05-settings
 tap Live || return 1
 tap "Attach a photo or audio file" || return 1
@@ -183,7 +192,7 @@ shot 06-attach-menu
 tap "Close the attach menu" || return 1
 battery_saver on
 tap Settings || return 1
-wait_until "flat glass in battery saver" on_screen "Glass: flat" || return 1
+scroll_to "Glass: flat" || return 1
 tap Live || return 1
 shot 07-live-battery-saver-flat
 battery_saver off
@@ -201,7 +210,7 @@ cat "$OUT/frames.md"
 recording() {
 tap Live || return 1
 wait_until "the live tab" on_screen "Reminder set for Monday 2 November at 9:00." || return 1
-adb shell screenrecord --time-limit 24 --bit-rate 8000000 /sdcard/clip.mp4 &
+adb shell screenrecord --time-limit 90 --bit-rate 8000000 /sdcard/clip.mp4 &
 rec=$!
 sleep 1.5
 for t in Sessions Tools Settings Live; do

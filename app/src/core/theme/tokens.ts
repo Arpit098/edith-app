@@ -60,8 +60,10 @@ export interface GlassStyle {
 /** Glass surfaces, from the lightest (small pills) to the heaviest (the header). */
 export const glass: Record<GlassLevel, GlassStyle> = {
   thin: {
-    blur: 14,
-    tint: 'rgba(28, 32, 38, 0.38)',
+    // Small pills over moving text (the status pill): enough blur and tint that what passes under
+    // reads as soft colour, never as words fighting the pill's own label.
+    blur: 22,
+    tint: 'rgba(28, 32, 38, 0.64)',
     flat: 'rgba(30, 34, 40, 0.78)',
     edge: ['rgba(255, 255, 255, 0.22)', 'rgba(255, 255, 255, 0.04)'],
     highlight: 'rgba(255, 255, 255, 0.06)',
