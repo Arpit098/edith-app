@@ -51,6 +51,8 @@ log = logging.getLogger("edith.adapter.claude_tmux")
 MAX_QUEUE = 50          # messages waiting for the main lane; more than this is refused
 MAX_REFS = 500          # run id -> ref of delivered messages, so the live view can skip their transcript copy
 MID_TURN = "The user sent a new message while you were working"
+COMPACT_ERROR = re.compile(r"Error (?:during compaction|compacting conversation)[^\n]*")
+PANE_CHECK = 5.0        # seconds; /compact errors appear only on screen, which can't be watched
 MAX_HISTORY = 500       # events per history page
 SESSION_ID = re.compile(r"[A-Za-z0-9-]{1,64}")
 STOPPED_CODES = (-signal.SIGTERM, -signal.SIGKILL, 143, 137)
@@ -106,6 +108,7 @@ class ClaudeTmux:
         self.ready_timeout = float(config.get("ready_timeout", 90))
         self.alive_every = float(config.get("check_alive_every", 5))
         self.stop_grace = float(config.get("stop_grace", 15))
+        self.compact_timeout = float(config.get("compact_timeout", 300))  # a long conversation takes minutes
         self.live_view = bool(config.get("live_view", True))  # transcript -> message/tool events for every turn
         self._live = None
         self.tmux = tmux or Tmux(config.get("tmux_socket", "edith"), config.get("tmux_target", "edith"),
@@ -599,6 +602,46 @@ class ClaudeTmux:
         self.state.update(switched)
         self._publish("session.changed", "system", session_id=now, title=self.session_title(now), source="resume")
         return "ok"
+
+    def compact(self, instructions=""):
+        """Claude Code's /compact in the tmux Claude, when nothing else is going on. Done = the
+        SessionStart hook reports source "compact" (tmux-session.json, watched with inotify); an error
+        shows only on screen, so the pane is read on each wake-up, at least every PANE_CHECK seconds."""
+        with self._lock:
+            if self.main_busy.is_set() or not self._main.empty() or os.path.exists(self.paths.tmux_run) \
+                    or self._perms_pending():
+                return "busy", ""
+            self.main_busy.set()  # new messages go to a side lane or wait, as during a switch
+        try:
+            if not self.tmux.wait_ready(10):
+                return "failed", "the Claude session in tmux isn't ready"
+            started = time.time()
+            command = " ".join(f"/compact {instructions}".split())  # one line: a newline would submit early
+            with Watch(self.paths.state_dir, self.paths.transcripts) as watch:
+                self.tmux.clear_input()
+                self.tmux.command(command)
+                deadline = time.monotonic() + self.compact_timeout
+                while True:
+                    session = self._tmux_session()
+                    if session.get("source") == "compact" and session.get("ts", 0) >= started:
+                        return "ok", ""
+                    error = COMPACT_ERROR.search(self.tmux.pane())
+                    if error:
+                        return "failed", error.group(0).strip()
+                    left = deadline - time.monotonic()
+                    if left <= 0:
+                        return "failed", f"no answer from Claude in {int(self.compact_timeout)} s"
+                    watch.wait(min(left, PANE_CHECK))
+        finally:
+            with self._lock:
+                if self._main.empty():
+                    self.main_busy.clear()
+
+    def _perms_pending(self):
+        try:
+            return any(n.endswith(".req.json") for n in os.listdir(self.paths.perm_dir))
+        except OSError:
+            return False
 
     def new_session(self):
         if self.main_busy.is_set():

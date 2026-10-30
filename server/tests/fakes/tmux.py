@@ -59,7 +59,11 @@ class FakeTmux:
                 self._type(a)
             else:
                 self.keys.append(a)
-                if a == "Enter" and self._pending is not None:
+                if a == "C-u":  # clears the input line (and any suggestion in it), as in Claude Code
+                    self._pending = None
+                    if self.pane.startswith(PROMPT):
+                        self.pane = PROMPT
+                elif a == "Enter" and self._pending is not None:
                     text, self._pending = self._pending, None
                     if self.pane.startswith(PROMPT):
                         self.pane = PROMPT
