@@ -180,6 +180,11 @@ All of them run in the same `edith-bridge` service, and the existing behaviour m
 
 ### 4.6 Notifications
 - **Phase 2–3:** local notifications from the app while it's connected.
+  - Built in Phase 2b (`features/notifications`, native `edith-system`): channels for replies and
+    finished tasks, approval needed (Allow/Deny buttons answer without opening the app), reminders,
+    errors. Nothing already on screen is notified; each ref or id notifies once.
+  - While a turn runs or an approval waits, a `specialUse` foreground service keeps the stream
+    alive (it stops the moment that's over; Android 12+ won't start it from the background).
 - **Phase 5:** self-hosted **ntfy** (open source) on edith, reachable only over Tailscale. It pushes "task
   done" and "approval needed" even when the app is closed.
 
