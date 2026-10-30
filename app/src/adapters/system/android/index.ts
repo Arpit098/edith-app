@@ -15,6 +15,7 @@ interface NativeSystem {
   notificationsEnabled(): boolean;
   canPromote(): boolean;
   openPromotionSettings(): void;
+  testIsland(): void;
 }
 
 const MIN_SDK = 26; // notification channels and foreground-service starts (Android 8); the app's minSdk is 24
@@ -43,6 +44,8 @@ export function createAndroidSystem(): { status: OngoingStatus; notifier: Notifi
     ensurePermission,
     canPromote: () => native.canPromote(),
     openPromotionSettings: () => native.openPromotionSettings(),
+    liveUpdates: sdkInt >= 36, // Android 16
+    testIsland: () => native.testIsland(),
   };
   const notifier: Notifier = {
     // JSON, not a record: the native side keeps it in the action buttons to redraw the notification.
