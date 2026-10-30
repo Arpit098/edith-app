@@ -1,6 +1,0 @@
-{
-  "platforms": ["android"],
-  "android": {
-    "modules": ["com.arpit.edith.system.EdithSystemModule"]
-  }
-}

@@ -37,6 +37,8 @@ export const colors = {
   diffDel: 'rgba(240, 138, 138, 0.14)',
   diffDelText: '#F5B0B0',
   diffHunk: '#A9CBEF',
+  overlay: 'rgba(5, 7, 10, 0.66)', // over a thumbnail while it uploads
+  overlayStrong: 'rgba(5, 7, 10, 0.8)', // small controls on a thumbnail (remove)
 } as const;
 
 export type GlassLevel = 'thin' | 'regular' | 'thick';

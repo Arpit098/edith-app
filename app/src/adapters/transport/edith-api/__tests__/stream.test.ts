@@ -192,28 +192,6 @@ describe('EventStream', () => {
     expect(t.sockets).toHaveLength(2);
   });
 
-  it('stays connected in the background while held, and pauses after the grace once released', () => {
-    const t = setup();
-    t.stream.configure(SERVER);
-    t.listen();
-    t.last().accept();
-    const release = t.stream.holdOpen();
-    t.appState.set('background');
-    t.advance(600_000);
-    expect(t.sockets[0]!.closed).toBe(false);
-    release();
-    release(); // twice is harmless
-    t.advance(59_000);
-    expect(t.sockets[0]!.closed).toBe(false);
-    t.advance(1_000);
-    expect(t.sockets[0]!.closed).toBe(true);
-
-    // a hold taken while paused reconnects at once
-    const again = t.stream.holdOpen();
-    expect(t.sockets).toHaveLength(2);
-    again();
-  });
-
   it('closes and stops listening to AppState when the last listener leaves; configure(null) stops', () => {
     const t = setup();
     t.stream.configure(SERVER);

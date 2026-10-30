@@ -1,0 +1,4 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <!-- Push-to-talk: asked for the first time the mic button is used. -->
+  <uses-permission android:name="android.permission.RECORD_AUDIO" />
+</manifest>

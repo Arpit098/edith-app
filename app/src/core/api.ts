@@ -81,6 +81,15 @@ export interface AppRelease {
   url: string; // path on the App API, e.g. /v1/app/apk/1042
 }
 
+/** POST /v1/attachments (contracts/attachments.md). */
+export interface Attachment {
+  id: string;
+  name: string; // saved name in edith's inbox
+  type: string; // detected by the server from the bytes
+  size: number;
+  sha256: string;
+}
+
 export interface Command {
   name: string;
   description: string;
@@ -114,9 +123,26 @@ type Obj = Record<string, unknown>;
 export function createApi(t: Transport) {
   return {
     /** Send text to the main lane (or a side lane when busy). The turn's events arrive with `ref`. */
-    async send(text: string, opts: { voice?: boolean; queue?: boolean } = {}): Promise<{ ref: string; lane: string }> {
-      const r = await t.request<Obj>('POST', '/v1/messages', { text, ...opts });
+    async send(text: string, opts: { voice?: boolean; queue?: boolean; attachments?: string[] } = {}): Promise<{ ref: string; lane: string }> {
+      const { attachments, ...rest } = opts;
+      const r = await t.request<Obj>('POST', '/v1/messages', { text, ...rest, ...(attachments?.length ? { attachments } : {}) });
       return { ref: str(r.ref), lane: str(r.lane) };
+    },
+
+    /**
+     * Upload one file for a message (contracts/attachments.md): the raw bytes, streamed. The id goes
+     * in send({attachments}); it stays valid for 7 days. 404 means edith doesn't have this route yet.
+     */
+    async uploadAttachment(
+      file: { uri: string; mime: string; name: string; size: number },
+      opts: { onProgress?: (sent: number, total: number) => void; signal?: AbortSignal } = {},
+    ): Promise<Attachment> {
+      // 30 s plus 1 s per 100 KB: generous for Tailscale on mobile data, bounded at 10 minutes.
+      // The caller stats the file first (attachments.ts): a size is required, so this is never "30 s for anything".
+      if (!(file.size > 0)) throw new ApiError(0, 'unknown file size');
+      const timeoutMs = Math.min(600_000, 30_000 + Math.ceil(file.size / 100_000) * 1000);
+      const r = await t.uploadRaw<Obj>('/v1/attachments', file, { timeoutMs, ...opts });
+      return { id: str(r.id), name: str(r.name), type: str(r.type), size: num(r.size), sha256: str(r.sha256) };
     },
 
     async stop(): Promise<{ running: number; dropped: string[] }> {

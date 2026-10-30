@@ -19,6 +19,8 @@ Brute-force fixes from legacy:
   chatty stderr (over 64 KB) could block Claude for good.
 - The queue is bounded (MAX_QUEUE); decisions and tmux-run are written atomically.
 """
+import collections
+import datetime
 import functools
 import json
 import logging
@@ -34,7 +36,7 @@ import time
 
 from edith.common.paths import resolve
 from edith.common.state import StateFile
-from edith.common.text import take_directives
+from edith.common.text import clean_prompt, reply_parts, take_directives
 from edith.core import Event
 from edith.ports.agent import RunInfo, StopResult, TurnHandle
 
@@ -47,11 +49,36 @@ from .watch import Watch, wait_for
 log = logging.getLogger("edith.adapter.claude_tmux")
 
 MAX_QUEUE = 50          # messages waiting for the main lane; more than this is refused
+MAX_REFS = 500          # run id -> ref of delivered messages, so the live view can skip their transcript copy
+MID_TURN = "The user sent a new message while you were working"
+COMPACT_ERROR = re.compile(r"Error (?:during compaction|compacting conversation)[^\n]*")
+PANE_CHECK = 5.0        # seconds; /compact errors appear only on screen, which can't be watched
 MAX_HISTORY = 500       # events per history page
 SESSION_ID = re.compile(r"[A-Za-z0-9-]{1,64}")
 STOPPED_CODES = (-signal.SIGTERM, -signal.SIGKILL, 143, 137)
 NOTES_HEADER = ("[While you were busy, parallel lanes (forks of this conversation) handled these. "
                 "You didn't see them, so here they are for context:]")
+
+
+def entry_time(entry):
+    """A transcript entry's time (unix seconds), or None if it has none."""
+    try:
+        return datetime.datetime.fromisoformat(entry["timestamp"]).timestamp()
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def own_turn(entry):
+    """Whether a transcript entry holding our [tg-ref] is the prompt of its own turn (a user entry with
+    the message as its text), rather than a message Claude Code folded into a running turn."""
+    content = entry.get("message", {}).get("content")
+    if entry.get("type") != "user":
+        return False
+    if isinstance(content, list):
+        if any(isinstance(b, dict) and b.get("type") == "tool_result" for b in content):
+            return False
+        content = " ".join(b.get("text", "") for b in content if isinstance(b, dict))
+    return isinstance(content, str) and MID_TURN not in content
 
 
 class Run:
@@ -81,6 +108,7 @@ class ClaudeTmux:
         self.ready_timeout = float(config.get("ready_timeout", 90))
         self.alive_every = float(config.get("check_alive_every", 5))
         self.stop_grace = float(config.get("stop_grace", 15))
+        self.compact_timeout = float(config.get("compact_timeout", 300))  # a long conversation takes minutes
         self.live_view = bool(config.get("live_view", True))  # transcript -> message/tool events for every turn
         self._live = None
         self.tmux = tmux or Tmux(config.get("tmux_socket", "edith"), config.get("tmux_target", "edith"),
@@ -99,6 +127,7 @@ class ClaudeTmux:
         self._stopping = threading.Event()
         self._perm_watch = None
         self._session_cache = (None, {})
+        self._refs: collections.OrderedDict[str, str] = collections.OrderedDict()
 
     # Read on first use, so building the adapter (e.g. `make check`) touches no file.
     @functools.cached_property
@@ -132,7 +161,7 @@ class ClaudeTmux:
         workers = [("main", self._main_worker)] + [(f"side{i}", self._side_worker) for i in range(self.max_side)]
         workers += [("perms", self._perm_watcher)]
         if self.live_view:
-            self._live = LiveView(self.paths, self._tmux_session, self._publish_live, self._origin_of)
+            self._live = LiveView(self.paths, self._tmux_session, self._publish_live, self._origin_of, self._known)
             workers.append(("live", lambda: self._live.run(self._stopping)))
         for name, target in workers:
             t = threading.Thread(target=target, name=f"claude_tmux:{name}", daemon=True)
@@ -182,19 +211,40 @@ class ClaudeTmux:
             origin = run_or_origin.origin if isinstance(run_or_origin, Run) else run_or_origin
             self.bus.publish(Event(type, data, origin=origin or "system"))
 
+    def _accepted(self, text, origin, ref, delivery, lane):
+        """message.user for a message a frontend handed over (contracts/events.md, "Messages")."""
+        if self.bus:
+            self.bus.publish(Event("message.user", {"ref": ref, **clean_prompt(text), "delivery": delivery, "lane": lane},
+                                   origin=origin or "system", session_id=self.current_session()))
+
+    def _delivered(self, run, delivery):
+        with self._lock:
+            self._refs[run.rid] = run.ref
+            while len(self._refs) > MAX_REFS:
+                self._refs.popitem(last=False)
+        self._publish("message.delivered", run, ref=run.ref, delivery=delivery, rid=run.rid)
+
+    def _known(self, rid):
+        """Whether a [tg-ref <rid>] belongs to a message a frontend handed over (its message.user is sent)."""
+        with self._lock:
+            return rid in self._refs or any(r.rid == rid for r in self._runs.values())
+
     # ---- dispatch ----
 
     def send(self, text, origin, ref, force_queue=False):
         """Main lane if it's free; otherwise a side lane if one is free; otherwise queue."""
-        with self._lock:
+        with self._lock:  # message.user goes out before the job is queued, so it always comes first
             if not self.main_busy.is_set() and self._main.empty():
                 self.main_busy.set()
+                self._accepted(text, origin, ref, "main", "main")
                 self._main.put((text, origin, ref))
                 return TurnHandle(ref, "main")
             if not force_queue and self._side_busy < self.max_side:
                 self._side_busy += 1
+                self._accepted(text, origin, ref, "side_lane", "side")
                 self._side.put((text, origin, ref))
                 return TurnHandle(ref, "side")
+            self._accepted(text, origin, ref, "queued", "queued")
             position = self._main.qsize() + 1
             try:
                 self._main.put_nowait((text, origin, ref))
@@ -291,7 +341,8 @@ class ClaudeTmux:
         tag = f"[tg-ref {run.rid}]"
         events = Tail(self.paths.tmux_events)
         transcript = Tail(self._tmux_session().get("transcript_path"))
-        outcome, reply, sid, submitted = None, None, None, False
+        outcome, reply, sid, submitted, delivered = None, None, None, False, False
+        early_stop, tag_ts = None, None
         try:
             with Watch(self.paths.state_dir, self.paths.transcripts) as watch:
                 run.watch = watch
@@ -301,14 +352,23 @@ class ClaudeTmux:
                     for ev, _ in events.read():
                         if ev.get("event") == "prompt" and ev.get("ref") == run.rid:
                             submitted, sid = True, ev.get("session_id")
+                            if not delivered:
+                                delivered = True
+                                self._delivered(run, "main")
                         elif ev.get("event") == "stop" and submitted:
                             reply, sid, outcome = ev.get("text") or "", ev.get("session_id") or sid, "done"
+                        elif ev.get("event") == "stop":
+                            early_stop = ev  # may belong to us if our tag is in this same batch of the transcript
                     current = self._tmux_session().get("transcript_path")
                     if current != transcript.path:  # /clear or a resume switched transcripts
                         transcript.switch(current)
                     for entry, raw in transcript.read():
                         if tag in raw:
                             submitted = True  # also covers a message queued into a running turn
+                            tag_ts = entry_time(entry)
+                            if not delivered:
+                                delivered = True
+                                self._delivered(run, "main" if own_turn(entry) else "mid_turn")
                         if not submitted or entry.get("isSidechain"):
                             continue
                         for step in tool_uses(entry):
@@ -317,6 +377,13 @@ class ClaudeTmux:
                                           elapsed=int(time.time() - run.started))
                         if entry.get("type") == "user" and "[Request interrupted by user" in raw and outcome is None:
                             outcome = "stopped"
+                    if outcome is None and submitted and early_stop is not None:
+                        # The stop hook was read before our tag in the transcript (both arrived between two
+                        # wake-ups): it is ours if it came after the entry with our tag.
+                        if tag_ts is None or early_stop.get("ts", 0) >= tag_ts:
+                            reply, outcome = early_stop.get("text") or "", "done"
+                            sid = early_stop.get("session_id") or sid
+                        early_stop = None
                     now = time.monotonic()
                     if outcome is None and run.stop_requested and now - run.stop_requested > self.stop_grace:
                         outcome = "stopped"
@@ -342,12 +409,14 @@ class ClaudeTmux:
             self._publish("turn.failed", run, ref=ref, lane="main", reason="crashed",
                           detail="The Claude session in tmux exited; it restarts on its own")
         else:
+            parts = reply_parts(reply)
             self._publish("turn.done", run, ref=ref, lane="main", text=reply, steps=run.steps, elapsed=elapsed,
-                          is_error=False, subtype="success")
+                          is_error=False, subtype="success", display_text=parts["text"], files=parts["files"],
+                          reaction=parts["reaction"])
 
     # ---- side lanes: `claude -p` forks ----
 
-    def _run_side(self, text, origin, ref):
+    def _run_side(self, text, origin, ref, retry=False):
         session = self.state.get("sessions", {}).get(self.key)
         cmd = [self.claude, "-p", text, "--output-format", "stream-json", "--verbose",
                "--mcp-config", self.mcp_config, "--permission-prompt-tool", "mcp__edith_perm__approve"]
@@ -355,6 +424,8 @@ class ClaudeTmux:
             cmd += ["--resume", session, "--fork-session"]
         run = Run(ref, "side", origin)
         self._publish("turn.started", run, ref=ref, lane="side")
+        if not retry:
+            self._delivered(run, "side_lane")
         env = dict(os.environ, EDITH_PERM_DIR=self.paths.perm_dir, EDITH_RUN_ID=run.rid)
         result = None
         with tempfile.TemporaryFile("w+", errors="replace") as stderr:
@@ -392,7 +463,7 @@ class ClaudeTmux:
                 # The conversation expired or was deleted: start fresh, once.
                 self.state.update(lambda s: s.get("sessions", {}).pop(self.key, None))
                 self._publish("turn.retrying", run, ref=ref, lane="side", reason="no_conversation")
-                return self._run_side(text, origin, ref)
+                return self._run_side(text, origin, ref, retry=True)
             else:
                 log.warning("side lane failed: code %s %s", run.proc.returncode, err[-300:])
                 self._publish("turn.failed", run, ref=ref, lane="side", reason="error",
@@ -402,8 +473,12 @@ class ClaudeTmux:
         self._save_fork(result.get("session_id"))
         reply, is_error, subtype = result.get("result") or "", bool(result.get("is_error")), result.get("subtype", "unknown")
         self._remember_side_note(text, reply, is_error, subtype)
+        parts = reply_parts(reply)
+        if parts["text"]:  # the main transcript never has a side lane's answer: send it as a message
+            self._publish("message.assistant", run, text=parts["text"], lane="side", ref=ref, files=parts["files"])
         self._publish("turn.done", run, ref=ref, lane="side", text=reply, steps=run.steps, elapsed=elapsed,
-                      is_error=is_error, subtype=subtype)
+                      is_error=is_error, subtype=subtype, display_text=parts["text"], files=parts["files"],
+                      reaction=parts["reaction"])
 
     def _save_fork(self, sid):
         """Remember side-lane forks so the conversation list can hide them."""
@@ -527,6 +602,46 @@ class ClaudeTmux:
         self.state.update(switched)
         self._publish("session.changed", "system", session_id=now, title=self.session_title(now), source="resume")
         return "ok"
+
+    def compact(self, instructions=""):
+        """Claude Code's /compact in the tmux Claude, when nothing else is going on. Done = the
+        SessionStart hook reports source "compact" (tmux-session.json, watched with inotify); an error
+        shows only on screen, so the pane is read on each wake-up, at least every PANE_CHECK seconds."""
+        with self._lock:
+            if self.main_busy.is_set() or not self._main.empty() or os.path.exists(self.paths.tmux_run) \
+                    or self._perms_pending():
+                return "busy", ""
+            self.main_busy.set()  # new messages go to a side lane or wait, as during a switch
+        try:
+            if not self.tmux.wait_ready(10):
+                return "failed", "the Claude session in tmux isn't ready"
+            started = time.time()
+            command = " ".join(f"/compact {instructions}".split())  # one line: a newline would submit early
+            with Watch(self.paths.state_dir, self.paths.transcripts) as watch:
+                self.tmux.clear_input()
+                self.tmux.command(command)
+                deadline = time.monotonic() + self.compact_timeout
+                while True:
+                    session = self._tmux_session()
+                    if session.get("source") == "compact" and session.get("ts", 0) >= started:
+                        return "ok", ""
+                    error = COMPACT_ERROR.search(self.tmux.pane())
+                    if error:
+                        return "failed", error.group(0).strip()
+                    left = deadline - time.monotonic()
+                    if left <= 0:
+                        return "failed", f"no answer from Claude in {int(self.compact_timeout)} s"
+                    watch.wait(min(left, PANE_CHECK))
+        finally:
+            with self._lock:
+                if self._main.empty():
+                    self.main_busy.clear()
+
+    def _perms_pending(self):
+        try:
+            return any(n.endswith(".req.json") for n in os.listdir(self.paths.perm_dir))
+        except OSError:
+            return False
 
     def new_session(self):
         if self.main_busy.is_set():

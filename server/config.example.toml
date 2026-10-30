@@ -34,12 +34,12 @@ telegram_dir = "~/.claude/channels/telegram"   # bot token (.env) and access.jso
 
 [features]
 enabled = ["sessions", "approvals", "control", "reminders", "mail", "calendar", "changes", "quick_actions", "voice",
-           "app_updates"]
+           "app_updates", "message_log", "wakeword"]
 
 [features.app_updates]
 # The release signing certificate's SHA-256 (public). Only APKs signed with it are offered.
 cert_sha256 = "2B:6C:D3:6E:EA:02:20:9B:55:D9:7D:7A:78:20:E1:F6:81:A6:B1:60:67:3A:4A:49:F2:2B:43:9F:3F:D8:02:AB"
-# repo = "Arpit098/edith-app"; workflow = "build-apk.yml"; branch = "main"; interval = 600 (seconds)
+# repo = "Arpit098/edith-app"; workflow = "build-apk.yml"; branch = "main"; interval = 120 (seconds)
 
 # Per-feature settings go in [features.<name>], e.g.:
 # [features.reminders]

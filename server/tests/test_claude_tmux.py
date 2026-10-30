@@ -88,8 +88,9 @@ class Harness:
             self.cond.wait_for(find, timeout)
             return find()
 
-    def types(self, ref):
-        return [e.type for e in self.events if e.data.get("ref") == ref]
+    def types(self, ref, messages=False):
+        """The event types for a ref; message.* (accepted, delivered, side replies) only if asked."""
+        return [e.type for e in self.events if e.data.get("ref") == ref and (messages or not e.type.startswith("message."))]
 
     def hook_event(self, **ev):
         with open(self.state_dir / "tmux-events.jsonl", "a") as f:
@@ -102,6 +103,13 @@ class Harness:
     def on_submit(self, text):
         m = REF.search(text)
         if not m:
+            return
+        if self.mode == "mid_turn":  # Claude was busy: Claude Code folds the message into the running turn
+            self.transcript_line({"type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": "t0", "content": "ok"},
+                {"type": "text", "text": f"The user sent a new message while you were working:\n{text}\n\nThis is how "
+                                         "Claude Code surfaces messages the user sends mid-turn."}]}})
+            self.finish()
             return
         self.hook_event(event="prompt", session_id="s1", ref=m[1])
         self.transcript_line({"type": "user", "message": {"content": text}})
@@ -127,7 +135,8 @@ class MainLaneTest(unittest.TestCase):
         self.assertEqual(h.agent.send("[Telegram message from Arpit]\nhi", "telegram", "m1").lane, "main")
         done = h.wait("turn.done", "m1")
         self.assertEqual(done.data | {"elapsed": 0}, {"ref": "m1", "lane": "main", "text": "Main reply", "steps": 1,
-                                                      "elapsed": 0, "is_error": False, "subtype": "success"})
+                                                      "elapsed": 0, "is_error": False, "subtype": "success",
+                                                      "display_text": "Main reply", "files": [], "reaction": None})
         self.assertEqual(h.types("m1"), ["turn.started", "turn.progress", "turn.done"])
         self.assertEqual(h.wait("turn.progress", "m1").data["step"], "$ Check disk")
         self.assertEqual(done.origin, "telegram")
@@ -289,7 +298,7 @@ class LiveViewTest(unittest.TestCase):
         h.transcript_line({"type": "user", "message": {"content": "typed in tmux"}})
         h.transcript_line({"type": "user", "message": {"content": "<command-name>/clear</command-name>"}})
         h.transcript_line({"type": "user", "isSidechain": True, "message": {"content": "a subagent"}})
-        h.transcript_line({"type": "user", "message": {"content": "[Telegram message from Arpit]\nhi [voice]\n[tg-ref abc123]"}})
+        h.transcript_line({"type": "user", "message": {"content": "[Telegram message from Arpit, x] [voice]\nhi\n[tg-ref abc123]"}})
         h.transcript_line({"type": "assistant", "message": {"content": [
             {"type": "text", "text": "Fixing it."},
             {"type": "tool_use", "id": "tu1", "name": "Edit",
@@ -301,9 +310,11 @@ class LiveViewTest(unittest.TestCase):
         live = [(e.type, e.origin, e.data) for e in h.events if e.type.startswith(("message.", "tool.", "file."))]
         cursors = [d.pop("cursor") for _, _, d in live]
         self.assertEqual(live[:4], [
-            ("message.user", "terminal", {"text": "typed in tmux", "voice": False}),
-            ("message.user", "telegram", {"text": "[Telegram message from Arpit]\nhi [voice]", "voice": True}),
-            ("message.assistant", "system", {"text": "Fixing it."}),
+            ("message.user", "terminal", {"text": "typed in tmux", "voice": False, "rid": None, "attachments": [],
+                                          "replying_to": None}),
+            ("message.user", "telegram", {"text": "hi", "voice": True, "rid": "abc123", "attachments": [],
+                                          "replying_to": None}),
+            ("message.assistant", "system", {"text": "Fixing it.", "files": [], "lane": "main"}),
             ("tool.call", "system", {"id": "tu1", "name": "Edit", "summary": "Edit: /x/a.py"})])
         self.assertEqual((live[4][0], live[4][2]["id"]), ("file.diff", "tu1"))
         self.assertIn("-x = 1\n+x = 2\n", live[4][2]["diff"])
@@ -358,8 +369,8 @@ class HistoryTest(unittest.TestCase):
     def test_newest_page_then_older_ones(self):
         page = self.h.agent.history(limit=8)
         # Whole entries only: 8 events = the last 2 turns (4 events each).
-        self.assertEqual(self.texts(page), ["[App message from Arpit, x]\nq8", "a8", "t8", "t8",
-                                            "[App message from Arpit, x]\nq9", "a9", "t9", "t9"])
+        self.assertEqual(self.texts(page), ["q8", "a8", "t8", "t8",
+                                            "q9", "a9", "t9", "t9"])
         first = page["events"][0]
         self.assertEqual((first["type"], first["origin"], first["session_id"]), ("message.user", "app", "s1"))
         self.assertEqual(first["ts"], dt.datetime(2026, 11, 2, 5, 8, tzinfo=dt.timezone.utc).timestamp())
@@ -373,7 +384,7 @@ class HistoryTest(unittest.TestCase):
             page = self.h.agent.history(before=page["start"], limit=7)  # 7: never splits an entry's 3 events
             seen = self.texts(page) + seen
         self.assertEqual(len(seen), 40)
-        self.assertEqual(seen[:2], ["[App message from Arpit, x]\nq0", "a0"])
+        self.assertEqual(seen[:2], ["q0", "a0"])
 
     def test_catch_up_after_a_cursor(self):
         page = self.h.agent.history(limit=4)

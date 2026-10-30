@@ -17,7 +17,7 @@
 const path = require('path');
 const Jimp = require('jimp-compact');
 
-const INK = { r: 0x10, g: 0x17, b: 0x1d }; // the source's background (tokens.ts brand.ink)
+const INK = { r: 0x10, g: 0x17, b: 0x1d }; // the source's background, #10171D: icon background layer and splash
 const LUM_FLOOR = 0.15; // the background's brightest corner is ~0.13
 const LUM_FULL = 0.55;
 const SAFE_ZONE = 66 / 108; // adaptive icons: what's always visible, whatever the launcher's mask

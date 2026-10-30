@@ -36,40 +36,42 @@ export interface Transport {
   reconnect(): void;
   /** Absolute URL and auth headers for a request made outside this transport (a native download). */
   authorized(path: string): { url: string; headers: Record<string, string> } | null;
+  /** POST a file as multipart/form-data (part `field`), answered with JSON. Sent once, never retried. */
+  upload<T>(path: string, file: { uri: string; mime: string; name: string }, opts?: RequestOptions & { field?: string }): Promise<T>;
   /**
-   * Keep the stream connected in the background (normally it closes after a minute there, for
-   * battery), e.g. while the live status shows a running task. Returns the release function.
+   * POST a file as the raw request body (with Content-Length; contracts/attachments.md), streamed from
+   * disk, answered with JSON. Sent once, never retried. Aborting `signal` cancels the upload.
    */
-  holdOpen(): () => void;
+  uploadRaw<T>(
+    path: string,
+    file: { uri: string; mime: string; name: string },
+    opts?: RequestOptions & { onProgress?: (sent: number, total: number) => void; signal?: AbortSignal },
+  ): Promise<T>;
 }
 
-/** What EDITH's live status shows (Live Alerts on the phone). The wording is the feature's. */
-export interface OngoingStatusView {
-  title: string;
-  text: string;
-  chip: string; // a word or two for the status-bar chip / Live Alerts pill
-  startedAt: number | null; // unix ms: a running timer, without per-second updates
-  progress: boolean; // indeterminate progress
-  link: string; // opened on tap, e.g. edith://approvals
-  alert: boolean; // peek once (an approval is waiting)
+/** A file Arpit picked to attach. */
+export interface PickedFile {
+  kind: 'image' | 'audio';
+  uri: string;
+  name: string;
+  mime: string;
+  size: number; // bytes on disk (stat), 0 if it couldn't be read
 }
 
-/** A persistent status notification: an Android 16 Live Update, an ongoing notification before. */
-export interface OngoingStatus {
-  show(view: OngoingStatusView): void;
-  clear(): void;
-  /** Ask once for permission to post notifications (Android 13+). */
-  ensurePermission(): Promise<boolean>;
-  /** Android 16: whether the status may be promoted to the chip / Live Alerts. */
-  canPromote(): boolean;
-  openPromotionSettings(): void;
-}
-
-/** Battery saver: glass falls back to flat surfaces while it's on. */
-export interface DevicePower {
-  readonly sdkInt: number;
-  powerSave(): boolean;
-  onPowerSaveChange(handler: (on: boolean) => void): () => void;
+/**
+ * The camera, the gallery and the file picker. Picked files are copies in the app's own cache
+ * folder (never the originals): the app deletes them when they're removed, and prunes the folder.
+ */
+export interface MediaPicker {
+  /** Null when Arpit cancels. Images come back as JPEG with the long edge at most 2048 px. */
+  pickImage(source: 'camera' | 'library'): Promise<PickedFile | null>;
+  pickAudio(): Promise<PickedFile | null>;
+  /** The file's size in bytes, or null when it's gone or unreadable. */
+  stat(uri: string): number | null;
+  /** Delete a picked file (only the app's own copies; nothing if it's already gone). */
+  discard(uri: string): void;
+  /** Delete old picked files, bounded by age and total size. Run once at startup. */
+  prune(): void;
 }
 
 export type InstallStatus = 'pending' | 'success' | 'cancelled' | 'incompatible' | 'failed';
@@ -116,7 +118,7 @@ export interface OtaUpdates {
 
 export interface SpeechToText {
   /** Audio recorded on the phone -> text (today: whisper.cpp on edith). */
-  transcribe(audio: { uri: string; mime: string }): Promise<{ text: string; language?: string }>;
+  transcribe(audio: { uri: string; mime: string; durationMs?: number }): Promise<{ text: string; language?: string }>;
 }
 
 export interface TextToSpeech {
@@ -124,10 +126,26 @@ export interface TextToSpeech {
   stop(): void;
 }
 
+export interface RecordedAudio {
+  uri: string; // file:// in the app's cache
+  mime: string; // audio/wav: 16 kHz mono 16-bit
+  durationMs: number;
+}
+
+export type RecorderEvent = { kind: 'progress'; elapsedMs: number; level: number } | { kind: 'capped'; elapsedMs: number };
+
+/** The microphone. Push-to-talk today; end-of-speech detection (VAD) joins in Phase 3. */
 export interface Recorder {
-  /** Records until silence (VAD) or until stop() is called. */
-  start(opts?: { stopOnSilence?: boolean }): Promise<void>;
-  stop(): Promise<{ uri: string; mime: string } | null>;
+  /** Ask for the microphone permission if needed; true when it's granted. */
+  ensurePermission(): Promise<boolean>;
+  /** Start recording; it stops by itself at `maxMs` (a 'capped' event). */
+  start(opts: { maxMs: number }): Promise<void>;
+  /** Progress (elapsed, level 0..1) about 10 times a second while recording. */
+  onEvent(handler: (e: RecorderEvent) => void): () => void;
+  /** Finish and return the file, or null if nothing was recording. */
+  stop(): Promise<RecordedAudio | null>;
+  /** Stop and throw the recording away. */
+  cancel(): Promise<void>;
 }
 
 export interface WakeWord {
@@ -139,21 +157,33 @@ export interface WakeWord {
 }
 
 /** Android Keystore-backed storage for the token and server address. */
-export interface SecureStorage {
+/** String values by key. Each set() is atomic. */
+export interface KeyValueStore {
   get(key: string): Promise<string | null>;
   set(key: string, value: string): Promise<void>;
   remove(key: string): Promise<void>;
 }
 
+/** Small secrets (the token): Android Keystore-encrypted, a few KB at most per value. */
+export type SecureStorage = KeyValueStore;
+
+/** What the glass may cost: the Android version, and battery saver (glass goes flat while it's on). */
+export interface DevicePower {
+  readonly sdkInt: number;
+  powerSave(): boolean;
+  onPowerSaveChange(handler: (on: boolean) => void): () => void;
+}
+
 export interface Ports {
   transport: Transport;
   storage: SecureStorage;
+  data?: KeyValueStore; // app data that isn't secret (the message outbox); absent in tests and web
   installer?: AppInstaller; // absent where the native module isn't (tests, web)
   ota?: OtaUpdates;
-  status?: OngoingStatus;
+  stt?: SpeechToText; // push-to-talk (and Phase 3 voice)
+  recorder?: Recorder;
+  media?: MediaPicker; // attachments
   // Built in later phases (PLAN.md §6); absent until then.
-  stt?: SpeechToText; // Phase 3
   tts?: TextToSpeech; // Phase 3
-  recorder?: Recorder; // Phase 3
   wakeWord?: WakeWord; // Phase 4
 }

@@ -6,8 +6,12 @@ import { StyleSheet, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { createAndroidInstaller } from './adapters/installer/android';
+import { createExpoMediaPicker } from './adapters/media/expo';
+import { createAndroidPower } from './adapters/power/android';
+import { createAndroidRecorder } from './adapters/recorder/android';
+import { createAsyncStorage } from './adapters/storage/async-storage';
 import { createSecureStorage } from './adapters/storage/secure-store';
-import { createAndroidSystem } from './adapters/system/android';
+import { createServerWhisper } from './adapters/stt/server-whisper';
 import { createEdithApiTransport } from './adapters/transport/edith-api';
 import { createExpoOtaUpdates } from './adapters/updates/expo-updates';
 import { createApi } from './core/api';
@@ -24,14 +28,16 @@ const BLUR_MIN_SDK = 31; // RenderEffect blur: Android 12+
 function boot() {
   const transport = createEdithApiTransport();
   const storage = createSecureStorage();
+  const data = createAsyncStorage();
   const installer = createAndroidInstaller() ?? undefined;
   const ota = createExpoOtaUpdates();
-  const system = createAndroidSystem();
+  const recorder = createAndroidRecorder() ?? undefined;
+  const stt = createServerWhisper(transport);
   const bus = new EventBus();
   const api = createApi(transport);
   const connection = new Connection(transport, storage, bus);
-  const loaded = loadFeatures(features, { bus, ports: { transport, storage, installer, ota, status: system?.status }, api, connection });
-  return { connection, loaded, power: system?.power ?? null };
+  const loaded = loadFeatures(features, { bus, ports: { transport, storage, data, installer, ota, recorder, stt, media: createExpoMediaPicker() }, api, connection });
+  return { connection, loaded, power: createAndroidPower() };
 }
 
 /** Real blur only where it's cheap and possible: Android 12+, and not in battery saver. */

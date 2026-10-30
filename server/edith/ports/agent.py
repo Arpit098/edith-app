@@ -69,6 +69,11 @@ class AgentBackend(Protocol):
     def new_session(self) -> str:
         """Start a fresh conversation (/clear). Returns busy | ok."""
 
+    def compact(self, instructions: str = "") -> tuple[str, str]:
+        """Compact the conversation (Claude Code's /compact, with optional instructions) and wait until
+        it is done. Returns (busy | ok | failed, detail); busy when a task, queued message or approval
+        is pending."""
+
     def history(self, session_id: str | None = None, after: str | None = None, before: str | None = None,
                 limit: int = 50) -> dict | None:
         """A conversation's recent events (the current one by default), as the live view sends them.
