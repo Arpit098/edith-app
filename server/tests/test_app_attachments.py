@@ -149,7 +149,8 @@ class UploadTest(unittest.TestCase):
     def test_audited(self):
         body = self.s.upload(HEADERS["audio/wav"] + b"x")[1]
         with self.s.api.changed:
-            self.s.api.changed.wait_for(lambda: self.s.audit.exists(), 5)
+            # the file can exist before its line is written: wait for the line itself
+            self.s.api.changed.wait_for(lambda: self.s.audit.exists() and '"attachment"' in self.s.audit.read_text(), 5)
         line = json.loads(self.s.audit.read_text().splitlines()[-1])
         self.assertEqual(line["attachment"], {k: body[k] for k in ("id", "type", "size", "sha256")})
 
