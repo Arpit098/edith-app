@@ -10,12 +10,27 @@
 # only the steps that need them, are written to $RUNNER_TEMP, never echoed, and deleted at the end.
 name: build-apk
 
+# Which changes build. GitHub doesn't allow `paths` and `paths-ignore` together, so the ignores are
+# `!` patterns; the last pattern matching a file decides. Docs-only changes (Markdown anywhere,
+# docs/, wakeword/ except its models) and the logo's source image don't build. Code, assets the app
+# ships (icons generated from that source live outside brand/) and wake word models do: each is
+# part of the APK or the OTA bundle. Keep the two lists the same.
 on:
   push:
     branches: [main] # phase branches build through their PR, not twice
-    paths: ['app/**', '.github/workflows/build-apk.yml']
+    paths:
+      - 'app/**'
+      - 'wakeword/models/**'
+      - '.github/workflows/build-apk.yml'
+      - '!**/*.md'
+      - '!app/assets/brand/**'
   pull_request:
-    paths: ['app/**', '.github/workflows/build-apk.yml']
+    paths:
+      - 'app/**'
+      - 'wakeword/models/**'
+      - '.github/workflows/build-apk.yml'
+      - '!**/*.md'
+      - '!app/assets/brand/**'
   workflow_dispatch:
 
 concurrency:

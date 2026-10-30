@@ -3,7 +3,7 @@
 import { AppState } from 'react-native';
 
 import type { RequestOptions, ServerConfig, Transport } from '../../../core/ports';
-import { httpRequest, type Fetch } from './http';
+import { httpRequest, httpUpload, type Fetch } from './http';
 import { EventStream, type AppStateLike, type WebSocketFactory, type WebSocketLike } from './stream';
 
 export interface EdithApiOptions {
@@ -45,5 +45,7 @@ export function createEdithApiTransport(opts: EdithApiOptions = {}): Transport {
     stream: (onEvent, onStatus) => stream.listen({ onEvent, onStatus }),
     reconnect: () => stream.reconnect(),
     authorized: (path) => (server ? { url: server.baseUrl + path, headers: { Authorization: `Bearer ${server.token}` } } : null),
+    upload: <T,>(path: string, file: { uri: string; mime: string; name: string }, uopts: RequestOptions & { field?: string } = {}) =>
+      httpUpload<T>(server, path, file, uopts.field ?? 'file', uopts.timeoutMs ?? http.timeoutMs, http.fetch),
   };
 }

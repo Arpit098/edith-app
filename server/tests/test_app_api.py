@@ -86,8 +86,8 @@ class Api:
         token.write_text(TOKEN)
         token.chmod(0o600)
         self.bus, self.registry, self.agent = EventBus(), Registry(), FakeAgent()
-        load_features(["sessions", "control", "approvals", "quick_actions"], self.bus, Ports(agent=self.agent),
-                      self.registry, {})
+        load_features(["sessions", "control", "approvals", "quick_actions", "message_log"], self.bus,
+                      Ports(agent=self.agent), self.registry, {"message_log": {"state_dir": self.dir}})
         self.audit = os.path.join(self.dir, "audit.jsonl")
         self.api = AppApi({"bind": "tailscale", "port": 0, "token_file": str(token), "audit_log": self.audit},
                           resolve_ip=kw.get("resolve_ip", lambda: "127.0.0.1"), allow_loopback=True,
@@ -299,7 +299,9 @@ class RoutesTest(unittest.TestCase):
         self.assertEqual(self.a.call("GET", "/v1/sessions/s1/history?after=s1:10&limit=5")[0], 200)
         self.assertEqual(self.a.call("GET", "/v1/sessions/zz/history")[0], 404)
         self.assertEqual(self.a.call("GET", "/v1/sessions/current/history?limit=x")[0], 400)
-        self.assertEqual(self.a.agent.asked, [(None, None, None, 50), ("s1", "s1:10", None, 5), ("zz", None, None, 50)])
+        self.assertEqual(self.a.agent.asked, [(None, None, None, 50), ("s1", "s1:10", None, 5),
+                                              ("s1", None, "s1:10", 1),  # the entry before the cursor, for the log's time span
+                                              ("zz", None, None, 50)])
 
     def test_messages(self):
         with mock.patch("time.strftime", return_value="2026-11-02 10:43 IST"):

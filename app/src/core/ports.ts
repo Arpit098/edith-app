@@ -36,6 +36,8 @@ export interface Transport {
   reconnect(): void;
   /** Absolute URL and auth headers for a request made outside this transport (a native download). */
   authorized(path: string): { url: string; headers: Record<string, string> } | null;
+  /** POST a file as multipart/form-data (part `field`), answered with JSON. Sent once, never retried. */
+  upload<T>(path: string, file: { uri: string; mime: string; name: string }, opts?: RequestOptions & { field?: string }): Promise<T>;
 }
 
 export type InstallStatus = 'pending' | 'success' | 'cancelled' | 'incompatible' | 'failed';
@@ -82,7 +84,7 @@ export interface OtaUpdates {
 
 export interface SpeechToText {
   /** Audio recorded on the phone -> text (today: whisper.cpp on edith). */
-  transcribe(audio: { uri: string; mime: string }): Promise<{ text: string; language?: string }>;
+  transcribe(audio: { uri: string; mime: string; durationMs?: number }): Promise<{ text: string; language?: string }>;
 }
 
 export interface TextToSpeech {
@@ -90,10 +92,26 @@ export interface TextToSpeech {
   stop(): void;
 }
 
+export interface RecordedAudio {
+  uri: string; // file:// in the app's cache
+  mime: string; // audio/wav: 16 kHz mono 16-bit
+  durationMs: number;
+}
+
+export type RecorderEvent = { kind: 'progress'; elapsedMs: number; level: number } | { kind: 'capped'; elapsedMs: number };
+
+/** The microphone. Push-to-talk today; end-of-speech detection (VAD) joins in Phase 3. */
 export interface Recorder {
-  /** Records until silence (VAD) or until stop() is called. */
-  start(opts?: { stopOnSilence?: boolean }): Promise<void>;
-  stop(): Promise<{ uri: string; mime: string } | null>;
+  /** Ask for the microphone permission if needed; true when it's granted. */
+  ensurePermission(): Promise<boolean>;
+  /** Start recording; it stops by itself at `maxMs` (a 'capped' event). */
+  start(opts: { maxMs: number }): Promise<void>;
+  /** Progress (elapsed, level 0..1) about 10 times a second while recording. */
+  onEvent(handler: (e: RecorderEvent) => void): () => void;
+  /** Finish and return the file, or null if nothing was recording. */
+  stop(): Promise<RecordedAudio | null>;
+  /** Stop and throw the recording away. */
+  cancel(): Promise<void>;
 }
 
 export interface WakeWord {

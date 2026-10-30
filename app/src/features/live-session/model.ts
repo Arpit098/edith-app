@@ -205,7 +205,8 @@ export function summarize(s: LiveState): TurnSummary {
 
 export interface LiveModel {
   store: Store<LiveState>;
-  send(text: string): Promise<void>;
+  /** Send a message; `voice` marks text that came from speech (EDITH answers with a spoken summary first). */
+  send(text: string, opts?: { voice?: boolean }): Promise<void>;
   stop(): Promise<string>;
   press(itemId: number, action: string): Promise<string | null>;
   /** Load the page before the oldest shown (scrolling up). */
@@ -309,8 +310,8 @@ export function createLiveModel(bus: EventBus, api: Api): LiveModel {
 
   return {
     store,
-    async send(text) {
-      await api.send(text); // the message shows up when the transcript echoes it (message.user)
+    async send(text, opts = {}) {
+      await api.send(text, opts.voice ? { voice: true } : {}); // the message shows up when the transcript echoes it (message.user)
     },
     async stop() {
       const r = await api.stop();

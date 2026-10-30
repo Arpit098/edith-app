@@ -44,8 +44,9 @@ export interface EventDataMap {
   'message.system': { text: string; buttons?: ButtonRows; key?: string; ref?: string };
   'message.buttons_cleared': { key: string };
   'command.reply': { ref: string; text: string; buttons?: ButtonRows };
-  // App-local events (published by core/connection.ts, never sent by the server):
-  'app.connected': { first: boolean }; // the stream (re)opened: resync anything the stream may have missed
+  // App-local events (never sent by the server):
+  'app.connected': { first: boolean }; // core/connection.ts: the stream (re)opened; resync what may be missed
+  'app.voice': { state: 'listening' | 'speaking' | 'idle' }; // the voice feature (Phase 3): mic or TTS active
 }
 
 export type EventType = keyof EventDataMap;
