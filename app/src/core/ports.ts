@@ -101,8 +101,8 @@ export interface OngoingStatus {
   openPromotionSettings(): void;
   /** Android 16+: the phone has Live Updates (the Live Alerts pill on OxygenOS). */
   readonly liveUpdates: boolean;
-  /** Post a 30 s demo Live Update, to check the pill without a turn. */
-  testIsland(): void;
+  /** Post a 30 s demo Live Update, to check the pill without a turn: what Arpit will see, or why not. */
+  testIsland(): { ok: boolean; message: string };
 }
 
 export type NotificationChannel = 'replies' | 'approvals' | 'reminders' | 'errors';

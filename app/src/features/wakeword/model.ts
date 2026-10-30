@@ -77,6 +77,8 @@ export interface WakewordModel {
   cancel(): Promise<void>;
   /** Drop a kept clip (a bad take noticed later): local file and, once uploaded, on edith. */
   remove(sha256: string): Promise<void>;
+  /** Delete every recording session on edith and every take on the phone. False if it couldn't finish. */
+  deleteAll(): Promise<boolean>;
   retry(sha256: string): void;
   refreshStatus(): Promise<void>;
   setEnabled(on: boolean): Promise<void>;
@@ -142,6 +144,8 @@ export function createWakewordModel(deps: {
   });
   let disposed = false;
   let pumping = false;
+  let inflight: Promise<void> | null = null; // the upload in progress, for deleteAll to wait on
+  let deleting = false;
   let attempts = 0;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
   let startTimer: ReturnType<typeof setTimeout> | null = null;
@@ -323,12 +327,13 @@ export function createWakewordModel(deps: {
 
   function pump() {
     const s = store.get();
-    if (pumping || disposed || !s.loaded || s.server === 'needs_update' || retryTimer || !deps.online()) return;
+    if (pumping || deleting || disposed || !s.loaded || s.server === 'needs_update' || retryTimer || !deps.online()) return;
     const next = s.clips.find((c) => c.status === 'queued');
     if (!next) return;
     pumping = true;
-    void uploadOne(next).finally(() => {
+    inflight = uploadOne(next).finally(() => {
       pumping = false;
+      inflight = null;
       patch({ uploading: null });
       if (!retryTimer) pump();
     });
@@ -395,6 +400,45 @@ export function createWakewordModel(deps: {
     store.set((s) => ({ ...s, clips: s.clips.filter((c) => c.sha256 !== sha256), last: s.last?.kept && s.last.sha256 === sha256 ? null : s.last }));
   }
 
+  async function deleteAll(): Promise<boolean> {
+    if (deleting) return false;
+    deleting = true; // no new upload starts meanwhile
+    if (retryTimer) clearTimeout(retryTimer);
+    retryTimer = null;
+    attempts = 0;
+    try {
+      await cancel();
+      await inflight; // let the upload in flight land, then delete it with the rest
+      const listing = await transport.request<Record<string, unknown>>('GET', '/v1/wakeword/sessions');
+      for (const x of Array.isArray(listing.sessions) ? listing.sessions : []) {
+        const id = str((x as Record<string, unknown>)?.id);
+        if (!id) continue;
+        try {
+          await transport.request('DELETE', `/v1/wakeword/sessions/${encodeURIComponent(id)}`);
+        } catch (e) {
+          if (!(e instanceof ApiError && e.status === 404)) throw e; // gone already: fine
+        }
+      }
+    } catch (e) {
+      patch({ error: routeMissing(e) ? 'edith needs a server update before recordings can be deleted there.' : `Couldn’t delete the recordings on edith: ${e instanceof Error ? e.message : String(e)}` });
+      deleting = false;
+      pump();
+      return false;
+    }
+    // edith has nothing now: drop the phone's queue and every kept file (orphans included).
+    const uris = new Set(store.get().clips.map((c) => c.uri).filter((u): u is string => !!u));
+    try {
+      for (const u of (await recorder?.kept?.()) ?? []) uris.add(u);
+    } catch {
+      // the listed clips are still deleted below; an orphan goes at the next start
+    }
+    for (const u of uris) await recorder?.discard?.(u).catch((e) => console.warn('[edith] clip file not deleted', e));
+    patch({ sessionId: null, clips: [], last: null, error: null, uploading: null });
+    deleting = false;
+    void refreshStatus();
+    return true;
+  }
+
   // ---- model status ----
 
   async function refreshStatus() {
@@ -443,6 +487,7 @@ export function createWakewordModel(deps: {
     stop,
     cancel,
     remove,
+    deleteAll,
     retry,
     refreshStatus,
     setEnabled,

@@ -1,7 +1,9 @@
 // Settings → Live Alerts: a banner while Live Updates are off for EDITH (OxygenOS asks for each app,
-// and the pill never shows without it), the way to that switch, and a test of the pill.
+// and the pill never shows without it), the way to that switch, and a test of the pill that says
+// what happened (the demo is silent and the pill hides while EDITH is open, so without words a
+// working test looks like nothing).
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import type { AppVisibility, OngoingStatus } from '../../core/ports';
@@ -14,6 +16,21 @@ export function LiveAlertsSettings({ status, visibility }: { status: OngoingStat
   // Back from Android's settings: read the switch again.
   useEffect(() => visibility?.onChange((active) => active && setAllowed(status.canPromote())), [status, visibility]);
   const off = status.liveUpdates && !allowed;
+  const [demo, setDemo] = useState<{ ok: boolean; message: string } | null>(null);
+  const clearTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => void (clearTimer.current && clearTimeout(clearTimer.current)), []);
+  const test = () => {
+    let result: { ok: boolean; message: string };
+    try {
+      result = status.testIsland();
+    } catch (e) {
+      result = { ok: false, message: `Couldn’t run the demo: ${e instanceof Error ? e.message : String(e)}` };
+    }
+    setDemo(result);
+    setAllowed(status.canPromote());
+    if (clearTimer.current) clearTimeout(clearTimer.current);
+    clearTimer.current = result.ok ? setTimeout(() => setDemo(null), DEMO_MS) : null; // the demo's own 30 s
+  };
   return (
     <View style={styles.box}>
       {off ? (
@@ -32,12 +49,20 @@ export function LiveAlertsSettings({ status, visibility }: { status: OngoingStat
         </Text>
       )}
       <View style={styles.row}>
-        <Button small icon="play-circle-outline" label="Test island" onPress={() => status.testIsland()} />
+        <Button small icon="play-circle-outline" label="Test island" onPress={test} />
         <Text style={[styles.dim, styles.flex]}>Shows a 30 s demo. Leave the app to see the pill.</Text>
       </View>
+      {demo ? (
+        <View style={styles.row} accessibilityLiveRegion="polite">
+          <Icon name={demo.ok ? 'check-circle-outline' : 'alert-circle-outline'} size={18} color={demo.ok ? colors.ok : colors.danger} />
+          <Text style={[demo.ok ? styles.text : styles.error, styles.flex]}>{demo.message}</Text>
+        </View>
+      ) : null}
     </View>
   );
 }
+
+const DEMO_MS = 30_000;
 
 const styles = StyleSheet.create({
   box: { gap: space.s, marginTop: space.xs },
@@ -46,4 +71,5 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   text: { color: colors.text, fontSize: 15 },
   dim: { color: colors.textDim, fontSize: 13 },
+  error: { color: colors.danger, fontSize: 15 },
 });

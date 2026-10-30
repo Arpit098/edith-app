@@ -393,4 +393,44 @@ describe('wake word model', () => {
     finish(clipAnswer('s1'));
     await flush();
   });
+
+  it('deletes all recordings: every session on edith, the queue and every file on the phone', async () => {
+    const data = new MemoryData();
+    data.map.set(STORE_KEY, JSON.stringify({ label: 'Phone x', sessionId: 'a', clips: [{ sha256: 'q', kind: 'noise', uri: 'file:///clips/q.wav', seconds: 30, status: 'failed', error: 'x' }] }));
+    const { ctx, recorder, m } = setup({ data });
+    recorder.files = ['file:///clips/q.wav'];
+    await flush();
+    recorder.files = ['file:///clips/q.wav', 'file:///clips/stray.wav'];
+    ctx.transport
+      .on('GET /v1/wakeword/sessions', { sessions: [{ id: 'a', label: 'Phone x' }, { id: 'b', label: 'Phone y' }] })
+      .on('DELETE /v1/wakeword/sessions/a', { deleted: 'a' })
+      .on('DELETE /v1/wakeword/sessions/b', () => {
+        throw new ApiError(404, 'no such session');
+      })
+      .on('GET /v1/wakeword/model', { state: 'no_recordings', model: null });
+    expect(await m.deleteAll()).toBe(true);
+    expect(ctx.transport.calls.filter((c) => c.method === 'DELETE').map((c) => c.path)).toEqual(['/v1/wakeword/sessions/a', '/v1/wakeword/sessions/b']);
+    expect(recorder.discarded.sort()).toEqual(['file:///clips/q.wav', 'file:///clips/stray.wav']);
+    expect(m.store.get()).toMatchObject({ sessionId: null, clips: [], last: null });
+  });
+
+  it('waits for the upload in flight before deleting, and keeps everything if edith fails', async () => {
+    const { ctx, recorder, m } = setup();
+    await flush();
+    let finish!: (v: unknown) => void;
+    ctx.transport.on('POST /v1/wakeword/sessions', { id: 'sess' }).on('UPLOAD /v1/wakeword/sessions/sess/clips?kind=positive_near', () => new Promise((r) => (finish = r)));
+    await recordTake(m, recorder, take('s1'));
+    ctx.transport.on('GET /v1/wakeword/sessions', () => {
+      throw new ApiError(503, 'busy');
+    });
+    const listings = () => ctx.transport.calls.filter((c) => c.method === 'GET' && c.path === '/v1/wakeword/sessions').length;
+    const before = listings();
+    const done = m.deleteAll();
+    await flush();
+    expect(listings()).toBe(before); // still waiting on the upload
+    finish(clipAnswer('s1'));
+    expect(await done).toBe(false);
+    expect(m.store.get().clips.map((c) => c.sha256)).toEqual(['s1']); // nothing dropped on the phone
+    expect(m.store.get().error).toMatch(/Couldn’t delete the recordings on edith: busy/);
+  });
 });
