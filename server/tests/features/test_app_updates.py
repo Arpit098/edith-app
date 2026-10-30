@@ -24,11 +24,12 @@ def sha(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def apk_artifact(run_id, code, signing="release", cert=PIN, runtime="rt1", body=None, lie=False):
+def apk_artifact(run_id, code, signing="release", cert=PIN, runtime="rt1", body=None, lie=False, notes=None):
     body = body if body is not None else f"apk {code}".encode() * 1000
     meta = {"versionName": f"0.{code}", "versionCode": code, "sha": f"sha{code}", "run_id": run_id,
             "built_at": 1793280000 + code, "runtimeVersion": runtime, "size": len(body),
-            "sha256": sha(b"other" if lie else body), "cert_sha256": cert, "signing": signing}
+            "sha256": sha(b"other" if lie else body), "cert_sha256": cert, "signing": signing,
+            **({"release_notes": notes} if notes is not None else {})}
     return {"edith.apk": body, "apk.json": json.dumps(meta).encode()}
 
 
@@ -186,10 +187,32 @@ class RoutesTest(unittest.TestCase):
         self.assertEqual({k: latest[k] for k in ("versionCode", "versionName", "url", "notes", "cert_sha256")},
                          {"versionCode": 1102, "versionName": "0.1102", "url": "/v1/app/apk/1102",
                           "notes": "commit sha1102 since sha1101", "cert_sha256": PIN})
+        self.assertIsNone(latest["release_notes"])  # a build from before release notes
         self.w.restart(pin="AA:BB")  # a different pinned certificate: nothing is offered
         with self.assertRaises(app_updates.ApiError) as cm:
             self.w.route("/v1/app/latest")
         self.assertEqual((cm.exception.status, cm.exception.message), (404, "no app build yet"))
+
+    def test_release_notes_pass_through(self):
+        notes = {"new": ["Attach photos and voice notes", 7], "fixes": ["Messages no longer vanish"],
+                 "changes": [], "details": ["feat: attachments"], "extra": "ignored"}
+        self.w.gh.add_run(104, apk=apk_artifact(104, 1104, notes=notes))
+        asked = []
+        self.w.gh.subjects = lambda base, head, limit=20: asked.append(head) or ["unused"]
+        self.w.collect()
+        latest = self.w.route("/v1/app/latest")
+        self.assertEqual(latest["release_notes"], {"new": ["Attach photos and voice notes"],
+                                                   "fixes": ["Messages no longer vanish"], "changes": [],
+                                                   "details": ["feat: attachments"]})
+        self.assertEqual(latest["notes"], "New: Attach photos and voice notes\nFix: Messages no longer vanish")
+        self.assertEqual(asked, [])  # no commit subjects fetched for a build that has release notes
+
+    def test_empty_release_notes_fall_back_to_commit_subjects(self):
+        self.w.gh.add_run(104, apk=apk_artifact(104, 1104, notes={"new": [], "fixes": [], "changes": [], "details": []}))
+        self.w.collect()
+        latest = self.w.route("/v1/app/latest")
+        self.assertEqual(latest["notes"], "commit sha1104 since sha1102")
+        self.assertEqual(latest["release_notes"]["new"], [])
 
     def test_manifest_rules(self):
         def get(**headers):

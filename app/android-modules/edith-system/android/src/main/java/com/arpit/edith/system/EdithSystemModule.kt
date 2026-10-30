@@ -50,6 +50,7 @@ class EdithSystemModule : Module() {
     Function("notificationsEnabled") { status.enabled() }
     Function("canPromote") { status.canPromote() }
     Function("openPromotionSettings") { if (SUPPORTED) status.openPromotionSettings() }
+    Function("testIsland") { if (SUPPORTED) status.testIsland() }
   }
 }
 

@@ -24,6 +24,11 @@ server. Arpit reviews the work.
   - Small work (doc fixes, tiny tweaks) goes straight to `main`, with no PR.
   - Live deploys use tags made from the phase branch (see `deploy/README.md`).
   - No co-author lines in commits.
+  - **Every PR body has a `## Release notes` block** (`.github/pull_request_template.md`). The app's update
+    screen shows these lines to Arpit, so write them for him:
+    - `New: <one plain sentence>` and `Fix: <one plain sentence>`, one line per item, zero or more of each;
+    - plain words, no jargon, at most about 12 words a line;
+    - CI, refactor or test-only PRs: one line, `Internal: no user-visible change`.
 - **Quality:** the architecture must be solid and efficient, with no brute-force methods.
   - Wait on events (hook event, file change, socket, `Condition`/`Queue`), never fixed sleeps or busy
     loops. If polling can't be avoided, poll with backoff and a timeout, and say why in a comment.

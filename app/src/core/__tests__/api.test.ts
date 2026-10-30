@@ -80,6 +80,23 @@ describe('createApi', () => {
     await expect(createApi(t).appLatest()).rejects.toMatchObject({ status: 502 });
   });
 
+  it('reads the release notes, and older answers without them', async () => {
+    const release = { versionName: '0.3.0', versionCode: 1043, sha256: 'a'.repeat(64), url: '/v1/app/apk/1043', size: 5 };
+    const t = new FakeTransport().on('GET /v1/app/latest', {
+      ...release,
+      notes: 'New: Attach photos',
+      release_notes: { new: ['Attach photos', 3, ''], fixes: ['Messages no longer vanish'], details: 'not a list' },
+    });
+    expect((await createApi(t).appLatest())?.release_notes).toEqual({
+      new: ['Attach photos'],
+      fixes: ['Messages no longer vanish'],
+      changes: [],
+      details: [],
+    });
+    t.on('GET /v1/app/latest', { ...release, notes: 'feat: one\nfix: two' });
+    expect(await createApi(t).appLatest()).toMatchObject({ notes: 'feat: one\nfix: two', release_notes: null });
+  });
+
   it('handles permissions, actions and commands', async () => {
     const t = new FakeTransport()
       .on('GET /v1/permissions', { pending: [{ id: 'ab', tool: 'Bash', detail: 'rm', ref: null, lane: 'main' }] })

@@ -28,6 +28,26 @@ export interface AppUpdateState {
   message: string | null; // what the APK install is doing, or why it stopped
 }
 
+export interface NoteSections {
+  sections: { title: string; items: string[] }[]; // New, Fixes, Changes: only the non-empty ones
+  details: string[]; // "Technical details", shown collapsed
+}
+
+/** A release's notes for the update screen. Builds from before release notes only have commit
+ *  subjects (the plain `notes` text): those go under the technical details. */
+export function noteSections(r: AppRelease): NoteSections {
+  const n = r.release_notes;
+  const sections = n
+    ? [
+        { title: 'New', items: n.new },
+        { title: 'Fixes', items: n.fixes },
+        { title: 'Changes', items: n.changes },
+      ].filter((s) => s.items.length > 0)
+    : [];
+  const details = n && sections.length ? n.details : r.notes.split('\n').map((l) => l.trim()).filter(Boolean);
+  return { sections, details };
+}
+
 export function apkAvailable(s: AppUpdateState): boolean {
   return !!(s.latest && s.installed && s.latest.versionCode > s.installed.versionCode);
 }

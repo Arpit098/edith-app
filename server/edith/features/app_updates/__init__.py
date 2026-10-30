@@ -28,6 +28,26 @@ log = logging.getLogger("edith.feature.app_updates")
 EXPO_HEADERS = {"expo-current-update-id": "current_update_id", "expo-embedded-update-id": "embedded_update_id",
                 "expo-fatal-error": "fatal_error"}
 OFFERED = ("versionName", "versionCode", "sha", "built_at", "runtimeVersion", "size", "sha256", "cert_sha256")
+NOTE_LISTS = {"new": 20, "fixes": 20, "changes": 20, "details": 30}  # list -> most items kept
+PLAIN = (("new", "New"), ("fixes", "Fix"), ("changes", "Change"))
+
+
+def release_notes(value):
+    """apk.json's release_notes (contracts/app-updates.md §2) as {new, fixes, changes, details}: lists
+    of short strings, whatever the build wrote; None when the build has none (older builds)."""
+    if not isinstance(value, dict):
+        return None
+    return {key: [str(x).strip()[:200] for x in (value.get(key) or []) if isinstance(x, str) and x.strip()][:cap]
+            if isinstance(value.get(key), list) else [] for key, cap in NOTE_LISTS.items()}
+
+
+def has_items(notes):
+    return bool(notes) and any(notes[key] for key, _ in PLAIN)
+
+
+def plain_notes(notes):
+    """The release notes as the plain `notes` text that apps from before them show."""
+    return "\n".join(f"{label}: {line}" for key, label in PLAIN for line in notes[key])
 
 
 def setup(ctx: Context) -> None:
@@ -70,7 +90,9 @@ def setup(ctx: Context) -> None:
             result = s.add_apk(run_id, folder, pin)
             if isinstance(result, str):
                 return result
-            s.update_apk(result["versionCode"], notes=notes_for(s, result))
+            # Builds with release notes need no commit subjects from GitHub (one gh call saved).
+            s.update_apk(result["versionCode"],
+                         notes=[] if has_items(release_notes(result.get("release_notes"))) else notes_for(s, result))
             return "collected"
         finally:
             shutil.rmtree(folder, ignore_errors=True)
@@ -152,7 +174,9 @@ def setup(ctx: Context) -> None:
         if not apks:
             raise ApiError(404, "no app build yet")
         apk = max(apks, key=lambda a: a["versionCode"])
-        return {**{k: apk.get(k) for k in OFFERED}, "notes": "\n".join((apk.get("notes") or [])[:20]),
+        notes = release_notes(apk.get("release_notes"))
+        text = plain_notes(notes) if has_items(notes) else "\n".join((apk.get("notes") or [])[:20])
+        return {**{k: apk.get(k) for k in OFFERED}, "notes": text, "release_notes": notes,
                 "url": f"/v1/app/apk/{apk['versionCode']}"}
 
     def apk_file(req):
