@@ -7,6 +7,8 @@
   <!-- EdithSessionService, below. Normal permissions, granted at install. -->
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+  <!-- PushService resumes after a reboot, if Settings → Push is on. -->
+  <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
   <application>
     <!--
@@ -27,6 +29,27 @@
         android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
         android:value="Keeps the connection to the user's own remote assistant session open while a task the user started is running or waits for the user's approval; stops when it ends." />
     </service>
+    <!--
+      PushService, also "specialUse": with the app closed, it holds one connection to the user's own
+      ntfy server on his private network (Tailscale) and shows the notifications it sends: replies,
+      approvals, reminders. There is no push service it could use instead (no Google services or
+      FCM: the server is self-hosted and private). Runs only while the user has turned on Settings →
+      Push; its notification says so.
+    -->
+    <service
+      android:name="com.arpit.edith.system.PushService"
+      android:exported="false"
+      android:foregroundServiceType="specialUse">
+      <property
+        android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+        android:value="Holds the connection to the user's own self-hosted push server (ntfy over a private network) to show notifications from his assistant; on only while the user turns it on." />
+    </service>
+    <receiver android:name="com.arpit.edith.system.PushBootReceiver" android:exported="false">
+      <intent-filter>
+        <action android:name="android.intent.action.BOOT_COMPLETED" />
+        <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+      </intent-filter>
+    </receiver>
     <!-- Allow / Deny on a notification: sends the answer without opening the app. -->
     <receiver android:name="com.arpit.edith.system.NotificationActionReceiver" android:exported="false" />
   </application>
