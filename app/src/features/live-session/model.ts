@@ -4,7 +4,7 @@ import { backoffDelay, type Backoff } from '../../common/backoff';
 import { ApiError, isRetryable, type Api, type HistoryPage, type Reply, type Status } from '../../core/api';
 import { cursorOf, type ButtonRows, type EdithEvent, type EventBus, type Lane, type Origin } from '../../core/events';
 import { bool, buttonRows, num, str } from '../../core/guards';
-import type { SecureStorage } from '../../core/ports';
+import type { KeyValueStore } from '../../core/ports';
 import { createStore, type Store } from '../../core/store';
 
 export const MAX_ITEMS = 400; // the transcript keeps the newest ones; older ones drop off
@@ -96,9 +96,7 @@ export const initialLive: LiveState = {
 
 function push(s: LiveState, ts: number, item: NewItem): LiveState {
   const id = s.seq + 1;
-  const items = [{ ...item, id, ts } as Item, ...s.items];
-  if (items.length > MAX_ITEMS) items.length = MAX_ITEMS;
-  return { ...s, items, seq: id };
+  return { ...s, items: trim([{ ...item, id, ts } as Item, ...s.items]), seq: id };
 }
 
 function update(s: LiveState, id: number, change: (item: Item) => Item): LiveState {
@@ -266,10 +264,18 @@ function apply(s: LiveState, e: EdithEvent): LiveState {
       const text = stripAppHeader(str(d.text)).trim();
       const ref = d.ref ? str(d.ref) : null;
       const delivery = DELIVERIES.has(d.delivery as Delivery) ? (d.delivery as Delivery) : null;
-      // The server's record of a message this app sent: match it by ref (or, for transcript echoes
-      // that carry no ref, by its text), and keep the one item instead of showing it twice.
+      // The server's record of a message this app sent: one item, never two.
       let i = ref ? findUser(s, (x) => x.ref === ref) : -1;
-      if (i < 0 && !ref && e.origin === 'app') i = findOldestUser(s, (x) => !!x.local && !x.echoed && x.local.status !== 'failed' && x.text === text);
+      if (i < 0 && ref && e.origin === 'app') {
+        // The server publishes this while still answering the POST, so it usually beats the POST's
+        // answer: the message is still in flight with no ref. Adopt the ref on the oldest such message
+        // with the same text (only in-flight ones: a waiting message hasn't reached the server).
+        i = findOldestUser(s, (x) => !!x.local && !x.echoed && x.ref === null && x.local.status === 'sending' && x.text === text);
+      }
+      if (i < 0 && !ref && e.origin === 'app') {
+        // An older server's transcript echo (no ref): only messages the server has acknowledged.
+        i = findOldestUser(s, (x) => !!x.local && !x.echoed && x.local.status === 'sent' && x.text === text);
+      }
       if (i >= 0) {
         const item = s.items[i] as Extract<Item, { kind: 'user' }>;
         return update(s, item.id, () => ({ ...item, echoed: true, ref: item.ref ?? ref, delivery: delivery ?? item.delivery }));
@@ -279,8 +285,13 @@ function apply(s: LiveState, e: EdithEvent): LiveState {
     case 'message.assistant': {
       const lane = d.lane === 'side' ? 'side' : null;
       const ref = d.ref ? str(d.ref) : null;
-      if (lane && ref && s.items.some((x) => x.kind === 'assistant' && x.lane === 'side' && x.ref === ref)) return s; // already shown from turn.done
-      return push(s, ts, { kind: 'assistant', text: str(d.text), lane, ref });
+      const text = str(d.text);
+      const shown = lane && ref ? s.items.find((x) => x.kind === 'assistant' && x.lane === 'side' && x.ref === ref) : undefined;
+      if (shown) {
+        // Already shown from turn.done: message.assistant is the clean text, so it wins.
+        return shown.kind === 'assistant' && shown.text !== text && text ? update(s, shown.id, (x) => ({ ...x, text }) as Item) : s;
+      }
+      return push(s, ts, { kind: 'assistant', text, lane, ref });
     }
     case 'tool.call': {
       const next = push(s, ts, { kind: 'tool', name: str(d.name), summary: str(d.summary), status: 'running', result: null });
@@ -404,17 +415,46 @@ function system(text: string, tone: 'info' | 'error' = 'info', extra: Partial<Sy
  */
 export function fromHistory(s: LiveState, page: HistoryPage): LiveState {
   const empty: LiveState = { ...s, items: [], calls: {}, cursor: page.cursor || null, older: page.more ? page.start : null };
-  const rebuilt = page.events.reduce(reduce, empty);
-  const keep = s.items.filter(isLocalOnly).filter((x) => {
-    if (x.kind === 'assistant') return !rebuilt.items.some((y) => y.kind === 'assistant' && y.ref === x.ref && y.ref !== null);
-    if (x.kind !== 'user') return true;
-    // The history has this message now (it was answered in the main lane): drop the local copy.
-    return !rebuilt.items.some((y) => y.kind === 'user' && ((x.ref !== null && y.ref === x.ref) || (y.origin === 'app' && y.text === x.text)));
-  });
+  let rebuilt = page.events.reduce(reduce, empty);
+  const keep: Item[] = [];
+  // Messages sent from here keep their local state (ticks, status) on the history's copy, by ref.
+  for (const x of s.items) {
+    if (x.kind !== 'user' || !x.local || !x.echoed || x.ref === null) continue;
+    const copy = rebuilt.items.find((y) => y.kind === 'user' && y.ref === x.ref);
+    if (copy) rebuilt = update(rebuilt, copy.id, (y) => (y.kind === 'user' ? { ...y, local: x.local, reaction: y.reaction ?? x.reaction } : y));
+  }
+  for (const x of s.items.filter(isLocalOnly)) {
+    if (x.kind === 'assistant') {
+      if (!rebuilt.items.some((y) => y.kind === 'assistant' && y.ref !== null && y.ref === x.ref)) keep.push(x);
+      continue;
+    }
+    if (x.kind !== 'user') continue;
+    // Matched by ref only: the history's copy of this message takes over, keeping its local state
+    // (ticks, status). A message without a ref (in flight, waiting, failed) is always kept.
+    const copy = x.ref === null ? undefined : rebuilt.items.find((y) => y.kind === 'user' && y.ref === x.ref);
+    if (copy) rebuilt = update(rebuilt, copy.id, (y) => (y.kind === 'user' ? { ...y, local: x.local, delivery: y.delivery ?? x.delivery } : y));
+    else keep.push(x);
+  }
   if (!keep.length) return rebuilt;
-  const items = [...rebuilt.items, ...keep].sort((a, b) => b.ts - a.ts);
-  if (items.length > MAX_ITEMS) items.length = MAX_ITEMS;
-  return { ...rebuilt, items };
+  return { ...rebuilt, items: trim([...rebuilt.items, ...keep].sort((a, b) => b.ts - a.ts)) };
+}
+
+/** Messages this app sent that the server hasn't recorded yet: never trimmed away. */
+function isPending(x: Item): boolean {
+  return x.kind === 'user' && !!x.local && !x.echoed;
+}
+
+/** At most MAX_ITEMS (newest first): the oldest go, except pending messages. */
+function trim(items: Item[]): Item[] {
+  if (items.length <= MAX_ITEMS) return items;
+  let excess = items.length - MAX_ITEMS;
+  const out: Item[] = [];
+  for (let i = items.length - 1; i >= 0; i--) {
+    const x = items[i]!;
+    if (excess > 0 && !isPending(x)) excess--;
+    else out.push(x);
+  }
+  return out.reverse();
 }
 
 /** Older events (a `before` page) added below the ones shown, as far as MAX_ITEMS allows. */
@@ -538,7 +578,7 @@ function undelivered(e: unknown): boolean {
   return isRetryable(e) && !(e instanceof ApiError && e.message === 'timed out'); // a timeout may have arrived
 }
 
-export function createLiveModel(bus: EventBus, api: Api, storage?: SecureStorage): LiveModel {
+export function createLiveModel(bus: EventBus, api: Api, storage?: KeyValueStore): LiveModel {
   const store = createStore(initialLive);
   const myRefs = new Set<string>(); // presses whose later replies (command.reply) belong in this view
   let localSeq = Date.now(); // keys stay unique across restarts
@@ -546,33 +586,39 @@ export function createLiveModel(bus: EventBus, api: Api, storage?: SecureStorage
   let retryAttempt = 0;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
-  /** POST a message already shown locally, then link it to its turn (or mark it waiting/failed). */
-  async function post(key: string, text: string, voice: boolean): Promise<boolean> {
+  /** POST a message already shown locally, then link it to its turn, or mark it waiting (offline) or failed. */
+  async function post(key: string, text: string, voice: boolean): Promise<'sent' | 'waiting' | 'failed'> {
     try {
       const r = await api.send(text, voice ? { voice: true } : {});
       store.set((s) => sentLocal(s, key, r.ref, r.lane));
-      return true;
+      return 'sent';
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       if (undelivered(e)) {
         store.set((s) => setLocal(s, key, 'waiting', message));
         scheduleFlush();
-      } else {
-        store.set((s) => failedLocal(s, key, message));
+        return 'waiting';
       }
-      return false;
+      store.set((s) => failedLocal(s, key, message));
+      return 'failed';
     }
   }
 
-  /** Send waiting messages, oldest first, one at a time; stop at the first that can't go yet. */
+  const oldestWaiting = () => outboxOf(store.get()).find((e) => e.status === 'waiting');
+
+  /**
+   * Send waiting messages one at a time, oldest first. The next one is read afresh each time, so a
+   * message queued meanwhile goes in order. One that fails for good (e.g. a 400) is marked failed
+   * and the rest carry on; only "still offline" stops (post() reschedules).
+   */
   async function flush() {
     if (flushing) return;
     flushing = true;
     try {
-      const waiting = outboxOf(store.get()).filter((e) => e.status === 'waiting');
-      for (const e of waiting) {
-        store.set((s) => setLocal(s, e.key, 'sending', null));
-        if (!(await post(e.key, e.text, e.voice))) return; // still offline: post() rescheduled
+      for (let e = oldestWaiting(); e; e = oldestWaiting()) {
+        const key = e.key;
+        store.set((s) => setLocal(s, key, 'sending', null));
+        if ((await post(key, e.text, e.voice)) === 'waiting') return;
       }
       retryAttempt = 0;
     } finally {
@@ -588,15 +634,24 @@ export function createLiveModel(bus: EventBus, api: Api, storage?: SecureStorage
     }, backoffDelay(retryAttempt++, OUTBOX_BACKOFF));
   }
 
-  // Persist the outbox whenever it changes (writes are rare: a send, an ack, an echo).
+  // Persist the outbox whenever it changes (writes are rare: a send, an ack, an echo). Writes go in
+  // order; `saved` moves only after a write succeeds, so a failed one is written again next time.
   let saved = '';
+  let queued = '';
   let writing: Promise<unknown> = Promise.resolve();
   const offSave = storage
     ? store.subscribe(() => {
         const json = JSON.stringify(outboxOf(store.get()));
-        if (json === saved) return;
-        saved = json;
-        writing = writing.then(() => storage.set(OUTBOX_KEY, json)).catch(() => {}); // in order; a failed write is retried by the next change
+        if (json === queued) return;
+        queued = json;
+        writing = writing.then(async () => {
+          try {
+            await storage.set(OUTBOX_KEY, json);
+            saved = json;
+          } catch {
+            if (queued === json) queued = saved; // the next change retries
+          }
+        });
       })
     : () => {};
   if (storage) {
@@ -712,6 +767,12 @@ export function createLiveModel(bus: EventBus, api: Api, storage?: SecureStorage
     async send(text, opts = {}) {
       const key = `local-${++localSeq}`;
       store.set((s) => addLocal(s, key, text, !!opts.voice, Date.now() / 1000));
+      if (flushing || oldestWaiting()) {
+        // Older messages are still on their way: this one queues behind them, keeping the order.
+        store.set((s) => setLocal(s, key, 'waiting', null));
+        await flush();
+        return;
+      }
       await post(key, text, !!opts.voice);
     },
     async retry(key) {

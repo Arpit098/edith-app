@@ -7,14 +7,14 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { DiffView } from '../../ui/DiffView';
 import { Icon } from '../../ui/Icon';
 import { ReplyButtons } from '../../ui/ReplyButtons';
+import { StatusTick } from '../../ui/StatusTick';
 import { colors, mono, radius, space } from '../../ui/theme';
 import { clockIST } from '../../common/format';
 import type { Item, SendStatus, Tick } from './model';
 
 const ORIGIN_LABEL: Record<string, string> = { telegram: 'Telegram', terminal: 'Terminal', app: '', system: '' };
 
-/** Outline icons (stroke only, muted grey) for Arpit's messages, sized to the time text. */
-const TICK_ICON: Record<Tick, string> = { clock: 'clock-outline', sent: 'check', delivered: 'check-all', failed: 'alert-circle-outline' };
+/** Accessibility labels for the status ticks (drawn by ui/StatusTick). */
 const TICK_LABEL: Record<Tick, string> = { clock: 'Not sent yet', sent: 'Sent', delivered: 'EDITH has it', failed: 'Not sent, tap to retry' };
 
 /** A caption only where the state isn't obvious from the ticks. */
@@ -51,7 +51,7 @@ export const ItemView = memo(function ItemView({ item, onPress, tick, status, on
               <Text style={styles.time}>{clockIST(item.ts)}</Text>
               {tick ? (
                 <View accessibilityLabel={TICK_LABEL[tick]}>
-                  <Icon name={TICK_ICON[tick]} size={13} color={colors.textDim} />
+                  <StatusTick kind={tick} color={colors.textDim} />
                 </View>
               ) : null}
             </View>

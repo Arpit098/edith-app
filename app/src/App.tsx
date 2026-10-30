@@ -7,6 +7,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { createAndroidInstaller } from './adapters/installer/android';
 import { createAndroidRecorder } from './adapters/recorder/android';
+import { createAsyncStorage } from './adapters/storage/async-storage';
 import { createSecureStorage } from './adapters/storage/secure-store';
 import { createServerWhisper } from './adapters/stt/server-whisper';
 import { createExpoOtaUpdates } from './adapters/updates/expo-updates';
@@ -22,6 +23,7 @@ import { colors } from './ui/theme';
 function boot() {
   const transport = createEdithApiTransport();
   const storage = createSecureStorage();
+  const data = createAsyncStorage();
   const installer = createAndroidInstaller() ?? undefined;
   const ota = createExpoOtaUpdates();
   const recorder = createAndroidRecorder() ?? undefined;
@@ -29,7 +31,7 @@ function boot() {
   const bus = new EventBus();
   const api = createApi(transport);
   const connection = new Connection(transport, storage, bus);
-  const loaded = loadFeatures(features, { bus, ports: { transport, storage, installer, ota, recorder, stt }, api, connection });
+  const loaded = loadFeatures(features, { bus, ports: { transport, storage, data, installer, ota, recorder, stt }, api, connection });
   return { connection, loaded };
 }
 

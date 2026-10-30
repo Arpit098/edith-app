@@ -123,15 +123,20 @@ export interface WakeWord {
 }
 
 /** Android Keystore-backed storage for the token and server address. */
-export interface SecureStorage {
+/** String values by key. Each set() is atomic. */
+export interface KeyValueStore {
   get(key: string): Promise<string | null>;
   set(key: string, value: string): Promise<void>;
   remove(key: string): Promise<void>;
 }
 
+/** Small secrets (the token): Android Keystore-encrypted, a few KB at most per value. */
+export type SecureStorage = KeyValueStore;
+
 export interface Ports {
   transport: Transport;
   storage: SecureStorage;
+  data?: KeyValueStore; // app data that isn't secret (the message outbox); absent in tests and web
   installer?: AppInstaller; // absent where the native module isn't (tests, web)
   ota?: OtaUpdates;
   // Built in later phases (PLAN.md §6); absent until then.

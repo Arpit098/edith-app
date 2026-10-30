@@ -296,3 +296,130 @@ describe('the outbox', () => {
     expect(outboxOf(s)).toHaveLength(1);
   });
 });
+
+describe('review fixes (PR #8)', () => {
+  const app = { origin: 'app' as const };
+
+  it('message.user arriving BEFORE the POST answers: one bubble, which adopts the ref', async () => {
+    const { ctx, m } = setup();
+    let answer: (v: unknown) => void = () => {};
+    ctx.transport.on('POST /v1/messages', () => new Promise((r) => (answer = r)));
+    const sending = m.send('check the disk');
+    ctx.bus.publish(ev('message.user', { ref: 'app:e1', text: 'check the disk', delivery: 'main', lane: 'main' }, app)); // before the answer
+    expect(users(m.store.get())).toHaveLength(1);
+    expect(mine(m.store.get())).toMatchObject({ ref: 'app:e1', echoed: true, local: { status: 'sending' } });
+    answer({ ref: 'app:e1', lane: 'main' });
+    await sending;
+    expect(users(m.store.get())).toHaveLength(1);
+    expect(mine(m.store.get())).toMatchObject({ ref: 'app:e1', local: { status: 'sent' } });
+  });
+
+  it('never matches a waiting message by text: neither an echo nor a history refetch removes it', async () => {
+    const { ctx, m } = setup();
+    ctx.transport.on('POST /v1/messages', { ref: 'app:ok1', lane: 'main' });
+    await m.send('ok'); // sent and answered earlier
+    ctx.transport.on('POST /v1/messages', () => {
+      throw new ApiError(0, 'Network request failed');
+    });
+    await m.send('ok'); // offline: waiting
+    const waiting = () => users(m.store.get()).find((x) => x.local?.status === 'waiting');
+    expect(waiting()).toBeDefined();
+
+    // Someone else's "ok" (no ref) and a history page holding the first "ok" don't touch it.
+    ctx.bus.publish(ev('message.user', { text: 'ok' }, app));
+    ctx.transport.on('GET /v1/sessions/current/history?limit=100', {
+      ...EMPTY_PAGE,
+      events: [{ type: 'message.user', ts: 1, session_id: 's1', origin: 'app', data: { text: 'ok', ref: 'app:ok1', cursor: 's1:5' } }],
+    });
+    ctx.bus.publish(localEvent('app.connected', { first: true }));
+    await flush();
+    await flush();
+    expect(waiting()).toBeDefined();
+    expect(users(m.store.get()).find((x) => x.ref === 'app:ok1')?.local).toMatchObject({ status: 'sent' }); // history copy keeps its ticks
+  });
+
+  it('a clean message.assistant replaces the side-lane text shown from turn.done', () => {
+    let s = reduce(initialLive, ev('turn.done', { ref: 'r', lane: 'side', text: 'raw\nREACT: 👍' })); // an older server: no display_text
+    s = reduce(s, ev('message.assistant', { ref: 'r', lane: 'side', text: 'raw' }));
+    const answers = s.items.filter((x) => x.kind === 'assistant');
+    expect(answers).toHaveLength(1);
+    expect(answers[0]).toMatchObject({ text: 'raw' });
+  });
+
+  it('one failure for good does not strand the queued messages behind it', async () => {
+    const { ctx, m } = setup();
+    ctx.transport.on('POST /v1/messages', () => {
+      throw new ApiError(0, 'Network request failed');
+    });
+    await m.send('a');
+    await m.send('bad');
+    await m.send('c');
+    const sent: string[] = [];
+    ctx.transport.on('POST /v1/messages', (body: unknown) => {
+      const text = (body as { text: string }).text;
+      if (text === 'bad') throw new ApiError(400, 'text is required');
+      sent.push(text);
+      return { ref: `app:${text}`, lane: 'main' };
+    });
+    ctx.bus.publish(localEvent('app.connected', { first: false }));
+    for (let i = 0; i < 6; i++) await flush();
+    expect(sent).toEqual(['a', 'c']);
+    expect(users(m.store.get()).find((x) => x.text === 'bad')?.local?.status).toBe('failed');
+  });
+
+  it('a new send queues behind a flush in progress, keeping the order', async () => {
+    const { ctx, m } = setup();
+    ctx.transport.on('POST /v1/messages', () => {
+      throw new ApiError(0, 'Network request failed');
+    });
+    await m.send('one');
+    const order: string[] = [];
+    let release: () => void = () => {};
+    ctx.transport.on('POST /v1/messages', (body: unknown) => {
+      const text = (body as { text: string }).text;
+      order.push(text);
+      return text === 'one' ? new Promise((r) => (release = () => r({ ref: 'app:1', lane: 'main' }))) : { ref: 'app:2', lane: 'main' };
+    });
+    ctx.bus.publish(localEvent('app.connected', { first: false })); // flush starts: 'one' in flight
+    await flush();
+    const second = m.send('two'); // queued behind 'one' (send() resolves once it's queued)
+    await second;
+    await flush();
+    expect(order).toEqual(['one']);
+    expect(users(m.store.get()).find((x) => x.text === 'two')?.local?.status).toBe('waiting');
+    release();
+    for (let i = 0; i < 4; i++) await flush();
+    expect(order).toEqual(['one', 'two']);
+  });
+
+  it('pending messages survive the MAX_ITEMS cap', async () => {
+    const { ctx, m } = setup();
+    ctx.transport.on('POST /v1/messages', () => {
+      throw new ApiError(0, 'Network request failed');
+    });
+    await m.send('keep me');
+    for (let i = 0; i < 450; i++) ctx.bus.publish(ev('message.assistant', { text: `line ${i}` }));
+    expect(users(m.store.get()).map((x) => x.text)).toEqual(['keep me']);
+  });
+
+  it('the outbox counts as saved only after a successful write', async () => {
+    const storage = new MemoryStorage();
+    let failing = true;
+    const set = storage.set.bind(storage);
+    storage.set = async (k: string, v: string) => {
+      if (failing) throw new Error('disk full');
+      return set(k, v);
+    };
+    const { ctx, m } = setup(storage);
+    ctx.transport.on('POST /v1/messages', () => {
+      throw new ApiError(0, 'Network request failed');
+    });
+    await m.send('first'); // every write fails
+    await flush();
+    expect(storage.data.get(OUTBOX_KEY)).toBeUndefined();
+    failing = false;
+    await m.send('second'); // the next change writes everything, the first message included
+    await flush();
+    expect(JSON.parse(storage.data.get(OUTBOX_KEY) ?? '[]').map((e: { text: string }) => e.text)).toEqual(['first', 'second']);
+  });
+});
