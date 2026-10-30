@@ -11,6 +11,7 @@ import android.graphics.RenderNode
 import android.graphics.RuntimeShader
 import android.graphics.Shader
 import android.os.Build
+import android.util.Log
 import android.view.View
 import android.view.ViewTreeObserver
 import androidx.annotation.RequiresApi
@@ -124,15 +125,36 @@ class GlassView(context: Context, appContext: AppContext) : ExpoView(context, ap
   override fun draw(canvas: Canvas) {
     if (capturing > 0) return // we're being recorded as part of another glass's backdrop
     val b = backdrop()
-    if (b != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && canvas.isHardwareAccelerated && width > 0 && height > 0) {
-      drawGlass(canvas, b)
+    if (!failed && b != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && canvas.isHardwareAccelerated && width > 0 && height > 0) {
+      // Glass is decoration: whatever goes wrong drawing it (a GPU driver refusing the effect, say),
+      // this view stops trying and the JS fallback underneath shows. The app never crashes for it.
+      try {
+        drawGlass(canvas, b)
+      } catch (e: RuntimeException) {
+        failed = true
+        Log.w(TAG, "glass off for this view: ${e.message}")
+      }
     }
+    if (failed) drawFlat(canvas)
     super.draw(canvas)
+  }
+
+  private var failed = false
+
+  /** After a failure: the tint, nearly opaque, so the surface still reads as a panel (JS made it transparent). */
+  private fun drawFlat(canvas: Canvas) {
+    val r = cornerRadiusDp * density
+    clip.rewind()
+    clip.addRoundRect(0f, 0f, width.toFloat(), height.toFloat(), r, r, Path.Direction.CW)
+    tintPaint.setARGB((maxOf(tint[3], 0.88f) * 255).toInt(), (tint[0] * 255).toInt(), (tint[1] * 255).toInt(), (tint[2] * 255).toInt())
+    canvas.drawPath(clip, tintPaint)
   }
 
   @RequiresApi(Build.VERSION_CODES.S)
   private fun drawGlass(canvas: Canvas, b: View) {
-    val shader = mode == "shader" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+    // RuntimeShader exists from Android 13; and if the lens ever fails to compile (shaderBroken),
+    // every view falls back to blur.
+    val shader = mode == "shader" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !shaderBroken
     val blurPx = (blurDp * density).coerceAtLeast(1f)
     // Room around the glass for the blur's reach and the lens looking inward from the rim.
     val margin = ceil(blurPx * 2 + if (shader) refractionDp * density else 0f).toInt()
@@ -159,16 +181,17 @@ class GlassView(context: Context, appContext: AppContext) : ExpoView(context, ap
       n.endRecording()
     }
     n.setRenderEffect(effectFor(shader, w, h, margin, blurPx))
+    val lensOn = shader && !shaderBroken // false if the lens just failed to compile: blur, clip and tint here
 
     val r = cornerRadiusDp * density
     clip.rewind()
     clip.addRoundRect(0f, 0f, width.toFloat(), height.toFloat(), r, r, Path.Direction.CW)
     canvas.save()
-    if (!shader) canvas.clipPath(clip) // the shader shapes and antialiases its own edge
+    if (!lensOn) canvas.clipPath(clip) // the lens shapes and antialiases its own edge
     canvas.translate(-margin.toFloat(), -margin.toFloat())
     canvas.drawRenderNode(n)
     canvas.restore()
-    if (!shader && tint[3] > 0f) {
+    if (!lensOn && tint[3] > 0f) {
       tintPaint.setARGB((tint[3] * 255).toInt(), (tint[0] * 255).toInt(), (tint[1] * 255).toInt(), (tint[2] * 255).toInt())
       canvas.drawPath(clip, tintPaint)
     }
@@ -180,8 +203,19 @@ class GlassView(context: Context, appContext: AppContext) : ExpoView(context, ap
     val key = listOf(shader, w, h, margin, blurPx, cornerRadiusDp, refractionDp, bezelDp, dispersion, saturation, specular, tint.toList())
     effect?.let { if (key == effectKey) return it }
     val blur = RenderEffect.createBlurEffect(blurPx, blurPx, Shader.TileMode.CLAMP)
-    val e = if (shader) {
-      lens(blur, margin)
+    val lensEffect = if (shader) {
+      try {
+        lens(blur, margin)
+      } catch (e: IllegalArgumentException) { // the AGSL didn't compile on this device
+        shaderBroken = true
+        Log.w(TAG, "lens shader unavailable, blur only: ${e.message}")
+        null
+      }
+    } else {
+      null
+    }
+    val e = if (lensEffect != null) {
+      lensEffect
     } else {
       val m = ColorMatrix().apply { setSaturation(saturation) }
       RenderEffect.createChainEffect(RenderEffect.createColorFilterEffect(ColorMatrixColorFilter(m)), blur)
@@ -210,5 +244,10 @@ class GlassView(context: Context, appContext: AppContext) : ExpoView(context, ap
   companion object {
     /** > 0 while some glass records its backdrop: glass views inside that backdrop draw nothing. UI thread only. */
     internal var capturing = 0
+
+    /** The lens shader failed to compile once: no view tries again (UI thread only). */
+    internal var shaderBroken = false
+
+    private const val TAG = "EdithGlass"
   }
 }
