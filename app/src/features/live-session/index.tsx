@@ -5,6 +5,7 @@ import type { Connection } from '../../core/connection';
 import { localEvent } from '../../core/events';
 import { str } from '../../core/guards';
 import type { FeatureModule, PanelProps } from '../../core/feature';
+import { useStoreOr } from '../../core/store';
 import { createStore } from '../../core/store';
 import { createAttachmentsModel, type AttachmentsModel } from './attachments';
 import { LiveScreen } from './LiveScreen';
@@ -13,6 +14,7 @@ import { sendWithReply, type Quote } from './reply';
 import { StatusChip, StatusPopup } from './StatusPanel';
 import { createVoiceModel, type VoiceModel } from './voice';
 import { VoiceSettings } from './VoiceSettings';
+import { voiceSummary } from './summary';
 
 let model: LiveModel | null = null;
 let voice: VoiceModel | null = null;
@@ -35,6 +37,10 @@ function Settings() {
   return voice ? <VoiceSettings voice={voice} /> : null;
 }
 
+function useVoiceSummary() {
+  return useStoreOr(voice?.store, voiceSummary, null);
+}
+
 function Chip({ backdrop }: PanelProps) {
   return model && connection ? <StatusChip model={model} connection={connection} open={status} backdrop={backdrop} /> : null;
 }
@@ -46,7 +52,7 @@ function Popup({ top, backdrop }: PanelProps) {
 const liveSession: FeatureModule = {
   id: 'live-session',
   screens: [{ name: 'live', title: 'Live', component: Screen, tab: true, icon: 'message-text-outline' }],
-  settings: [{ title: 'Voice input', component: Settings }],
+  settings: [{ title: 'Voice input', component: Settings, group: 'voice', icon: 'microphone-outline', order: 10, summary: useVoiceSummary }],
   panels: [{ slot: 'header', component: Chip, overlay: Popup }],
   setup: ({ bus, api, ports, connection: conn }) => {
     const m = createLiveModel(bus, api, ports.data, ports.visibility);

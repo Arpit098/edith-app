@@ -3,8 +3,10 @@
 
 import type { Connection } from '../../core/connection';
 import type { FeatureModule } from '../../core/feature';
+import { useStoreOr } from '../../core/store';
 import { createPushModel, defaultNtfyUrl, type PushModel } from './model';
 import { PushSettings } from './PushSettings';
+import { pushSummary } from './summary';
 
 let current: { model: PushModel; connection: Connection } | null = null;
 
@@ -12,9 +14,13 @@ function Settings() {
   return current ? <PushSettings model={current.model} defaultUrl={defaultNtfyUrl(current.connection.store.get().baseUrl)} /> : null;
 }
 
+function useSummary() {
+  return useStoreOr(current?.model.store, pushSummary, 'Not available on this phone');
+}
+
 const push: FeatureModule = {
   id: 'push',
-  settings: [{ title: 'Push', component: Settings }],
+  settings: [{ title: 'Push', component: Settings, group: 'notifications', icon: 'bell-outline', order: 10, summary: useSummary }],
   setup: ({ ports, api, connection }) => {
     if (!ports.push) return;
     const mine = {

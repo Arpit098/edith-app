@@ -4,9 +4,11 @@
 
 import type { EventBus } from '../../core/events';
 import type { FeatureModule } from '../../core/feature';
+import { useStoreOr } from '../../core/store';
 import { createWakewordModel, type WakewordModel } from './model';
 import { TrainScreen } from './TrainScreen';
 import { WakeWordSettings } from './WakeWordSettings';
+import { wakewordSummary } from './summary';
 
 let model: WakewordModel | null = null;
 let bus: EventBus | null = null;
@@ -19,11 +21,15 @@ function Settings() {
   return model && bus ? <WakeWordSettings model={model} bus={bus} /> : null;
 }
 
+function useSummary() {
+  return useStoreOr(model?.store, wakewordSummary, null);
+}
+
 const wakeword: FeatureModule = {
   id: 'wakeword',
   screens: [{ name: 'wakeword', title: 'Train wake word', component: Screen }],
   tool: { title: 'Wake word', icon: 'account-voice', screen: 'wakeword' },
-  settings: [{ title: 'Wake word', component: Settings }],
+  settings: [{ title: 'Wake word', component: Settings, group: 'voice', icon: 'account-voice', order: 20, summary: useSummary }],
   setup: (ctx) => {
     const m = createWakewordModel({
       bus: ctx.bus,

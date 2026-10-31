@@ -57,6 +57,10 @@
 2. Fill in the exported `FeatureModule`: its screens, settings, event handlers and, for a tool, its
    `tool` tile for the Tools grid (see "Adding a new tool" below). A feature that must show above
    every screen (like approvals) adds a `panels: [{ slot: 'banner', component }]`.
+   - A settings section is a row in Settings that opens `component` on its own page. Give it its place:
+     `group` (`connection`, `notifications`, `voice`, `app`; none goes under More), an outline `icon`,
+     an `order` within the group, and a `summary` hook returning one line of live state (e.g.
+     `useStoreOr(model?.store, mySummary, null)`, with `mySummary` a pure function in `summary.ts`).
    - Put the logic in `model.ts`: a `createXModel(bus, api)` with a small store (`core/store.ts`),
      subscribed to bus events in `setup(ctx)`. Resync from the API on `app.connected`; never poll.
      Screens read it with `useStore(model.store, selector)`, using module-level selectors.
