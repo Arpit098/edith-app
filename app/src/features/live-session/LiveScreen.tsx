@@ -237,6 +237,8 @@ const OlderSpinner = memo(function OlderSpinner({ model }: { model: LiveModel })
 });
 
 const selectBusy = (s: LiveState) => summarize(s).busy;
+// While EDITH works, a new message is read by the running task before it answers; /btw runs it in parallel instead.
+export const BUSY_PLACEHOLDER = 'Message · /btw runs in parallel';
 
 const selectVoicePhase = (s: VoiceState) => s.phase;
 const selectVoiceError = (s: VoiceState) => s.error;
@@ -369,7 +371,7 @@ const Composer = memo(function Composer({ model, voice, attach, backdrop, menu, 
                 value={text}
                 onChangeText={edit}
                 onFocus={closeMenu}
-                placeholder="Message"
+                placeholder={busy ? BUSY_PLACEHOLDER : 'Message'}
                 placeholderTextColor={colors.textFaint}
                 multiline
                 maxLength={8000}

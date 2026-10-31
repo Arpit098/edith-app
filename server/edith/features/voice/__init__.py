@@ -66,15 +66,19 @@ def setup(ctx: Context) -> None:
                 voice_refs.popitem(last=False)
 
     def on_turn(ev: Event) -> None:
-        ref = ev.data.get("ref")
+        # A turn's end also ends the messages it took in while running (`answers`, read mid-turn):
+        # each voice one gets its voice.reply, but the line is said once, by the first.
+        refs = [ev.data.get("ref")] + (list(ev.data.get("answers") or ()) if ev.type in ENDS else [])
         with lock:
-            if ref not in voice_refs:
-                return
+            mine = [r for r in refs if r in voice_refs]
             if ev.type in ENDS:
-                del voice_refs[ref]
-        said = speak_for(ev.type, ev.data)
-        if said:
-            ctx.bus.publish(Event("voice.reply", {"ref": ref, "outcome": said[0], "speak": said[1]},
+                for r in mine:
+                    del voice_refs[r]
+        said = speak_for(ev.type, ev.data) if mine else None
+        if not said:
+            return
+        for i, r in enumerate(mine):
+            ctx.bus.publish(Event("voice.reply", {"ref": r, "outcome": said[0], "speak": said[1] if i == 0 else ""},
                                   origin="app", session_id=ev.session_id))
 
     ctx.subscribe("voice.turn", on_voice_turn)

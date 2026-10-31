@@ -83,6 +83,8 @@ def speak_for(kind: str, data: dict) -> tuple[str, str] | None:
         return "failed", FAILED.get(data.get("reason"), "Something went wrong with that task.")
     if kind == "turn.stopped":
         return "stopped", "Stopped."
+    if kind == "turn.queued" and data.get("fold"):  # the running task reads it before it answers
+        return "queued", "Got it. I'll read that before I answer."
     if kind == "turn.queued":
         return "queued", f"Queued. You're number {data.get('position', 1)}."
     return None

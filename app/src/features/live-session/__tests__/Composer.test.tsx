@@ -11,7 +11,7 @@ import { ChromeContext, GlassContext } from '../../../core/theme';
 import type { AttachmentsModel, DraftsState } from '../attachments';
 import { CLOSE_LABEL, MENU_LABEL } from '../ComposerMenu';
 import { toast } from '../../../ui/toast';
-import { LiveScreen } from '../LiveScreen';
+import { BUSY_PLACEHOLDER, LiveScreen } from '../LiveScreen';
 import { initialLive, type LiveModel } from '../model';
 import type { Quote } from '../reply';
 import type { VoiceModel, VoiceState } from '../voice';
@@ -139,6 +139,18 @@ describe('Composer', () => {
     await act(async () => press(r, 'Stop'));
     expect(f.model.stop).toHaveBeenCalled();
     expect(toast).toHaveBeenCalledWith('Stopped');
+  });
+
+  it('says /btw runs a message in parallel while EDITH works (a plain one is read by the running task)', () => {
+    const f = fakes();
+    const r = render(f);
+    const box = () => r.root.findAllByType(TextInput).find((n) => n.props.accessibilityLabel === 'Message')!;
+    expect(box().props.placeholder).toBe('Message');
+    act(() => f.model.store.set((s) => ({ ...s, main: 'busy' })));
+    expect(box().props.placeholder).toBe(BUSY_PLACEHOLDER);
+    expect(BUSY_PLACEHOLDER).toContain('/btw');
+    act(() => f.model.store.set((s) => ({ ...s, main: 'idle' })));
+    expect(box().props.placeholder).toBe('Message');
   });
 });
 

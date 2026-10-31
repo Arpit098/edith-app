@@ -1,6 +1,10 @@
-"""ClaudeTmux, the agent port. Main lane = the interactive Claude in tmux; while it is busy, new
-messages run at once in side lanes (`claude -p` forks of the conversation, up to max_side_lanes),
-and the main lane is told what they did on its next turn; otherwise they queue.
+"""ClaudeTmux, the agent port. Main lane = the interactive Claude in tmux. While it is busy, a new
+message waits for it (busy_policy "queue", the default) and the running turn types it into the pane
+at once, so Claude Code folds it into that turn (delivery "mid_turn") and the one reply answers both;
+one Claude Code hadn't taken in when the turn ended becomes the next turn. A message sent with
+/btw (send(parallel=True)), or every message under busy_policy "side_lane", runs at once in a side
+lane instead (a `claude -p` fork of the conversation, up to max_side_lanes), and the main lane is
+told what it did on its next turn; with no side lane free it waits like the rest.
 
 The rules are the legacy bridge's (dispatch, run_tmux, run_claude, sessions, /stop, the permission
 relay). What Telegram showed is now a stream of events (contracts/events.md) that the frontends
@@ -34,6 +38,7 @@ import tempfile
 import threading
 import time
 
+from edith.common.claude_screen import read_screen
 from edith.common.paths import resolve
 from edith.common.state import StateFile
 from edith.common.text import clean_prompt, reply_parts, take_directives
@@ -52,6 +57,10 @@ log = logging.getLogger("edith.adapter.claude_tmux")
 MAX_QUEUE = 50          # messages waiting for the main lane; more than this is refused
 MAX_REFS = 500          # run id -> ref of delivered messages, so the live view can skip their transcript copy
 MID_TURN = "The user sent a new message while you were working"
+BUSY_POLICIES = ("queue", "side_lane")
+# A selection dialog at the bottom of the pane (AskUserQuestion and other pickers): typing a message
+# and Enter there would pick an option.
+DIALOG = re.compile(r"Enter to (?:select|confirm)|↑/↓ to (?:navigate|select)|Esc to cancel", re.I)
 COMPACT_ERROR = re.compile(r"Error (?:during compaction|compacting conversation)[^\n]*")
 PANE_CHECK = 5.0        # seconds; /compact errors appear only on screen, which can't be watched
 MAX_TYPED = 16          # slash commands typed for frontends, remembered to skip their transcript echo
@@ -108,6 +117,10 @@ class ClaudeTmux:
         self.mcp_config = config.get("mcp_config") or os.path.join(bridge, "mcp.json")
         self.launch = config.get("launch") or os.path.join(bridge, "edith-claude.sh")
         self.max_side = self.max_side_lanes = int(config.get("max_side_lanes", 2))
+        self.busy_policy = config.get("busy_policy", "queue")  # main lane busy: "queue" (read mid-turn) or "side_lane"
+        if self.busy_policy not in BUSY_POLICIES:
+            log.warning("busy_policy %r isn't one of %s; using \"queue\"", self.busy_policy, ", ".join(BUSY_POLICIES))
+            self.busy_policy = "queue"
         self.ready_timeout = float(config.get("ready_timeout", 90))
         self.alive_every = float(config.get("check_alive_every", 5))
         self.stop_grace = float(config.get("stop_grace", 15))
@@ -134,7 +147,8 @@ class ClaudeTmux:
         self._refs: collections.OrderedDict[str, str] = collections.OrderedDict()
         # Slash commands the bridge typed for a frontend (/compact, /clear) and when: Claude writes each
         # to the transcript as a bare "/…" entry, which the live view skips instead of showing as Terminal.
-        self._typed: collections.deque[tuple[str, float]] = collections.deque(maxlen=MAX_TYPED)
+        self._typed: collections.deque[list] = collections.deque(maxlen=MAX_TYPED)  # [text, time typed or rearmed]
+        self._main_run: Run | None = None  # the main-lane turn being followed (send() wakes it to fold a message in)
 
     # Read on first use, so building the adapter (e.g. `make check`) touches no file.
     @functools.cached_property
@@ -273,20 +287,25 @@ class ClaudeTmux:
 
     # ---- dispatch ----
 
-    def send(self, text, origin, ref, force_queue=False):
-        """Main lane if it's free; otherwise a side lane if one is free; otherwise queue (always while held)."""
+    def send(self, text, origin, ref, force_queue=False, parallel=False):
+        """Main lane if it's free. Otherwise: a side lane if one is free and the message asks for one
+        (parallel: /btw) or busy_policy is "side_lane"; else the queue, where (busy_policy "queue")
+        the running turn takes it in at once (`fold`). force_queue (/queue) and a held session always
+        queue, for a turn of its own."""
         with self._lock:  # message.user goes out before the job is queued, so it always comes first
             held = self._held is not None
             if not held and not self.main_busy.is_set() and self._main.empty():
                 self.main_busy.set()
                 self._accepted(text, origin, ref, "main", "main")
-                self._main.put((text, origin, ref))
+                self._main.put((text, origin, ref, False))
                 return TurnHandle(ref, "main")
-            if not held and not force_queue and self._side_busy < self.max_side:
+            side = parallel or self.busy_policy == "side_lane"
+            if side and not held and not force_queue and self._side_busy < self.max_side:
                 self._side_busy += 1
                 self._accepted(text, origin, ref, "side_lane", "side")
                 self._side.put((text, origin, ref))
                 return TurnHandle(ref, "side")
+            fold = self.busy_policy == "queue" and not held and not force_queue
             self._accepted(text, origin, ref, "queued", "queued")
             waiting = len(self._held or ())
             position = self._main.qsize() + waiting + 1
@@ -294,14 +313,17 @@ class ClaudeTmux:
                 if self._main.qsize() + waiting >= MAX_QUEUE:
                     raise queue.Full
                 if held:
-                    self._held.append((text, origin, ref))  # the main worker never sees it until release()
+                    self._held.append((text, origin, ref, False))  # the main worker never sees it until release()
                 else:
-                    self._main.put_nowait((text, origin, ref))
+                    self._main.put_nowait((text, origin, ref, fold))
             except queue.Full:
                 self._publish("turn.failed", origin, ref=ref, lane="main", reason="queue_full",
                               detail=f"{MAX_QUEUE} messages are already waiting")
                 return TurnHandle(ref, "refused")
-        self._publish("turn.queued", origin, ref=ref, position=position)
+            host = self._main_run
+        self._publish("turn.queued", origin, ref=ref, position=position, fold=fold)
+        if fold and host and host.watch:
+            host.watch.wake()  # the running turn types it in now
         return TurnHandle(ref, "queued")
 
     def _main_worker(self):
@@ -310,15 +332,45 @@ class ClaudeTmux:
             if job is None or self._stopping.is_set():
                 return
             self.main_busy.set()
+            pending = [job]
             try:
-                self._run_main(*job)
+                while pending:  # a message typed during a turn that Claude Code hadn't taken in is the next turn
+                    job = pending.pop(0)
+                    pending = self._run_main(*job) + pending
             except Exception as e:
                 log.exception("main lane failed")
-                self._publish("turn.failed", job[1], ref=job[2], lane="main", reason="bridge_error", detail=str(e))
+                for j in [job] + pending:
+                    self._publish("turn.failed", j[1], ref=j[2], lane="main", reason="bridge_error", detail=str(e))
             finally:
                 with self._lock:
                     if self._main.empty():
                         self.main_busy.clear()
+
+    def _take_fold(self):
+        """The next queued message if the running turn may take it in (`fold`) now, off the queue;
+        else None. Not while the turn is at a dialog (a permission, the rate-limit menu, a question):
+        the Enter that submits it could answer that. Peeked, the screen checked, then taken under the
+        queue's own lock only if it is still the same job, so stop() draining the queue meanwhile
+        can't hand over a different one (only this thread and stop() take from it)."""
+        q = self._main
+        with q.mutex:
+            head = q.queue[0] if q.queue else None
+        if head is None or not head[3] or not self._fold_safe():
+            return None
+        with q.mutex:
+            if not q.queue or q.queue[0] is not head:
+                return None
+            q.queue.popleft()
+            q.not_full.notify()
+            return head
+
+    def _fold_safe(self):
+        """Whether typing into the pane now can only add a message: no permission request is waiting
+        and the screen shows no dialog."""
+        if self._perms_pending():
+            return False
+        pane = self.tmux.pane()
+        return not read_screen(pane)["blocked"] and not DIALOG.search(pane)
 
     def _side_worker(self):
         while not self._stopping.is_set():
@@ -374,31 +426,68 @@ class ClaudeTmux:
         lines = [NOTES_HEADER] + [f"- Arpit: {n['q']}\n  EDITH: {n['a']}" for n in notes]
         return "\n".join(lines) + "\n\n" + prompt
 
-    def _run_main(self, text, origin, ref):
+    def _type_fold(self, job):
+        """Type a queued message into the pane during a turn: Claude Code folds it into that turn.
+        Its rid counts as known first, so the live view never shows it a second time."""
+        rider = Run(job[2], "main", job[1])
+        with self._lock:
+            self._refs[rider.rid] = rider.ref
+        self.tmux.submit(f"{job[0]}\n[tg-ref {rider.rid}]")
+        return rider
+
+    def _run_main(self, text, origin, ref, fold=False, typed=None, tails=None, riders=None):
         """Hand the message to the tmux Claude and follow the turn: the hooks log a "prompt" event
         when our message (tagged [tg-ref <rid>]) is submitted and a "stop" event with the reply; the
-        transcript gives live progress and shows an Esc interrupt (which fires no Stop hook)."""
-        prompt = self._with_side_notes(text)
-        if not self.tmux.wait_ready(self.ready_timeout):
-            self._publish("turn.failed", origin, ref=ref, lane="main", reason="not_ready",
-                          detail="The Claude session in tmux isn't ready")
-            return
-        run = Run(ref, "main", origin)
+        transcript gives live progress and shows an Esc interrupt (which fires no Stop hook).
+
+        Once it is submitted, queued messages marked `fold` are typed in at once (riders): each one
+        Claude Code takes into this turn gets message.delivered "mid_turn" and no turn of its own (this
+        turn's reply answers it). Riders not taken in when the turn ends were typed but are still
+        waiting in Claude Code: they are returned, to be followed (`typed`, no second typing) as the
+        next turn, reading on with the same `tails`. -> that list ([] usually)."""
+        if typed is None:
+            if not self.tmux.wait_ready(self.ready_timeout):
+                self._publish("turn.failed", origin, ref=ref, lane="main", reason="not_ready",
+                              detail="The Claude session in tmux isn't ready")
+                return []
+        run = typed or Run(ref, "main", origin)
+        # Typed riders not seen yet (in order), and the ones this turn took in: kept on the Run, so
+        # whatever happens to the turn, each of them gets an end too.
+        run.waiting = {f"[tg-ref {r.rid}]": (r, j) for r, j in (riders or [])}
+        run.folded = []
+        try:
+            return self._follow_main(run, text, origin, ref, typed, tails)
+        except Exception as e:
+            for r in run.folded + [r for r, _ in run.waiting.values()]:
+                self._publish("turn.failed", r, ref=r.ref, lane="main", reason="bridge_error", detail=str(e))
+            raise
+
+    def _follow_main(self, run, text, origin, ref, typed, tails):
+        """_run_main's turn, from submitting it to its end event."""
+        if typed is None:
+            prompt = self._with_side_notes(text)
+        waiting = run.waiting
         self._track(run)
         _write_atomic(self.paths.tmux_run, run.rid)
         self._publish("turn.started", run, ref=ref, lane="main")
         tag = f"[tg-ref {run.rid}]"
-        events = Tail(self.paths.tmux_events)
-        transcript = Tail(self._tmux_session().get("transcript_path"))
+        events, transcript = tails or (Tail(self.paths.tmux_events), Tail(self._tmux_session().get("transcript_path")))
         outcome, reply, sid, submitted, delivered = None, None, None, False, False
         early_stop, tag_ts = None, None
+        typed_at = time.monotonic()
         try:
             with Watch(self.paths.state_dir, self.paths.transcripts) as watch:
                 run.watch = watch
-                self.tmux.submit(f"{prompt}\n{tag}")
+                with self._lock:
+                    self._main_run = run
+                if typed is None:
+                    self.tmux.submit(f"{prompt}\n{tag}")
                 last_check = time.monotonic()
                 while outcome is None:
-                    for ev, _ in events.read():
+                    while submitted and not run.stop_requested and not self._stopping.is_set() and (job := self._take_fold()):
+                        rider = self._type_fold(job)
+                        waiting[f"[tg-ref {rider.rid}]"] = (rider, job)
+                    for ev, _, end in events.read_spans():
                         if ev.get("event") == "prompt" and ev.get("ref") == run.rid:
                             submitted, sid = True, ev.get("session_id")
                             if not delivered:
@@ -406,18 +495,31 @@ class ClaudeTmux:
                                 self._delivered(run, "main")
                         elif ev.get("event") == "stop" and submitted:
                             reply, sid, outcome = ev.get("text") or "", ev.get("session_id") or sid, "done"
+                            if waiting:
+                                events.offset = end  # what follows is a typed rider's own turn: left for it
+                                break
                         elif ev.get("event") == "stop":
                             early_stop = ev  # may belong to us if our tag is in this same batch of the transcript
                     current = self._tmux_session().get("transcript_path")
                     if current != transcript.path:  # /clear or a resume switched transcripts
                         transcript.switch(current)
-                    for entry, raw in transcript.read():
+                    start = transcript.offset
+                    for entry, raw, end in transcript.read_spans():
+                        if any(t in raw for t in waiting) and tag not in raw and own_turn(entry):
+                            transcript.offset = start  # a typed rider began its own turn: it reads on from here
+                            break
+                        start = end
                         if tag in raw:
                             submitted = True  # also covers a message queued into a running turn
                             tag_ts = entry_time(entry)
                             if not delivered:
                                 delivered = True
                                 self._delivered(run, "main" if own_turn(entry) else "mid_turn")
+                        for rider_tag in [t for t in waiting if t in raw]:
+                            if tag in raw or not own_turn(entry):  # in this turn (or sent along with our prompt)
+                                rider = waiting.pop(rider_tag)[0]
+                                run.folded.append(rider)
+                                self._delivered(rider, "mid_turn")
                         if not submitted or entry.get("isSidechain"):
                             continue
                         for step in tool_uses(entry):
@@ -436,6 +538,8 @@ class ClaudeTmux:
                     now = time.monotonic()
                     if outcome is None and run.stop_requested and now - run.stop_requested > self.stop_grace:
                         outcome = "stopped"
+                    if outcome is None and typed and not submitted and now - typed_at > self.ready_timeout:
+                        outcome = "lost"  # typed during the last turn, but Claude Code never sent it
                     if outcome is None and now - last_check >= self.alive_every:
                         last_check = now
                         if not self.tmux.alive():
@@ -446,22 +550,39 @@ class ClaudeTmux:
                             wait = min(wait, run.stop_requested + self.stop_grace - now + 0.01)
                         watch.wait(wait)
         finally:
+            with self._lock:
+                self._main_run = None
             self._untrack(run)
             self._remove(self.paths.tmux_run)
         elapsed = int(time.time() - run.started)
+        left = list(waiting.values())  # typed riders this turn didn't take in, in order
+        answers = {"answers": [r.ref for r in run.folded]} if run.folded else {}  # what its end answers too (contracts/events.md)
 
         if sid:  # side lanes fork from whatever the tmux session is now
             self.state.update(lambda s: s.setdefault("sessions", {}).__setitem__(self.key, sid))
         if outcome == "stopped":
-            self._publish("turn.stopped", run, ref=ref, lane="main")
-        elif outcome == "crashed":
-            self._publish("turn.failed", run, ref=ref, lane="main", reason="crashed",
-                          detail="The Claude session in tmux exited; it restarts on its own")
-        else:
-            parts = reply_parts(reply)
-            self._publish("turn.done", run, ref=ref, lane="main", text=reply, steps=run.steps, elapsed=elapsed,
-                          is_error=False, subtype="success", display_text=parts["text"], files=parts["files"],
-                          reaction=parts["reaction"])
+            if left:
+                self.tmux.clear_input()  # Claude Code may put typed, unsent riders back in the box after Esc
+            self._publish("turn.stopped", run, ref=ref, lane="main", **answers)
+            for r, _ in left:
+                self._publish("turn.stopped", r, ref=r.ref, lane="main")
+            return []
+        if outcome in ("crashed", "lost"):
+            detail = ("The Claude session in tmux exited; it restarts on its own" if outcome == "crashed"
+                      else "Claude didn't take in the message; send it again")
+            reason = "crashed" if outcome == "crashed" else "not_ready"
+            self._publish("turn.failed", run, ref=ref, lane="main", reason=reason, detail=detail, **answers)
+            for r, _ in left:
+                self._publish("turn.failed", r, ref=r.ref, lane="main", reason=reason, detail=detail)
+            return []
+        parts = reply_parts(reply)
+        self._publish("turn.done", run, ref=ref, lane="main", text=reply, steps=run.steps, elapsed=elapsed,
+                      is_error=False, subtype="success", display_text=parts["text"], files=parts["files"],
+                      reaction=parts["reaction"], **answers)
+        if not left:
+            return []
+        (first, job), rest = left[0], left[1:]
+        return [(job[0], job[1], job[2], False, first, (events, transcript), rest)]
 
     # ---- side lanes: `claude -p` forks ----
 

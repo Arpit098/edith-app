@@ -35,7 +35,7 @@ class SimTmux(FakeTmux):
 
     def __init__(self, home, changed):
         super().__init__(on_submit=self._submit, on_key=self._key)
-        self.home, self.script, self.changed = home, [], changed
+        self.home, self.script, self.changed, self.running = home, [], changed, False
         self.transcript = home / ".claude/projects" / re.sub(r"[^A-Za-z0-9]", "-", str(home / "edith")) / "s1.jsonl"
 
     def _event(self, **ev):
@@ -50,21 +50,29 @@ class SimTmux(FakeTmux):
         m = REF.search(text)
         if not m:
             return
-        self._event(event="prompt", ref=m[1])
-        self._line({"type": "user", "message": {"content": text}})
-        self._line({"type": "assistant", "message": {"content": [
-            {"type": "tool_use", "name": "Bash", "input": {"command": "ls", "description": "List files"}}]}})
-        action = self.script.pop(0) if self.script else ("hang",)
-        if action[0] == "reply":
-            self._event(event="stop", text=action[1])
+        if self.running:  # typed while it works: Claude Code folds it into the running turn
+            self._line({"type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": "t0", "content": "ok"},
+                {"type": "text", "text": f"The user sent a new message while you were working:\n{text}"}]}})
+        else:
+            self._event(event="prompt", ref=m[1])
+            self._line({"type": "user", "message": {"content": text}})
+            self._line({"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "name": "Bash", "input": {"command": "ls", "description": "List files"}}]}})
+            action = self.script.pop(0) if self.script else ("hang",)
+            if action[0] == "reply":
+                self._event(event="stop", text=action[1])
+            self.running = action[0] == "hang"
         with self.changed:  # the test can wait for a submission like for a Telegram call
             self.changed.notify_all()
 
     def finish(self, text):
         self._event(event="stop", text=text)
+        self.running = False
 
     def _key(self, key):
         if key == "Escape":
+            self.running = False
             self._line({"type": "user", "message": {"content": "[Request interrupted by user]"}})
 
 
@@ -84,11 +92,11 @@ def fixture(home):
 
 
 class New:
-    def __init__(self, home):
+    def __init__(self, home, busy_policy="side_lane"):  # the legacy recording ran every busy message in a side lane
         self.home = home
         self.tg = FakeTelegram()
         self.tmux = SimTmux(home, self.tg.changed)
-        self.agent = ClaudeTmux({"chat_key": "111", "claude_bin": FAKE_CLAUDE},
+        self.agent = ClaudeTmux({"chat_key": "111", "claude_bin": FAKE_CLAUDE, "busy_policy": busy_policy},
                                 tmux=Tmux(runner=self.tmux, start_service=lambda: None, settle_step=0.005))
         self.bus, self.registry = EventBus(), Registry()
         report = load_features(FEATURES, self.bus, Ports(agent=self.agent), self.registry, {})
@@ -207,6 +215,47 @@ class TelegramEndToEndTest(unittest.TestCase):
             try:
                 self.assertEqual([c["method"] for c in w.startup], ["deleteWebhook", "setMyCommands"])
                 self.assertEqual(w.startup[1]["commands"], golden("commands/set_my_commands.json"))
+            finally:
+                w.close()
+
+    def test_busy_messages_are_read_mid_task_and_btw_runs_in_parallel(self):
+        with temp_home() as home, mock.patch.dict(os.environ, {"FAKE_CLAUDE_PLAN": str(fixture(home)),
+                                                               "FAKE_CLAUDE_LOG": str(home / "argv.jsonl")}):
+            w = New(home, busy_policy="queue")
+            try:
+                reactions = lambda mid: [p["reaction"][0]["emoji"] for m, p in w.tg.calls  # noqa: E731
+                                         if m == "setMessageReaction" and p["message_id"] == mid]
+                w.message(message("a long task", message_id=3))
+                w.tg.wait(lambda: len(w.tmux.submitted) == 1)
+                w.message(message("also check the logs", message_id=4))
+                w.tg.wait(lambda: "✍" in reactions(4))  # read by the running task
+                self.assertFalse(any(t.startswith("📥 Queued") for t in w.tg.texts()))
+                self.assertIn("also check the logs", w.tmux.submitted[1])
+                w.message(message("/btw what time is it", message_id=5))
+                w.tg.wait(lambda: "Side answer." in w.tg.texts())  # a parallel lane answered
+                self.assertTrue(any(t.startswith("⚡ ⏳ On it (parallel lane)") for t in w.tg.texts()))
+                self.assertEqual(len(w.tmux.submitted), 2)  # /btw never went into the main turn
+                w.tmux.finish("Both done.")
+                w.tg.wait(lambda: "Both done." in w.tg.texts())
+                w.tg.wait(lambda: "👍" in reactions(4))  # answered by that reply, in its own chat
+                self.assertEqual(w.tg.texts().count("Both done."), 1)  # one reply for both messages
+            finally:
+                w.close()
+
+    def test_a_folded_telegram_message_gets_the_answer_when_the_turn_came_from_the_app(self):
+        with temp_home() as home, mock.patch.dict(os.environ, {"FAKE_CLAUDE_PLAN": str(fixture(home)),
+                                                               "FAKE_CLAUDE_LOG": str(home / "argv.jsonl")}):
+            w = New(home, busy_policy="queue")
+            try:
+                w.agent.send("[App message from Arpit, x]\na long task", "app", "app:1")  # from the phone app
+                w.tg.wait(lambda: len(w.tmux.submitted) == 1)
+                w.message(message("and the logs?", message_id=4))
+                w.tg.wait(lambda: any(m == "setMessageReaction" and p["message_id"] == 4 and p["reaction"][0]["emoji"] == "✍"
+                                      for m, p in w.tg.calls))
+                w.tmux.finish("Logs are clean.")
+                w.tg.wait(lambda: "Logs are clean." in w.tg.texts())
+                sent = next(p for m, p in w.tg.calls if m == "sendMessage" and p["text"] == "Logs are clean.")
+                self.assertEqual((sent["chat_id"], sent["reply_parameters"]["message_id"]), (111, 4))  # quoting it
             finally:
                 w.close()
 

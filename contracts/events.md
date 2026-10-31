@@ -25,7 +25,7 @@ Every event on the bus, and on the app's `/v1/stream` WebSocket, has this shape:
 | `session.changed` | `{session_id, title, source}` | New, resumed or cleared session |
 | `session.switched` | `{ref, result, session_id}` | A conversation switch (`/resume`, a `sess:` button, `POST /v1/sessions/{id}/resume`) is over: always the last event of that switch, after its `command.reply` messages and `session.changed`. `result`: `ok`, `already`, `busy`, `missing` or `failed`; `ref` is the one the request returned (for Telegram, its message id) |
 | `lane.status` | `{main: idle/busy, side: n, queued: n}` | Lane state changes |
-| `turn.queued` | `{ref, position}` | A message waits for the main lane (all lanes busy, or `/queue`) |
+| `turn.queued` | `{ref, position, fold}` | A message waits for the main lane (it is busy, or `/queue`). `fold`: the running turn reads it before its answer (`message.delivered` `mid_turn` follows, no turn of its own); `false` for `/queue`, a held session or busy_policy `side_lane`: it gets a turn of its own later |
 | `turn.progress` | `{ref, lane, steps, step, elapsed}` | A running turn moves on (`step` is the latest tool summary, e.g. `$ npm test`) |
 | `turn.failed` | `{ref, reason, detail}` | A turn ends without a reply. `reason`: `not_ready`, `crashed` or `error` |
 | `reminder.due` | `{id, text, every, due, late}` | A reminder fires. `due` is a unix time; `late` is true if it fired over 2 minutes late |
@@ -43,6 +43,8 @@ Fields the agent adds (new fields only; existing meanings unchanged):
   or `side`). `turn.started` is sent once the turn is really running (for the main lane, after the
   tmux Claude is ready), so a `not_ready` failure has no `turn.started` before it.
 - `turn.done` also carries `is_error` and `subtype` (Claude's result subtype, e.g. `success`).
+- A main-lane `turn.done`, `turn.stopped` or `turn.failed` carries `answers: [ref]` when Claude read other
+  messages during that turn (delivery `mid_turn`, see "While EDITH is busy"): its end is theirs too.
 - `turn.failed` with `reason: error` carries `code` (the exit code) and `stderr` (its last 800 characters).
   Two more reasons: `queue_full` (too many messages already waiting) and `bridge_error` (a bug;
   `detail` has the message).
@@ -113,6 +115,19 @@ message never vanishes from the app, whichever way it reaches Claude. All carry 
 
   A queued message gets `message.delivered` when its turn starts. `rid` is the run id in the prompt's
   `[tg-ref <rid>]` tag.
+- **While EDITH is busy** (busy_policy `queue`, the default): a new message is queued with `fold: true`
+  and typed into the running turn at once, so Claude reads it before its answer: `message.delivered`
+  `mid_turn`, then that turn's end (`turn.done`, `turn.stopped` or `turn.failed`) answers it too: it lists
+  the refs it took in as `answers` (it has no turn events of its own). Telegram sends the reply to a
+  Telegram message in `answers` unless it already goes to that chat; voice gives each voice message in
+  `answers` its `voice.reply` (the line said once). It is never typed while the turn is at a dialog (a
+  permission, the rate-limit menu, a question), so its Enter can't answer one; it waits for the next
+  wake-up instead. If the turn
+  ends before Claude Code took it in, it becomes the next turn instead (`turn.started`, `message.delivered`
+  `main`, `turn.done` with its own `ref`). `/stop` stops it with the running turn (`turn.stopped`, lane
+  `main`). A message starting with `/btw` (a command: `/btw <task>`) runs in a side lane at once
+  (`delivery: "side_lane"`), its text without `/btw`; with no side lane free it is queued like the rest.
+  busy_policy `side_lane` keeps the old behaviour: every busy message goes to a free side lane.
 - **Typed commands.** An app message whose first word is a registered command (`/compact`, `/stop`,
   `/status`, `/queue`, `/help`, …; the same list as `GET /v1/commands` plus unlisted ones like `/start`)
   runs that command through the registry, exactly as on Telegram; Claude never sees it. In order: `message.user`

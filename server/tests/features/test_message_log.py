@@ -72,7 +72,7 @@ class DeliveryTest(unittest.TestCase):
         self.assertEqual([(u["data"]["text"], u["data"]["ref"]) for u in users], [("Path works correctly.", "app:2")])
 
     def test_side_lane_message_and_answer(self):
-        w = World(self)
+        w = World(self, busy_policy="side_lane")  # every busy message to a side lane (/btw takes the same path)
         w.h.mode = "hang"
         w.send("a long task", "app:3")
         w.h.wait("turn.progress", "app:3")
