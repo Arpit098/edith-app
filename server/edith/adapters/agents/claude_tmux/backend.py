@@ -243,17 +243,28 @@ class ClaudeTmux:
     def _type_command(self, command):
         """Type a slash command into the tmux Claude for a frontend, remembering it (see _typed_echo)."""
         with self._lock:
-            self._typed.append((" ".join(command.split()), time.monotonic()))
+            self._typed.append([" ".join(command.split()), time.monotonic()])
         self.tmux.command(command)
 
+    def _rearm(self, command):
+        """Restart a typed command's ECHO_WINDOW from now: /compact's transcript entry is written only
+        once compaction is over, which can take minutes. A no-op once its echo was matched."""
+        text, now = " ".join(command.split()), time.monotonic()
+        with self._lock:
+            for entry in self._typed:
+                if entry[0] == text:
+                    entry[1] = now
+                    return
+
     def _typed_echo(self, text):
-        """Whether a bare "/…" transcript entry is the echo of a command typed by _type_command in the
-        last ECHO_WINDOW seconds. Each typed command matches once; the same command typed in tmux by
-        hand (no match, or later) still shows, as Terminal."""
+        """Whether a bare "/…" transcript entry is the echo of a command typed by _type_command (or
+        rearmed) in the last ECHO_WINDOW seconds. Each typed command matches once; the same command
+        typed in tmux by hand (no match, or later) still shows, as Terminal."""
         text, now = " ".join(text.split()), time.monotonic()
         with self._lock:
-            while self._typed and now - self._typed[0][1] > ECHO_WINDOW:
-                self._typed.popleft()
+            fresh = [e for e in self._typed if now - e[1] <= ECHO_WINDOW]
+            if len(fresh) != len(self._typed):
+                self._typed = collections.deque(fresh, maxlen=MAX_TYPED)
             for i, (typed, _) in enumerate(self._typed):
                 if typed == text:
                     del self._typed[i]
@@ -688,18 +699,21 @@ class ClaudeTmux:
             with Watch(self.paths.state_dir, self.paths.transcripts) as watch:
                 self.tmux.clear_input()
                 self._type_command(command)
-                deadline = time.monotonic() + self.compact_timeout
-                while True:
-                    session = self._tmux_session()
-                    if session.get("source") == "compact" and session.get("ts", 0) >= started:
-                        return "ok", ""
-                    error = COMPACT_ERROR.search(self.tmux.pane())
-                    if error:
-                        return "failed", error.group(0).strip()
-                    left = deadline - time.monotonic()
-                    if left <= 0:
-                        return "failed", f"no answer from Claude in {int(self.compact_timeout)} s"
-                    watch.wait(min(left, PANE_CHECK))
+                try:
+                    deadline = time.monotonic() + self.compact_timeout
+                    while True:
+                        session = self._tmux_session()
+                        if session.get("source") == "compact" and session.get("ts", 0) >= started:
+                            return "ok", ""
+                        error = COMPACT_ERROR.search(self.tmux.pane())
+                        if error:
+                            return "failed", error.group(0).strip()
+                        left = deadline - time.monotonic()
+                        if left <= 0:
+                            return "failed", f"no answer from Claude in {int(self.compact_timeout)} s"
+                        watch.wait(min(left, PANE_CHECK))
+                finally:
+                    self._rearm(command)  # its transcript entry comes after compaction, minutes after typing
         finally:
             with self._lock:
                 if self._main.empty():

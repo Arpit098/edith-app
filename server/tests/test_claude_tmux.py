@@ -378,6 +378,28 @@ class LiveViewTest(unittest.TestCase):
         users = [(e.origin, e.data["text"]) for e in h.events if e.type == "message.user"]
         self.assertEqual(users, [("terminal", "/compact keep the plan"), ("terminal", "after")])  # each typed command matches once
 
+    def test_compacts_echo_is_skipped_even_when_it_comes_minutes_after_typing(self):
+        h = Harness(self)
+        self.assertTrue(h.agent._live.ready.wait(5))
+        clock, result = [1000.0], []
+        with mock.patch("edith.adapters.agents.claude_tmux.backend.time.monotonic", lambda: clock[0]):
+            t = threading.Thread(target=lambda: result.append(h.agent.compact("keep the plan")))
+            t.start()
+            deadline = time.monotonic() + 5  # (the real clock) until compact() has typed it
+            while not any(k.startswith("/compact") for k in h.fake.typed) and time.monotonic() < deadline:
+                time.sleep(0.01)
+            clock[0] += 120  # compaction takes two minutes
+            h.set_session("s1", ts=time.time() + 1, source="compact")  # the SessionStart hook: done
+            t.join(5)
+            self.assertEqual(result, [("ok", "")])
+            clock[0] += 5  # Claude writes its bare "/compact …" entry after compacting
+            h.transcript_line({"type": "user", "message": {"content": "/compact keep the plan"}})
+            h.transcript_line({"type": "user", "message": {"content": "after"}})
+            with h.cond:
+                h.cond.wait_for(lambda: any(e.data.get("text") == "after" for e in h.events), 5)
+        users = [e.data["text"] for e in h.events if e.type == "message.user"]
+        self.assertEqual(users, ["after"])  # not a "Terminal" /compact
+
     def test_a_typed_command_is_remembered_for_30_seconds_only(self):
         h = Harness(self)
         clock = [1000.0]
