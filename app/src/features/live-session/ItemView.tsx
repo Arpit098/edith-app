@@ -6,10 +6,13 @@
 // bottom-right; the lit top edge is the sheen). List glass: no live blur and no extra view per row,
 // nor any clipping, so a long chat scrolls as cheaply as before. The text is white or black per
 // bubble colour (theme BubbleLook.ink), at 4.5:1 or more on every background, quotes included.
+// A gradient bubble adds one view, its fill (ui/BubbleFill), drawn in the bubble's shape inside its
+// edge; a one-colour bubble adds nothing.
 
 import { memo, useState } from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { BubbleFill } from '../../ui/BubbleFill';
 import { DiffView } from '../../ui/DiffView';
 import { Icon } from '../../ui/Icon';
 import { ReplyButtons } from '../../ui/ReplyButtons';
@@ -72,6 +75,7 @@ export const ItemView = memo(function ItemView({ item, onPress, tick, status, on
             accessibilityHint={retry ? 'Send again' : undefined}
             {...a11yReply}
           >
+            <BubbleFill look={theme.my} tail="right" />
             {from || item.voice ? <Text style={[styles.meta, ts.mineDim]}>{[from, item.voice ? '🎙 voice' : ''].filter(Boolean).join(' · ')}</Text> : null}
             {item.replyTo ? <QuoteView quote={item.replyTo} side="mine" onPress={onQuote ? () => onQuote(item.id, item.replyTo!.text) : undefined} /> : null}
             {item.attachments.length ? <SentAttachments list={item.attachments} /> : null}
@@ -101,6 +105,7 @@ export const ItemView = memo(function ItemView({ item, onPress, tick, status, on
     case 'assistant':
       return (
         <View style={[styles.bubble, styles.assistant, ts.edith, highlight && ts.highlight]} {...a11yReply}>
+          <BubbleFill look={theme.edith} tail="left" />
           {item.lane === 'side' ? <Text style={[styles.meta, ts.edithDim]}>⚡ Parallel answer (the main conversation was busy)</Text> : null}
           <Text style={[styles.text, ts.edithText]} selectable textBreakStrategy={BREAK}>
             {item.text}
