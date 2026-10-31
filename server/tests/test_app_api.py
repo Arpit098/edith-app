@@ -31,7 +31,7 @@ class FakeAgent:
     def __init__(self):
         self.sent, self.resolved = [], []
 
-    def send(self, text, origin, ref, force_queue=False):
+    def send(self, text, origin, ref, force_queue=False, parallel=False):
         self.sent.append((text, origin, ref, force_queue))
         return TurnHandle(ref, "main")
 

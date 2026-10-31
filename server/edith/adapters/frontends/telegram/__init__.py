@@ -95,7 +95,8 @@ class TelegramFrontend:
         if self.api is None:
             self.api = BotApi(read_token(self.paths.telegram_dir))
         for pattern, handler in (("turn.*", self._on_turn), ("permission.*", self._on_permission),
-                                 ("message.system", self._on_system), ("message.buttons_cleared", self._on_cleared)):
+                                 ("message.system", self._on_system), ("message.buttons_cleared", self._on_cleared),
+                                 ("message.delivered", self._on_delivered)):
             bus.subscribe(pattern, handler, owner="telegram")
         self._crashed = not self.state.get("clean_exit", True)
         self.state.update(lambda s: s.__setitem__("clean_exit", False))
@@ -312,6 +313,14 @@ class TelegramFrontend:
         else:
             self.send_text(turn.chat, text)
 
+    def _on_delivered(self, ev):
+        """A message read by the running task (delivery "mid_turn"): ✍ on it; that task's reply answers it."""
+        if ev.origin != "telegram" or ev.data.get("delivery") != "mid_turn":
+            return
+        chat, msg_id = self.parse_ref(ev.data.get("ref"))
+        if chat is not None:
+            self.react(chat, msg_id, "✍")
+
     def _on_turn(self, ev):
         d, kind = ev.data, ev.type
         if ev.origin != "telegram" and d.get("ref") not in self._turns:
@@ -321,7 +330,10 @@ class TelegramFrontend:
             if ref in self._held_events:  # its button press hasn't been answered yet
                 self._held_events[ref].append(ev)
                 return
-        if kind == "turn.queued":
+        if kind == "turn.queued" and d.get("fold"):  # the running task reads it before it answers
+            chat, msg_id = self.parse_ref(ref)
+            self.react(chat, msg_id, "👀")
+        elif kind == "turn.queued":
             chat, msg_id = self.parse_ref(ref)
             self.react(chat, msg_id, "🥱")  # waiting in line
             self.send_text(chat, f"📥 Queued (#{d['position']}). I'll get to it after the current task. /stop to cancel.")

@@ -12,6 +12,8 @@ notifiers = ["telegram"]   # add "ntfy" for app pushes (deploy/ntfy/README.md)
 work_dir = "~/edith"
 tmux_socket = "edith"
 max_side_lanes = 2
+# busy_policy = "queue"   # main lane busy: "queue" (the running turn reads new messages before it answers;
+#                         # /btw <task> runs one in a side lane) or "side_lane" (every busy message in a side lane)
 
 [adapter.whisper_cpp]
 url = "http://127.0.0.1:8178"

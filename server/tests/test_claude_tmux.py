@@ -15,7 +15,8 @@ from unittest import mock
 
 from edith.adapters.agents.claude_tmux.backend import NOTES_HEADER, ClaudeTmux
 from edith.adapters.agents.claude_tmux.tmux import Tmux
-from edith.core import EventBus
+from edith.core import CommandCall, EventBus, Ports, Registry, load_features
+from edith.ports.agent import TurnHandle
 from tests.fakes import FAKE_CLAUDE, FakeTmux
 from tests.fakes.claude import plan
 from tests.golden import assert_matches
@@ -38,6 +39,7 @@ class Harness:
             d.mkdir(parents=True)
         self.set_session("s1")
         self.mode, self.reply = "done", "Main reply"
+        self.running, self.fold, self.backlog = False, True, []  # a turn in progress; what typing during it does
         self.fake = FakeTmux(on_submit=self.on_submit, on_key=self.on_key)
         tmux = Tmux(runner=self.fake, start_service=lambda: None, settle_limit=0.5, settle_step=0.01)
         self.plan_file = self.home / "plan.json"
@@ -100,18 +102,29 @@ class Harness:
         with open(self.transcript, "a") as f:
             f.write(json.dumps(entry) + "\n")
 
+    def folded(self, text):
+        """What Claude Code writes when a message typed during a turn reaches it at a tool boundary."""
+        self.transcript_line({"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "t0", "content": "ok"},
+            {"type": "text", "text": f"The user sent a new message while you were working:\n{text}\n\nThis is how "
+                                     "Claude Code surfaces messages the user sends mid-turn."}]}})
+
     def on_submit(self, text):
         m = REF.search(text)
         if not m:
             return
         if self.mode == "mid_turn":  # Claude was busy: Claude Code folds the message into the running turn
-            self.transcript_line({"type": "user", "message": {"content": [
-                {"type": "tool_result", "tool_use_id": "t0", "content": "ok"},
-                {"type": "text", "text": f"The user sent a new message while you were working:\n{text}\n\nThis is how "
-                                         "Claude Code surfaces messages the user sends mid-turn."}]}})
+            self.folded(text)
             self.finish()
             return
-        self.hook_event(event="prompt", session_id="s1", ref=m[1])
+        if self.running:  # typed while Claude works: folded in, or (fold off) sent as the next turn
+            self.folded(text) if self.fold else self.backlog.append(text)
+            return
+        self.start_turn(text)
+
+    def start_turn(self, text):
+        self.running = True
+        self.hook_event(event="prompt", session_id="s1", ref=REF.search(text)[1])
         self.transcript_line({"type": "user", "message": {"content": text}})
         self.transcript_line({"type": "assistant", "message": {"content": [
             {"type": "tool_use", "name": "Bash", "input": {"command": "df -h", "description": "Check disk"}}]}})
@@ -120,6 +133,9 @@ class Harness:
 
     def finish(self):
         self.hook_event(event="stop", session_id="s1", text=self.reply)
+        self.running = False
+        if self.backlog:  # Claude Code sends what it held back as the next turn
+            self.start_turn(self.backlog.pop(0))
 
     def on_key(self, key):
         if key == "Escape" and self.mode == "hang":
@@ -157,7 +173,7 @@ class MainLaneTest(unittest.TestCase):
         h.mode = "hang"
         h.agent.send("long task", "telegram", "m1")
         h.wait("turn.progress", "m1")
-        self.assertEqual(h.agent.send("next", "telegram", "m2").lane, "queued")
+        self.assertEqual(h.agent.send("next", "telegram", "m2", force_queue=True).lane, "queued")  # /queue: a turn of its own
         self.assertEqual(h.wait("turn.queued", "m2").data["position"], 1)
         self.assertTrue(h.agent.busy())
         result = h.agent.stop()
@@ -237,8 +253,9 @@ class HoldTest(unittest.TestCase):
 
 
 class SideLaneTest(unittest.TestCase):
+    """The legacy busy_policy "side_lane": every message sent while the main lane is busy runs in a side lane."""
     def test_busy_main_lane_sends_to_a_side_lane_and_hands_over_notes(self):
-        h = Harness(self)
+        h = Harness(self, busy_policy="side_lane")
         h.agent.state.update(lambda s: s.setdefault("sessions", {}).__setitem__("111", "s1"))  # an earlier turn's
         h.mode = "hang"
         h.agent.send("first", "telegram", "m1")
@@ -261,7 +278,7 @@ class SideLaneTest(unittest.TestCase):
         self.assertNotIn("side_notes", h.state())
 
     def test_force_queue_and_lane_limit(self):
-        h = Harness(self, max_side_lanes=1, side_plan=plan(hang=True))
+        h = Harness(self, busy_policy="side_lane", max_side_lanes=1, side_plan=plan(hang=True))
         h.mode = "hang"
         h.agent.send("first", "telegram", "m1")
         h.wait("turn.progress", "m1")
@@ -273,7 +290,7 @@ class SideLaneTest(unittest.TestCase):
         self.assertEqual(queued, 2)
 
     def test_errors_retry_and_stop(self):
-        h = Harness(self, side_plan=plan(events=[], exit_code=1, stderr="x" * 1000 + "\nboom\n"))
+        h = Harness(self, busy_policy="side_lane", side_plan=plan(events=[], exit_code=1, stderr="x" * 1000 + "\nboom\n"))
         h.agent.state.update(lambda s: s.setdefault("sessions", {}).__setitem__("111", "s1"))
         h.agent.main_busy.set()  # pretend the main lane is busy
         h.agent.send("q", "telegram", "m1")
@@ -295,7 +312,7 @@ class SideLaneTest(unittest.TestCase):
         self.assertIsNotNone(h.wait("turn.stopped", "m3", timeout=3))
 
     def test_shutdown_leaves_no_process_or_thread(self):
-        h = Harness(self, side_plan=plan(hang=True))
+        h = Harness(self, busy_policy="side_lane", side_plan=plan(hang=True))
         h.agent.main_busy.set()
         h.agent.send("slow", "telegram", "m1")
         h.wait("turn.progress", "m1")
@@ -308,7 +325,7 @@ class SideLaneTest(unittest.TestCase):
         self.assertNotIn("turn.started", h.types("m2"))
 
     def test_chatty_stderr_cannot_block_claude(self):
-        h = Harness(self, side_plan=plan(reply="ok", stderr_first="w" * 200_000))
+        h = Harness(self, busy_policy="side_lane", side_plan=plan(reply="ok", stderr_first="w" * 200_000))
         h.agent.main_busy.set()
         h.agent.send("q", "telegram", "m1")
         self.assertEqual(h.wait("turn.done", "m1", timeout=10).data["text"], "ok")
@@ -326,6 +343,129 @@ class SideLaneTest(unittest.TestCase):
             self.assertIn(str(home), new[new.index("--mcp-config") + 1])
             # legacy run_claude(111, "hello\nworld", 5, side=True)'s argv, its HOME shown as ~
             assert_matches(self, "claude/side_lane_argv.json", [a.replace(str(home), "~") for a in new])
+
+
+class BusyPolicyTest(unittest.TestCase):
+    """busy_policy "queue" (the default): a message sent while the main lane works is typed into the
+    running turn at once and read before its answer; /btw (parallel) runs in a side lane instead."""
+
+    def busy(self, **config):
+        h = Harness(self, **config)
+        h.mode = "hang"
+        h.agent.send("long task", "app", "m1")
+        h.wait("turn.progress", "m1")
+        return h
+
+    def test_a_busy_message_is_read_by_the_running_turn_before_its_answer(self):
+        h = self.busy()
+        self.assertEqual(h.agent.send("also check the logs", "app", "m2").lane, "queued")
+        self.assertTrue(h.wait("turn.queued", "m2").data["fold"])
+        self.assertEqual(h.wait("message.delivered", "m2").data["delivery"], "mid_turn")  # before m1 is done
+        self.assertIsNone(h.wait("turn.done", "m1", timeout=0.2))
+        self.assertTrue(any("also check the logs" in s and "[tg-ref " in s for s in h.fake.submitted))
+        self.assertEqual(h.agent.status()[1], 0)  # not waiting any more: it's in the turn
+        h.finish()
+        self.assertEqual(h.wait("turn.done", "m1").data["text"], "Main reply")  # the one reply answers both
+        self.assertEqual(h.types("m2"), ["turn.queued"])  # no turn of its own
+        self.assertEqual([e.data["delivery"] for e in h.events if e.type == "message.user" and e.data.get("ref") == "m2"],
+                         ["queued"])  # the live view didn't show it again
+        self.assertFalse(h.agent.busy())
+
+    def test_one_typed_too_late_for_the_turn_becomes_the_next_turn_without_typing_it_again(self):
+        h = self.busy()
+        h.fold = False  # Claude Code holds it back until the turn ends
+        h.agent.send("then this", "app", "m2")
+        h.wait("turn.queued", "m2")
+        with h.cond:
+            h.cond.wait_for(lambda: len(h.backlog) == 1, 5)
+        h.mode = "done"
+        h.finish()  # m1 ends; Claude Code sends m2 as its own turn
+        self.assertIsNotNone(h.wait("turn.done", "m1"))
+        self.assertEqual(h.wait("message.delivered", "m2").data["delivery"], "main")
+        self.assertIsNotNone(h.wait("turn.done", "m2"))
+        self.assertEqual(h.types("m2"), ["turn.queued", "turn.started", "turn.progress", "turn.done"])  # its own steps
+        self.assertEqual(sum("then this" in s for s in h.fake.submitted), 1)  # typed once
+
+    def test_stop_also_stops_a_typed_message_the_turn_hadnt_read(self):
+        h = self.busy()
+        h.fold = False
+        h.agent.send("then this", "app", "m2")
+        with h.cond:
+            h.cond.wait_for(lambda: len(h.backlog) == 1, 5)
+        h.agent.stop()
+        self.assertEqual(h.wait("turn.stopped", "m1").data["lane"], "main")
+        self.assertEqual(h.wait("turn.stopped", "m2").data["lane"], "main")
+        self.assertIn("C-u", h.fake.keys)  # its text can't ride along with the next message
+
+    def test_btw_runs_in_a_side_lane(self):
+        h = self.busy()
+        self.assertEqual(h.agent.send("what time is it", "app", "m2", parallel=True).lane, "side")
+        self.assertEqual(h.wait("message.delivered", "m2").data["delivery"], "side_lane")
+        self.assertIsNotNone(h.wait("turn.done", "m2"))
+        self.assertFalse(any("what time is it" in s for s in h.fake.submitted))  # never typed into the main turn
+
+    def test_btw_with_no_side_lane_free_waits_like_any_message(self):
+        h = self.busy(max_side_lanes=0)
+        self.assertEqual(h.agent.send("what time is it", "app", "m2", parallel=True).lane, "queued")
+        self.assertTrue(h.wait("turn.queued", "m2").data["fold"])
+        self.assertEqual(h.wait("message.delivered", "m2").data["delivery"], "mid_turn")
+
+    def test_a_held_session_and_queue_wait_for_a_turn_of_their_own(self):
+        h = self.busy()
+        self.assertEqual(h.agent.send("after it", "app", "m2", force_queue=True).lane, "queued")  # /queue
+        self.assertFalse(h.wait("turn.queued", "m2").data["fold"])
+        self.assertIsNone(h.wait("message.delivered", "m2", timeout=0.3))
+        h.agent.hold()
+        self.assertEqual(h.agent.send("while held", "app", "m3").lane, "queued")
+        self.assertFalse(h.wait("turn.queued", "m3").data["fold"])
+        self.assertFalse(any("after it" in s or "while held" in s for s in h.fake.submitted))
+        self.assertEqual(h.agent.status()[1], 2)
+
+    def test_the_side_lane_policy_keeps_the_old_behaviour(self):
+        h = self.busy(busy_policy="side_lane")
+        self.assertEqual(h.agent.send("what's up", "app", "m2").lane, "side")
+        with self.assertRaisesRegex(ValueError, "busy_policy"):
+            Harness(self, busy_policy="parallel")
+
+
+class BtwCommandTest(unittest.TestCase):
+    """/btw from the app or Telegram: the registry's command, the same on every frontend."""
+
+    def setUp(self):
+        class Agent:
+            max_side_lanes, busy_policy = 2, "queue"
+
+            def __init__(self):
+                self.sent = []
+
+            def send(self, text, origin, ref, force_queue=False, parallel=False):
+                self.sent.append((text, origin, ref, force_queue, parallel))
+                return TurnHandle(ref, "side")
+        self.agent, self.registry = Agent(), Registry()
+        load_features(["control"], EventBus(), Ports(agent=self.agent), self.registry, {})
+
+    def run_text(self, text, origin="app"):
+        found = self.registry.find_command(text)
+        if not found:
+            return None
+        command, args = found
+        prompt = f"[App message from Arpit, x]\n{args}" if command.takes_prompt and args.strip() else None
+        return command.handler(CommandCall(args, origin, lambda out: None, "r1", prompt))
+
+    def test_btw_sends_the_rest_in_parallel(self):
+        for text, rest in (("/btw what time is it", "what time is it"), ("/BTW what time is it", "what time is it"),
+                           ("/btw\nline one\nline two", "line one\nline two")):
+            with self.subTest(text=text):
+                self.agent.sent.clear()
+                self.run_text(text)
+                self.assertEqual(self.agent.sent, [(f"[App message from Arpit, x]\n{rest}", "app", "r1", False, True)])
+
+    def test_btw_alone_says_how_and_other_prefixes_are_plain_text(self):
+        self.assertIn("/btw <task>", self.run_text("/btw"))
+        self.assertEqual(self.agent.sent, [])
+        for text in ("/btwx do it", "btw do it", " /btw do it"):
+            self.assertIsNone(self.registry.find_command(text), text)  # goes to Claude as an ordinary message
+        self.assertIn("btw", [c["command"] for c in self.registry.menu()])  # Telegram's menu and the app's list
 
 
 class LiveViewTest(unittest.TestCase):
