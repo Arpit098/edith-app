@@ -76,4 +76,24 @@ describe('chat bubbles in the theme', () => {
     );
     expect(style(bubbleAround(textOf(r, 'Ship it'))).backgroundColor).toBe(ocean.my.fill);
   });
+
+  it('a gradient bubble adds just its fill, in the bubble’s shape, with no clipping; the other side adds nothing', () => {
+    const t = resolveTheme({ ...DEFAULT_APPEARANCE, myBubble: 'grad-aurora', edithBubble: 'custom', edithGradient: { stops: ['#E07BC4', '#3D7FD9'], angle: 90 } });
+    const r = render(t);
+    const mine = bubbleAround(textOf(r, 'Ship it'));
+    expect(style(mine).backgroundColor).toBe('transparent'); // the fill is the tint
+    expect(style(mine).overflow).toBeUndefined();
+    const [fill] = gradients(mine);
+    expect(fill!.props.colors).toEqual(t.my.gradient!.colors);
+    expect([fill!.props.start, fill!.props.end]).toEqual([t.my.gradient!.start, t.my.gradient!.end]);
+    // Inside the 1dp edge: the bubble's radii less 1, its small corner bottom-right.
+    expect(style(fill!)).toMatchObject({ position: 'absolute', borderTopLeftRadius: 21, borderBottomRightRadius: 7, borderBottomLeftRadius: 21 });
+    expect(style(textOf(r, 'Ship it')).color).toBe(t.my.ink);
+    expect(style(textOf(r, 'The build passed.')).color).toBe(t.my.quoteDim);
+    const hers = bubbleAround(textOf(r, 'Done.'));
+    expect(style(gradients(hers)[0]!)).toMatchObject({ borderBottomLeftRadius: 7, borderBottomRightRadius: 21 });
+    // One colour: no fill view at all.
+    const plain = render(resolveTheme({ ...DEFAULT_APPEARANCE, myBubble: 'teal' }));
+    expect(gradients(bubbleAround(textOf(plain, 'Ship it')))).toHaveLength(0);
+  });
 });

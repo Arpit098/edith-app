@@ -9,6 +9,7 @@ import { StyleSheet, Text, View } from 'react-native';
 
 import { bubbleFace, colors, radius, space, ThemeContext, type, type Theme } from '../../core/theme';
 import { Ambient } from '../../ui/Ambient';
+import { BubbleFill } from '../../ui/BubbleFill';
 import { Glass, useBackdrop } from '../../ui/Glass';
 import { Icon } from '../../ui/Icon';
 
@@ -30,9 +31,11 @@ function Scene({ theme: t }: { theme: Theme }) {
         <Ambient />
         <View style={styles.chat}>
           <View style={[styles.bubble, styles.edith, bubbleFace(t.edith)]} testID="preview-edith">
+            <BubbleFill look={t.edith} tail="left" />
             <Text style={[styles.text, { color: t.edith.ink }]}>Morning! The build passed and PR 41 is ready.</Text>
           </View>
           <View style={[styles.bubble, styles.mine, bubbleFace(t.my)]} testID="preview-mine">
+            <BubbleFill look={t.my} tail="right" />
             <Text style={[styles.text, { color: t.my.ink }]}>Nice, ship it</Text>
             <Text style={[styles.time, { color: t.my.inkDim }]}>09:41 ✓✓</Text>
           </View>

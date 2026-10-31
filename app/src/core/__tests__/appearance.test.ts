@@ -17,6 +17,21 @@ describe('appearance store', () => {
     expect(s.store.get()).toEqual({ ...DEFAULT_APPEARANCE, theme: 'ocean', myBubble: 'teal', glass: 25 });
   });
 
+  it('reads what an older app saved (before gradients), and saves gradients, accent and custom backgrounds back whole', async () => {
+    const data = new MemoryStorage();
+    data.data.set(APPEARANCE_KEY, JSON.stringify({ theme: 'rose', myBubble: 'yellow', edithBubble: null, background: 'dots', glass: 35 }));
+    const s = createAppearanceStore(data);
+    await s.load();
+    expect(s.store.get()).toEqual({ ...DEFAULT_APPEARANCE, theme: 'rose', myBubble: 'yellow', background: 'dots', glass: 35 });
+    const custom = { id: 'custom-1', stops: ['#FF7E5F', '#2C1E4A'], angle: 180, kind: 'radial' as const, intensity: 40 };
+    s.set({ customGradients: [custom], background: 'custom-1', accent: 'lime', myBubble: 'custom', myGradient: { stops: ['#22A699', '#6C5BD9'], angle: 90 } });
+    s.flush();
+    const again = createAppearanceStore(data);
+    await again.load();
+    expect(again.store.get()).toEqual(s.store.get());
+    expect(again.store.get()).toMatchObject({ background: 'custom-1', accent: 'lime', myBubble: 'custom' });
+  });
+
   it('keeps the defaults for nothing saved, garbage, or no storage at all', async () => {
     const data = new MemoryStorage();
     const s = createAppearanceStore(data);
