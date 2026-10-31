@@ -279,13 +279,6 @@ export const titleGlow = {
 } as const;
 
 /**
- * The home title's fill (Arpit, 31 Oct: "E.D.I.T.H heading doesn't have the theme color gradient"),
- * left to right: the logo's blue, the bubble's lavender sheen, an icy cyan. All light enough to read
- * on the dark header; ui/GradientTitle draws it, with titleGlow's colour as the halo.
- */
-export const titleGradient = ['#8DB4F0', '#B6A6F0', '#8BE0EE'] as const;
-
-/**
  * The thinking bubble (ui/ThinkingBubble): a soap bubble in the app icon's colours
  * (app/assets/icon.png). The middle is see-through with only a faint blue tint; the body brightens
  * towards a thin iridescent rim (silver at the top-left, the rings' blue, a lavender sheen, a deeper
