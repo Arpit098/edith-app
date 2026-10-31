@@ -4,9 +4,10 @@
 //   - the body: deep indigo at the edge, the logo's blue in the middle;
 //   - inside it, clipped to the sphere: four soft colour blobs (violet, blue, lavender, icy cyan), each
 //     a circle fading out from its centre so they blend like blurred paint, then three ribbons of light;
-//   - the edge falling into shadow, a glossy highlight at the top-left and a soft-lit rim.
+//   - the edge falling into shadow, a glossy highlight at the top-left and a soft-lit edge (gradients
+//     fading in from the edge, not a stroke).
 // While EDITH works, the blobs drift and the ribbons swirl and fold (ui/orbShape), and the glow and
-// rim breathe. Each moving part is an animated prop computed in a worklet from one phase, so nothing
+// lit edge breathe. Each moving part is an animated prop computed in a worklet from one phase, so nothing
 // renders in React per frame: one UI-thread loop, cancelled when it goes idle or unmounts. Idle, or
 // with "Remove animations" on, it's one still frame of the same orb.
 // SVG filters (blur) aren't dependable on Android, so softness comes from gradients, not filters.
@@ -28,7 +29,7 @@ const VIEW = 100; // the SVG's own units; `size` scales it
 const C = VIEW / 2;
 const R = VIEW * 0.4; // the sphere; the rest is room for the glow
 const GLOW_R = VIEW / 2;
-const RIM_WIDTH = 2.2; // about 0.5 dp at 22–24 dp: a lit edge, not an outline
+const RIM_SHIFT = R * 0.16; // how far each edge light's centre sits off the orb's, so it lights one side
 
 const gloss = glossOf(C, R); // still, computed once
 const glossStop = stopOf(orb.gloss);
@@ -58,7 +59,7 @@ export const ThinkingBubble = memo(function ThinkingBubble({ active, size = 24 }
   const glowProps = useAnimatedProps(() => ({ opacity: 0.78 + 0.22 * breath(t.value) }));
   const rimProps = useAnimatedProps(() => {
     const b = breath(t.value);
-    return { strokeOpacity: 0.75 + 0.25 * b, strokeWidth: RIM_WIDTH * (0.9 + 0.2 * b) };
+    return { opacity: 0.7 + 0.3 * b };
   });
 
   return (
@@ -98,11 +99,21 @@ export const ThinkingBubble = memo(function ThinkingBubble({ active, size = 24 }
             <Stop offset="0.45" stopColor={glossStop.color} stopOpacity={glossStop.opacity * 0.4} />
             <Stop offset="1" stopColor={glossStop.color} stopOpacity={0} />
           </RadialGradient>
-          <LinearGradient id="tb-rim" x1="0" y1="0" x2="1" y2="1">
-            <Stop offset="0" stopColor={rimLit.color} stopOpacity={rimLit.opacity} />
-            <Stop offset="0.5" stopColor={rimMid.color} stopOpacity={rimMid.opacity} />
+          {/* The soft-lit edge: no stroke, a highlight fading in towards the inside of the edge. Each
+              gradient's centre sits off the orb's, towards the far side, so it lights one side most:
+              the top-left (light) and a cyan bounce at the bottom-right; a faint even falloff joins them. */}
+          <RadialGradient id="tb-rim" cx={C} cy={C} r={R} gradientUnits="userSpaceOnUse">
+            <Stop offset="0.82" stopColor={rimMid.color} stopOpacity={0} />
+            <Stop offset="1" stopColor={rimMid.color} stopOpacity={rimMid.opacity} />
+          </RadialGradient>
+          <RadialGradient id="tb-rim-lit" cx={C + RIM_SHIFT} cy={C + RIM_SHIFT} r={R + RIM_SHIFT} gradientUnits="userSpaceOnUse">
+            <Stop offset="0.8" stopColor={rimLit.color} stopOpacity={0} />
+            <Stop offset="1" stopColor={rimLit.color} stopOpacity={rimLit.opacity} />
+          </RadialGradient>
+          <RadialGradient id="tb-rim-far" cx={C - RIM_SHIFT} cy={C - RIM_SHIFT} r={R + RIM_SHIFT} gradientUnits="userSpaceOnUse">
+            <Stop offset="0.84" stopColor={rimFar.color} stopOpacity={0} />
             <Stop offset="1" stopColor={rimFar.color} stopOpacity={rimFar.opacity} />
-          </LinearGradient>
+          </RadialGradient>
           <ClipPath id="tb-clip">
             <Circle cx={C} cy={C} r={R} />
           </ClipPath>
@@ -119,7 +130,9 @@ export const ThinkingBubble = memo(function ThinkingBubble({ active, size = 24 }
         </G>
         <Circle cx={C} cy={C} r={R} fill="url(#tb-shade)" />
         <Ellipse cx={gloss.cx} cy={gloss.cy} rx={gloss.rx} ry={gloss.ry} fill="url(#tb-gloss)" transform={`rotate(${gloss.rotate} ${gloss.cx} ${gloss.cy})`} />
-        <AnimatedCircle animatedProps={rimProps} cx={C} cy={C} r={R - RIM_WIDTH / 2} fill="none" stroke="url(#tb-rim)" />
+        <Circle cx={C} cy={C} r={R} fill="url(#tb-rim)" />
+        <AnimatedCircle animatedProps={rimProps} cx={C} cy={C} r={R} fill="url(#tb-rim-lit)" />
+        <AnimatedCircle animatedProps={rimProps} cx={C} cy={C} r={R} fill="url(#tb-rim-far)" />
       </Svg>
     </View>
   );
