@@ -117,6 +117,32 @@ class ProfilesTest(unittest.TestCase):
         with self.assertRaises(ProfileError):
             self.p.remove("../../etc")
 
+    def test_rename_changes_the_label_only(self):
+        pid = self.p.list()[0]["id"]
+        folder = os.path.join(self.h.root, pid)
+        creds_path = os.path.join(folder, "credentials.json")
+        with open(creds_path, "rb") as f:
+            creds_before = f.read()
+        creds_stat = os.stat(creds_path)
+        before = self.p.get(pid)
+        self.p.rename(pid, "  Personal max  ")
+        after = self.p.get(pid)
+        self.assertEqual(after, dict(before, label="Personal max"))  # nothing else in account.json moved
+        self.assertEqual(self.p.list()[0]["label"], "Personal max")
+        with open(creds_path, "rb") as f:
+            self.assertEqual(f.read(), creds_before)
+        self.assertEqual(os.stat(creds_path).st_mtime_ns, creds_stat.st_mtime_ns)  # never rewritten
+        self.assertEqual(mode(os.path.join(folder, "account.json")), 0o600)
+        self.assertEqual(sorted(os.listdir(folder)), ["account.json", "credentials.json"])  # no tmp file left
+        self.p.rename(pid, "x" * 40)
+        for bad, why in (("", "empty"), ("   ", "empty"), ("x" * 41, "at most 40"), ("a\nb", "one line"), (None, "text")):
+            with self.subTest(bad=bad), self.assertRaisesRegex(ProfileError, why):
+                self.p.rename(pid, bad)
+        self.assertEqual(self.p.get(pid)["label"], "x" * 40)
+        for unknown in ("0000000a", "../../etc"):
+            with self.assertRaisesRegex(ProfileError, "unknown"):
+                self.p.rename(unknown, "Work")
+
     def test_add_needs_a_real_login(self):
         empty = tempfile.mkdtemp(dir=self.h.home)
         with self.assertRaisesRegex(ProfileError, "no credentials"):
@@ -663,6 +689,20 @@ class RoutesTest(unittest.TestCase):
         self.assertEqual(e.exception.status, 409)
         self.call("DELETE", "/v1/accounts/{id}", {"id": added["account"]["id"]})
         self.assertEqual(len(self.call("GET", "/v1/accounts")["accounts"]), 1)
+
+    def test_rename(self):
+        pid = self.call("GET", "/v1/accounts")["accounts"][0]["id"]
+        renamed = self.call("PATCH", "/v1/accounts/{id}", {"id": pid}, {"label": " Work "})
+        self.assertEqual(renamed["account"], {"id": pid, "label": "Work", "email": "user1@example.com", "plan": "max",
+                                              "active": True})
+        self.assertEqual(self.call("GET", "/v1/accounts")["accounts"][0]["label"], "Work")
+        for params, body, status in (({"id": pid}, {"label": "y" * 41}, 400), ({"id": pid}, {"label": " "}, 400),
+                                     ({"id": pid}, {}, 400), ({"id": pid}, None, 400), ({"id": pid}, {"label": 5}, 400),
+                                     ({"id": "0000000a"}, {"label": "Work"}, 404)):
+            with self.subTest(params=params, body=body), self.assertRaises(ApiError) as e:
+                self.call("PATCH", "/v1/accounts/{id}", params, body)
+            self.assertEqual(e.exception.status, status)
+        self.assertEqual(self.call("GET", "/v1/accounts")["accounts"][0]["label"], "Work")
 
     def test_login_cancel_and_expiry(self):
         started = self.call("POST", "/v1/accounts/login")

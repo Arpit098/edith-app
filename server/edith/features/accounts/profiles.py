@@ -22,7 +22,22 @@ import shutil
 import time
 
 ID = re.compile(r"^[0-9a-f]{8}$")
-LABEL_MAX = 60
+LABEL_MAX = 40
+CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def clean_label(label) -> str:
+    """A label as typed, trimmed: 1 to LABEL_MAX characters, one line. ProfileError otherwise."""
+    if not isinstance(label, str):
+        raise ProfileError("label must be text")
+    label = label.strip()
+    if not label:
+        raise ProfileError("label can't be empty")
+    if len(label) > LABEL_MAX:
+        raise ProfileError(f"label can be at most {LABEL_MAX} characters")
+    if CONTROL.search(label):
+        raise ProfileError("label must be one line of plain text")
+    return label
 
 
 class ProfileError(Exception):
@@ -180,6 +195,15 @@ class Profiles:
         oauth_account = (read_json(os.path.join(config_dir, ".claude.json")) or {}).get("oauthAccount")
         with self.locked():
             return self._create(data, oauth_account, label)
+
+    def rename(self, pid: str, label) -> None:
+        """Set an account's label: account.json only (rewritten atomically, mode 600); its
+        credentials.json isn't opened."""
+        label = clean_label(label)
+        with self.locked():
+            info = self.get(pid)
+            info["label"] = label
+            write_private(os.path.join(self._dir(pid), "account.json"), json.dumps(info, indent=1).encode())
 
     def remove(self, pid: str) -> None:
         with self.locked():

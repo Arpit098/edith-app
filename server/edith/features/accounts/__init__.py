@@ -318,6 +318,21 @@ def setup(ctx: Context) -> None:
                 raise ApiError(409 if "in use" in str(e) else 404, str(e)) from None
         return {"removed": req["params"]["id"]}
 
+    def api_rename(req):
+        pid, body = req["params"]["id"], req.get("body")
+        if not isinstance(body, dict) or "label" not in body:
+            raise ApiError(400, "send {label}")
+        try:
+            profiles.get(pid)
+        except ProfileError as e:
+            raise ApiError(404, str(e)) from None
+        try:
+            profiles.rename(pid, body["label"])  # metadata only: works during a switch too
+        except ProfileError as e:
+            raise ApiError(404 if "unknown" in str(e) else 400, str(e)) from None
+        log.info("accounts: %s renamed", pid)
+        return {"account": next((a for a in profiles.list() if a["id"] == pid), None)}
+
     def api_login_start(req):
         with lock:
             for flow in logins.values():
@@ -377,6 +392,7 @@ def setup(ctx: Context) -> None:
     ctx.add_route("DELETE", "/v1/accounts/login/{login}", api_login_cancel)
     ctx.add_route("POST", "/v1/accounts/{id}/switch", api_switch)
     ctx.add_route("DELETE", "/v1/accounts/{id}", api_remove)
+    ctx.add_route("PATCH", "/v1/accounts/{id}", api_rename, max_body=4096)
 
 
 FEATURE = Feature(name="accounts", setup=setup, description="Claude accounts: list, switch, add and remove logins")

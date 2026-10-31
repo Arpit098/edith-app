@@ -123,4 +123,29 @@ describe('claude accounts', () => {
     expect(Object.keys(model.store.get().accounts[0]!)).toEqual(['id', 'label', 'email', 'plan', 'active']);
     expect(model.store.get().switch).toBeNull();
   });
+
+  it('renames with the trimmed name, and refuses an empty or too long one without asking edith', async () => {
+    const { model, t, list } = setup();
+    await model.refresh();
+    t.on('PATCH /v1/accounts/bbbb2222', (body: { label: string }) => {
+      list.accounts = ACCOUNTS.map((a) => (a.id === 'bbbb2222' ? { ...a, label: body.label } : a));
+      return { account: { ...ACCOUNTS[1], label: body.label } };
+    });
+    expect(await model.rename('bbbb2222', '  Client work ')).toBe(true);
+    expect(t.calls.filter((c) => c.method === 'PATCH')).toEqual([{ method: 'PATCH', path: '/v1/accounts/bbbb2222', body: { label: 'Client work' } }]);
+    expect(model.store.get().accounts.map((a) => a.label)).toEqual(['Personal', 'Client work']);
+    expect(model.store.get()).toMatchObject({ busy: null, error: null });
+
+    for (const bad of ['   ', 'x'.repeat(41)]) {
+      expect(await model.rename('bbbb2222', bad)).toBe(false);
+      expect(model.store.get().error).toMatch(/Enter a name|at most 40/);
+    }
+    expect(t.calls.filter((c) => c.method === 'PATCH')).toHaveLength(1);
+
+    t.on('PATCH /v1/accounts/bbbb2222', () => {
+      throw new ApiError(404, 'unknown account');
+    });
+    expect(await model.rename('bbbb2222', 'Gone')).toBe(false);
+    expect(model.store.get().error).toBe('unknown account');
+  });
 });
