@@ -12,8 +12,22 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { memo, useCallback, useState, type ReactNode } from 'react';
 import { findNodeHandle, StyleSheet, View, type LayoutChangeEvent, type StyleProp, type ViewStyle } from 'react-native';
 
-import { glass, glassBase, glassTint, radius as radii, useGlass, type GlassLevel } from '../core/theme';
+import { glassOn, radius as radii, rgbaOf, useGlass, useTheme, type GlassLevel, type GlassStyle } from '../core/theme';
 import { Rim } from './Rim';
+
+// The native view takes colours as numbers: parsed once per theme and level.
+const parsed = new WeakMap<GlassStyle, number[]>();
+const tintOf = (g: GlassStyle) => {
+  let v = parsed.get(g);
+  if (!v) parsed.set(g, (v = rgbaOf(g.tint)));
+  return v;
+};
+const bases = new Map<string, number[]>();
+const baseOf = (bg: string) => {
+  let v = bases.get(bg);
+  if (!v) bases.set(bg, (v = rgbaOf(bg)));
+  return v;
+};
 
 export interface GlassProps {
   level?: GlassLevel;
@@ -37,8 +51,17 @@ const NONE: NonNullable<GlassProps['edges']> = {};
 /** A view to put glass over: attach `ref` to it (it must not contain that glass). */
 export function useBackdrop(): { ref: (v: View | null) => void; tag: number | null } {
   const [tag, setTag] = useState<number | null>(null);
-  const ref = useCallback((v: View | null) => setTag(v ? findNodeHandle(v) : null), []);
+  const ref = useCallback((v: View | null) => setTag(v ? tagOf(v) : null), []);
   return { ref, tag };
+}
+
+/** The view's native tag; null where there is none (react-native-web throws): the glass is then flat. */
+function tagOf(v: View): number | null {
+  try {
+    return findNodeHandle(v);
+  } catch {
+    return null;
+  }
 }
 
 interface Size {
@@ -47,9 +70,11 @@ interface Size {
 }
 
 export const Glass = memo(function Glass({ level = 'regular', backdrop, radius = radii.l, edges = ALL, rim = false, style, children }: GlassProps) {
-  const g = glass[level];
+  const theme = useTheme();
+  const g = theme.glassOf(level); // the glass amount (Settings → Appearance) mapped for this level
   const { mode, View: Native, scheme } = useGlass();
-  const real = mode !== 'flat' && Native !== null && backdrop != null;
+  // 0% is the flat look everywhere: no blur or lens to draw (the cheapest and most readable).
+  const real = mode !== 'flat' && Native !== null && backdrop != null && glassOn(theme.glass);
   const [lit, dim] = g.edge;
   const line = rim ? NONE : edges;
   // The rim needs the surface's size; a move (the keyboard opening) keeps the same object, so no re-render.
@@ -91,15 +116,15 @@ export const Glass = memo(function Glass({ level = 'regular', backdrop, radius =
           lift={g.lift}
           specular={rim ? 0 : g.specular} // the rim is the edge's light: no second line from the lens
           rimWidth={g.rimWidth}
-          tint={glassTint[level]}
-          base={glassBase}
+          tint={tintOf(g)}
+          base={baseOf(theme.bg)}
           style={StyleSheet.absoluteFill}
           pointerEvents="none"
         />
       ) : null}
       <LinearGradient colors={[g.highlight, 'transparent']} style={styles.highlight} pointerEvents="none" />
       {children}
-      {rim && size ? <Rim width={size.width} height={size.height} radius={radius} scheme={scheme} /> : null}
+      {rim && size ? <Rim width={size.width} height={size.height} radius={radius} scheme={scheme} strength={theme.rim} /> : null}
     </View>
   );
 });

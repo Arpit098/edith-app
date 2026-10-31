@@ -4,7 +4,7 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { useStore } from '../../core/store';
-import { colors, radius, space, type } from '../../core/theme';
+import { colors, radius, space, type, useTheme } from '../../core/theme';
 import { Button } from '../../ui/Button';
 import { Icon } from '../../ui/Icon';
 import { updateBanner, type AppUpdateModel, type AppUpdateState } from './model';
@@ -14,6 +14,7 @@ const selectRestarting = (s: AppUpdateState) => s.restarting;
 export function UpdateBanner({ model, openUpdates }: { model: AppUpdateModel; openUpdates: () => void }) {
   const banner = useStore(model.store, updateBanner);
   const restarting = useStore(model.store, selectRestarting);
+  const { accent } = useTheme();
   if (!banner) return null;
   const act = () => {
     if (banner.action === 'restart') {
@@ -25,8 +26,8 @@ export function UpdateBanner({ model, openUpdates }: { model: AppUpdateModel; op
   };
   return (
     <View style={styles.wrap}>
-      <View style={styles.card} accessibilityRole="alert">
-        <Icon name="cellphone-arrow-down" size={18} color={colors.accent} />
+      <View style={[styles.card, { borderColor: accent }]} accessibilityRole="alert">
+        <Icon name="cellphone-arrow-down" size={18} color={accent} />
         <Text style={styles.text} numberOfLines={1}>
           {banner.text}
         </Text>
@@ -50,7 +51,6 @@ const styles = StyleSheet.create({
     paddingVertical: space.s,
     paddingHorizontal: space.m,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.accent,
   },
   text: { color: colors.text, fontSize: type.size.body, fontWeight: '600', flex: 1 },
 });

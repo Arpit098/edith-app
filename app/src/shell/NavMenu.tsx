@@ -7,7 +7,7 @@ import { BackHandler, Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
 
-import { colors, legibleText, motion, radius, space, type } from '../core/theme';
+import { colors, legibleText, motion, radius, space, type, useTheme } from '../core/theme';
 import { Glass } from '../ui/Glass';
 import { Icon } from '../ui/Icon';
 import { Squish, useReduceMotion } from '../ui/motion';
@@ -53,6 +53,7 @@ export interface NavMenuProps {
  */
 export function NavMenu({ open, items, current, top, backdrop, onSelect, onClose }: NavMenuProps) {
   const reduce = useReduceMotion();
+  const { accentSoft } = useTheme();
   const [mounted, setMounted] = useState(open);
   const p = useSharedValue(0);
   // Read when the closing spring ends: opened again meanwhile, it stays mounted.
@@ -108,7 +109,7 @@ export function NavMenu({ open, items, current, top, backdrop, onSelect, onClose
                 <Squish
                   key={item.name}
                   onPress={() => onSelect(item.name)}
-                  style={[styles.item, on && styles.itemOn]}
+                  style={[styles.item, on && { backgroundColor: accentSoft }]}
                   accessibilityRole="menuitem"
                   accessibilityLabel={on ? `${item.title}, current screen` : item.title}
                   accessibilityState={{ selected: on }}
@@ -132,7 +133,6 @@ const styles = StyleSheet.create({
   sheetSlot: { position: 'absolute', right: space.m, minWidth: 220 },
   sheet: { paddingVertical: space.xs },
   item: { flexDirection: 'row', alignItems: 'center', gap: space.m, minHeight: TOUCH + space.s, paddingHorizontal: space.l, marginHorizontal: space.xs, borderRadius: radius.m },
-  itemOn: { backgroundColor: colors.accentSoft },
   // Labels and icons at full opacity, a little heavier, each with the dark halo: the popup is clear
   // glass with no pane behind them. The current screen is marked by the row's tint, weight and check.
   itemText: { color: colors.text, fontSize: type.size.body, fontWeight: '600', flex: 1, ...legibleText },

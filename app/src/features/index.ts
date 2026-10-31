@@ -2,6 +2,7 @@
 // The shell adds its own Tools (the grid of features' `tool` tiles) and Settings tabs after these.
 
 import type { FeatureModule } from '../core/feature';
+import appearance from './appearance';
 import appUpdate from './app-update';
 import approvals from './approvals';
 import claudeAccounts from './claude-accounts';
@@ -19,6 +20,7 @@ export const features: FeatureModule[] = [
   approvals,
   commands,
   appUpdate,
+  appearance, // Settings → Appearance: themes, bubble colours, background, glass
   claudeAccounts,
   liveStatus,
   notifications,

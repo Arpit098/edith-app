@@ -2,7 +2,7 @@ import { memo } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 
 import { Icon } from './Icon';
-import { colors, radius, space } from '../core/theme';
+import { colors, radius, space, useTheme, type Theme } from '../core/theme';
 import { Squish } from './motion';
 
 type Variant = 'primary' | 'secondary' | 'danger' | 'ghost';
@@ -18,10 +18,13 @@ export interface ButtonProps {
   accessibilityLabel?: string;
 }
 
-const fg: Record<Variant, string> = { primary: colors.accentText, secondary: colors.text, danger: colors.text, ghost: colors.accent };
-const bg: Record<Variant, string> = { primary: colors.accent, secondary: colors.cardRaised, danger: colors.danger, ghost: 'transparent' };
+const fgOf = (t: Theme): Record<Variant, string> => ({ primary: t.accentText, secondary: colors.text, danger: colors.text, ghost: t.accent });
+const bgOf = (t: Theme): Record<Variant, string> => ({ primary: t.accent, secondary: colors.cardRaised, danger: colors.danger, ghost: 'transparent' });
 
 export const Button = memo(function Button({ label, icon, onPress, variant = 'secondary', small, disabled, busy, accessibilityLabel }: ButtonProps) {
+  const theme = useTheme();
+  const fg = fgOf(theme);
+  const bg = bgOf(theme);
   const off = disabled || busy;
   return (
     <Squish

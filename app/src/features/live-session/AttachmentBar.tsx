@@ -8,7 +8,7 @@ import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View
 import { formatBytes } from '../../common/format';
 import { useStore } from '../../core/store';
 import { Icon } from '../../ui/Icon';
-import { colors, radius, space } from '../../core/theme';
+import { colors, radius, space, useTheme } from '../../core/theme';
 import type { AttachmentsModel, Draft, DraftsState } from './attachments';
 
 const selectDrafts = (s: DraftsState) => s.drafts;
@@ -19,6 +19,7 @@ export const AttachmentBar = memo(function AttachmentBar({ attach }: { attach: A
   const drafts = useStore(attach.store, selectDrafts);
   const error = useStore(attach.store, selectError);
   const picking = useStore(attach.store, selectPicking);
+  const { accent } = useTheme();
   if (!drafts.length && !error && !picking) return null;
   return (
     <View>
@@ -28,7 +29,7 @@ export const AttachmentBar = memo(function AttachmentBar({ attach }: { attach: A
           {drafts.map((d) => (
             <DraftChip key={d.key} draft={d} attach={attach} />
           ))}
-          {picking ? <ActivityIndicator style={styles.picking} color={colors.accent} /> : null}
+          {picking ? <ActivityIndicator style={styles.picking} color={accent} /> : null}
         </ScrollView>
       ) : null}
     </View>
@@ -37,6 +38,7 @@ export const AttachmentBar = memo(function AttachmentBar({ attach }: { attach: A
 
 const DraftChip = memo(function DraftChip({ draft: d, attach }: { draft: Draft; attach: AttachmentsModel }) {
   const failed = d.status === 'failed';
+  const { accent } = useTheme();
   const pct = d.total ? Math.min(100, Math.floor((100 * d.sent) / d.total)) : 0;
   const label = failed ? 'Upload failed, tap to retry' : d.status === 'uploading' ? `Uploading ${pct}%` : 'Ready';
   return (
@@ -51,7 +53,7 @@ const DraftChip = memo(function DraftChip({ draft: d, attach }: { draft: Draft; 
         <Image source={{ uri: d.uri }} style={styles.thumb} />
       ) : (
         <View style={styles.audio}>
-          <Icon name="music-note-outline" size={18} color={colors.accent} />
+          <Icon name="music-note-outline" size={18} color={accent} />
           <View style={styles.audioText}>
             <Text style={styles.name} numberOfLines={1}>
               {d.name}

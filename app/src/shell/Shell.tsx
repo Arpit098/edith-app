@@ -9,7 +9,7 @@ import { localEvent } from '../core/events';
 import type { LoadedFeatures } from '../core/feature';
 import type { FrameMeter } from '../core/ports';
 import { createStore, useStore } from '../core/store';
-import { ChromeContext, chrome, colors, space, titleGlow, type } from '../core/theme';
+import { ChromeContext, chrome, colors, space, titleGlow, type, useTheme } from '../core/theme';
 import { Ambient } from '../ui/Ambient';
 import { Glass, useBackdrop } from '../ui/Glass';
 import { Icon } from '../ui/Icon';
@@ -33,10 +33,11 @@ const APP_TITLE = 'E.D.I.T.H';
 
 export function Shell({ loaded, connection, meter }: { loaded: LoadedFeatures; connection: Connection; meter: FrameMeter | null }) {
   const link = useStore(connection.store, selectLink);
+  const theme = useTheme();
   if (link === 'loading') {
     return (
-      <View style={styles.splash}>
-        <ActivityIndicator color={colors.accent} size="large" />
+      <View style={[styles.splash, { backgroundColor: theme.bg }]}>
+        <ActivityIndicator color={theme.accent} size="large" />
       </View>
     );
   }
@@ -126,6 +127,7 @@ function Main({ loaded, connection, meter }: { loaded: LoadedFeatures; connectio
   const headerPanel = useMemo(() => loaded.panels.find((p) => p.slot === 'header'), [loaded]);
   const HeaderPanel = headerPanel?.component;
   const HeaderOverlay = headerPanel?.overlay;
+  const { titleGlow: glow } = useTheme(); // the title's glow takes the theme's accent
 
   return (
     <KeyboardAvoidingView style={styles.flex} behavior="padding">
@@ -154,7 +156,7 @@ function Main({ loaded, connection, meter }: { loaded: LoadedFeatures; connectio
           {/* [● bubble 0:42]      E.D.I.T.H      [☰] (plans/ui-next.md §2); other screens show their own title. */}
           <View style={styles.headerRow}>
             {/* The title in off-white with the logo's soft blue glow (titleGlow); E.D.I.T.H on the home screen. */}
-            <Text style={styles.title} numberOfLines={1} accessibilityRole="header" pointerEvents="none">
+            <Text style={[styles.title, { textShadowColor: glow }]} numberOfLines={1} accessibilityRole="header" pointerEvents="none">
               {top === home || !route ? APP_TITLE : route.title}
             </Text>
             {stacked ? (
@@ -198,7 +200,7 @@ function useKeyboardVisible(): boolean {
 const styles = StyleSheet.create({
   flex: { flex: 1 },
   hidden: { display: 'none' },
-  splash: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bg },
+  splash: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   header: { position: 'absolute', top: 0, left: 0, right: 0 },
   headerRow: { flexDirection: 'row', alignItems: 'center', gap: space.s, paddingHorizontal: space.l, minHeight: chrome.headerHeight },
   backBtn: { paddingRight: space.xs },

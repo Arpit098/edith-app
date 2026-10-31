@@ -3,7 +3,7 @@ import { ActivityIndicator, FlatList, StyleSheet, Text, TextInput, View, type La
 
 import type { Command } from '../../core/api';
 import { createStore, useStore, type Store } from '../../core/store';
-import { colors, radius, space, type, useChrome } from '../../core/theme';
+import { colors, radius, space, type, useChrome, useTheme } from '../../core/theme';
 import { Empty } from '../../ui/Empty';
 import { Glass, useBackdrop } from '../../ui/Glass';
 import { Icon } from '../../ui/Icon';
@@ -433,10 +433,11 @@ const RoundButton = memo(function RoundButton({
 /** The quote bar above the message box: what the next message replies to, with ✕ to drop it. */
 function ReplyBar({ quote, onCancel }: { quote: Quote; onCancel: () => void }) {
   const who = quote.from === 'edith' ? 'EDITH' : quote.from === 'arpit' ? 'your message' : 'a message';
+  const { accent } = useTheme();
   return (
     <View style={styles.reply}>
-      <View style={styles.replyText} accessible accessibilityLabel={`Replying to ${who}: ${quote.text}`}>
-        <Text style={styles.replyFrom}>{quote.from ? `Replying to ${quoteLabel(quote.from)}` : quoteLabel(null)}</Text>
+      <View style={[styles.replyText, { borderLeftColor: accent }]} accessible accessibilityLabel={`Replying to ${who}: ${quote.text}`}>
+        <Text style={[styles.replyFrom, { color: accent }]}>{quote.from ? `Replying to ${quoteLabel(quote.from)}` : quoteLabel(null)}</Text>
         <Text style={styles.replyQuote} numberOfLines={2}>
           {quote.text}
         </Text>
@@ -487,8 +488,8 @@ const styles = StyleSheet.create({
   composer: { marginHorizontal: space.m, marginBottom: space.s, gap: GAP },
   extras: { paddingBottom: space.s },
   reply: { flexDirection: 'row', alignItems: 'center', gap: space.s, paddingLeft: space.m, paddingRight: space.xs, paddingTop: space.s },
-  replyText: { flex: 1, borderLeftWidth: 3, borderLeftColor: colors.accent, paddingLeft: space.s },
-  replyFrom: { color: colors.accent, fontSize: type.size.caption, fontWeight: '700' },
+  replyText: { flex: 1, borderLeftWidth: 3, paddingLeft: space.s },
+  replyFrom: { fontSize: type.size.caption, fontWeight: '700' },
   replyQuote: { color: colors.textDim, fontSize: type.size.small },
   replyClose: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
   row: { flexDirection: 'row', alignItems: 'flex-end', gap: GAP },

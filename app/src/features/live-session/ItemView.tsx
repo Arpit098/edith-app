@@ -1,14 +1,21 @@
 // One transcript row. Memoized: the reducer keeps unchanged items as the same objects, so a new
 // event re-renders only the rows it touched.
+//
+// The two sides' bubbles are glass in the chosen colours (Settings → Appearance): the colour as a
+// translucent tint that follows the glass amount, a thin light edge (bright top-left, dim
+// bottom-right) and a faint sheen along the top. List glass: no live blur per row, so a long chat
+// scrolls as cheaply as before (one gradient view per bubble, none at 0%). The text is white or
+// black per bubble colour (theme BubbleLook.ink), at 4.5:1 or more on every background.
 
 import { memo, useState } from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { BubbleSheen as Sheen } from '../../ui/BubbleSheen';
 import { DiffView } from '../../ui/DiffView';
 import { Icon } from '../../ui/Icon';
 import { ReplyButtons } from '../../ui/ReplyButtons';
 import { StatusTick } from '../../ui/StatusTick';
-import { colors, type, radius, space } from '../../core/theme';
+import { bubbleFace, colors, themedStyles, type, radius, space, useTheme, type Theme } from '../../core/theme';
 import { clockIST } from '../../common/format';
 import type { SentAttachment } from './attachments';
 import type { Item, SendStatus, Tick } from './model';
@@ -44,6 +51,8 @@ export interface ItemViewProps {
 const REPLY_ACTIONS = [{ name: 'reply', label: 'Reply' }];
 
 export const ItemView = memo(function ItemView({ item, onPress, tick, status, onRetry, onReply, onQuote, highlight }: ItemViewProps) {
+  const theme = useTheme();
+  const ts = useBubbleStyles();
   const a11yReply = onReply ? { accessibilityActions: REPLY_ACTIONS, onAccessibilityAction: () => onReply(item) } : {};
   switch (item.kind) {
     case 'user': {
@@ -54,25 +63,26 @@ export const ItemView = memo(function ItemView({ item, onPress, tick, status, on
       return (
         <View style={styles.userWrap}>
           <Pressable
-            style={[styles.bubble, styles.user, failed && styles.userFailed, highlight && styles.highlight]}
+            style={[styles.bubble, styles.user, ts.mine, failed && ts.failed, highlight && ts.highlight]}
             onPress={retry}
             disabled={!retry}
             accessibilityHint={retry ? 'Send again' : undefined}
             {...a11yReply}
           >
-            {from || item.voice ? <Text style={styles.meta}>{[from, item.voice ? '🎙 voice' : ''].filter(Boolean).join(' · ')}</Text> : null}
-            {item.replyTo ? <QuoteView quote={item.replyTo} onPress={onQuote ? () => onQuote(item.id, item.replyTo!.text) : undefined} /> : null}
+            <Sheen look={theme.my} glass={theme.glass} />
+            {from || item.voice ? <Text style={[styles.meta, ts.mineDim]}>{[from, item.voice ? '🎙 voice' : ''].filter(Boolean).join(' · ')}</Text> : null}
+            {item.replyTo ? <QuoteView quote={item.replyTo} side="mine" onPress={onQuote ? () => onQuote(item.id, item.replyTo!.text) : undefined} /> : null}
             {item.attachments.length ? <SentAttachments list={item.attachments} /> : null}
             {item.text ? (
-              <Text style={styles.text} selectable>
+              <Text style={[styles.text, ts.mineText]} selectable>
                 {item.text}
               </Text>
             ) : null}
             <View style={styles.footer}>
-              <Text style={styles.time}>{clockIST(item.ts)}</Text>
+              <Text style={[styles.time, ts.mineDim]}>{clockIST(item.ts)}</Text>
               {tick ? (
                 <View accessibilityLabel={TICK_LABEL[tick]}>
-                  <StatusTick kind={tick} color={colors.textDim} />
+                  <StatusTick kind={tick} color={theme.my.inkDim} />
                 </View>
               ) : null}
             </View>
@@ -88,9 +98,10 @@ export const ItemView = memo(function ItemView({ item, onPress, tick, status, on
     }
     case 'assistant':
       return (
-        <View style={[styles.bubble, styles.assistant, highlight && styles.highlight]} {...a11yReply}>
-          {item.lane === 'side' ? <Text style={styles.meta}>⚡ Parallel answer (the main conversation was busy)</Text> : null}
-          <Text style={styles.text} selectable>
+        <View style={[styles.bubble, styles.assistant, ts.edith, highlight && ts.highlight]} {...a11yReply}>
+          <Sheen look={theme.edith} glass={theme.glass} />
+          {item.lane === 'side' ? <Text style={[styles.meta, ts.edithDim]}>⚡ Parallel answer (the main conversation was busy)</Text> : null}
+          <Text style={[styles.text, ts.edithText]} selectable>
             {item.text}
           </Text>
         </View>
@@ -101,7 +112,7 @@ export const ItemView = memo(function ItemView({ item, onPress, tick, status, on
       return <DiffCard path={item.path} diff={item.diff} />;
     case 'system':
       return (
-        <View style={[styles.system, item.tone === 'error' && styles.systemError]}>
+        <View style={[styles.system, ts.system, item.tone === 'error' && styles.systemError]}>
           <Text style={styles.text} selectable>
             {item.text}
           </Text>
@@ -128,18 +139,19 @@ export function quoteLabel(from: Quote['from']): string {
 }
 
 /** The quote on a reply: who and what, two lines at most; tapping it shows the original. */
-function QuoteView({ quote, onPress }: { quote: Quote; onPress?: () => void }) {
+function QuoteView({ quote, side, onPress }: { quote: Quote; side: 'mine' | 'edith'; onPress?: () => void }) {
+  const ts = useBubbleStyles();
   return (
     <Pressable
       onPress={onPress}
       disabled={!onPress}
-      style={styles.quote}
+      style={[styles.quote, side === 'mine' ? ts.mineQuote : ts.edithQuote]}
       accessibilityRole="button"
       accessibilityLabel={`Reply to ${quote.from === 'edith' ? 'EDITH' : quote.from === 'arpit' ? 'your message' : 'a message'}: ${quote.text}`}
       accessibilityHint="Shows the original message"
     >
-      <Text style={styles.quoteFrom}>{quoteLabel(quote.from)}</Text>
-      <Text style={styles.quoteText} numberOfLines={2}>
+      <Text style={[styles.quoteFrom, side === 'mine' ? ts.mineText : ts.edithText]}>{quoteLabel(quote.from)}</Text>
+      <Text style={[styles.quoteText, side === 'mine' ? ts.mineDim : ts.edithDim]} numberOfLines={2}>
         {quote.text}
       </Text>
     </Pressable>
@@ -170,10 +182,11 @@ function ToolCard({ item }: { item: Extract<Item, { kind: 'tool' }> }) {
 }
 
 function DiffCard({ path, diff }: { path: string; diff: string }) {
+  const theme = useTheme();
   return (
     <View style={styles.tool}>
       <View style={styles.toolRow}>
-        <Icon name="file-document-edit-outline" size={16} color={colors.accent} />
+        <Icon name="file-document-edit-outline" size={16} color={theme.accent} />
         <Text style={styles.toolSummary} numberOfLines={1} ellipsizeMode="head">
           {path}
         </Text>
@@ -218,27 +231,25 @@ const styles = StyleSheet.create({
   attachmentImage: { width: 140, height: 140, borderRadius: radius.m },
   attachmentChip: { flexDirection: 'row', alignItems: 'center', gap: space.xs, maxWidth: 220, backgroundColor: colors.cardRaised, borderRadius: radius.s, paddingHorizontal: space.s, paddingVertical: space.xs },
   attachmentName: { color: colors.text, fontSize: type.size.small, flexShrink: 1 },
-  // Every bubble has a 1 dp border, clear unless marked: a failed send or the jump-to mark changes
-  // only its colour, so the bubble never shifts by a pixel.
-  bubble: { borderRadius: radius.l, paddingHorizontal: space.m, paddingVertical: space.s + 2, marginVertical: space.xs, maxWidth: '88%', borderWidth: 1, borderColor: 'transparent' },
+  // Every bubble has a 1 dp border: its glass edge (themed), and a failed send or the jump-to mark
+  // changes only its colour, so the bubble never shifts by a pixel. The sheen is clipped to it.
+  bubble: { borderRadius: radius.l, paddingHorizontal: space.m, paddingVertical: space.s + 2, marginVertical: space.xs, maxWidth: '88%', borderWidth: 1, overflow: 'hidden' },
   userWrap: { alignSelf: 'flex-end', alignItems: 'flex-end', maxWidth: '88%', marginVertical: space.xs },
-  user: { backgroundColor: colors.userBubble, borderBottomRightRadius: radius.s, maxWidth: '100%', marginVertical: 0 },
-  userFailed: { borderColor: colors.danger },
-  highlight: { borderColor: colors.accent },
-  quote: { backgroundColor: colors.code, borderLeftWidth: 3, borderLeftColor: colors.accent, borderRadius: radius.s, paddingHorizontal: space.s, paddingVertical: space.xs, marginBottom: space.xs },
-  quoteFrom: { color: colors.accent, fontSize: type.size.caption, fontWeight: '700' },
-  quoteText: { color: colors.textDim, fontSize: type.size.small },
+  user: { borderBottomRightRadius: radius.s, maxWidth: '100%', marginVertical: 0 },
+  quote: { borderLeftWidth: 3, borderRadius: radius.s, paddingHorizontal: space.s, paddingVertical: space.xs, marginBottom: space.xs },
+  quoteFrom: { fontSize: type.size.caption, fontWeight: '700' },
+  quoteText: { fontSize: type.size.small },
   footer: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 3, marginTop: 2 },
   time: { color: colors.textDim, fontSize: type.size.caption },
   reaction: { marginTop: -10, marginRight: space.s, backgroundColor: colors.cardRaised, borderRadius: radius.pill, paddingHorizontal: 5, paddingVertical: 1, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.hairline },
   reactionText: { fontSize: 14 },
   caption: { color: colors.textDim, fontSize: type.size.caption, marginTop: 2, marginRight: space.xs },
   captionError: { color: colors.danger },
-  assistant: { backgroundColor: colors.assistantBubble, alignSelf: 'flex-start', borderBottomLeftRadius: radius.s, borderColor: colors.hairline },
+  assistant: { alignSelf: 'flex-start', borderBottomLeftRadius: radius.s },
   text: { color: colors.text, fontSize: type.size.body, lineHeight: 21 },
   meta: { color: colors.textDim, fontSize: type.size.caption, marginBottom: 2 },
   note: { color: colors.textDim, fontSize: type.size.small, marginTop: space.xs },
-  system: { backgroundColor: colors.cardRaised, borderRadius: radius.m, padding: space.m, marginVertical: space.xs, borderLeftWidth: 3, borderLeftColor: colors.accent },
+  system: { backgroundColor: colors.cardRaised, borderRadius: radius.m, padding: space.m, marginVertical: space.xs, borderLeftWidth: 3 },
   systemError: { borderLeftColor: colors.danger, backgroundColor: colors.dangerSoft },
   tool: { backgroundColor: colors.card, borderRadius: radius.m, padding: space.s, marginVertical: 2, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.hairline },
   toolRow: { flexDirection: 'row', alignItems: 'center', gap: space.s },
@@ -249,3 +260,25 @@ const styles = StyleSheet.create({
   rule: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: colors.hairline },
   dividerText: { color: colors.textDim, fontSize: type.size.caption, maxWidth: '70%' },
 });
+
+/** One colour on all four sides (a per-side edge colour wins over borderColor, so all four are set). */
+function ring(c: string) {
+  return { borderTopColor: c, borderLeftColor: c, borderRightColor: c, borderBottomColor: c };
+}
+
+/** What the theme decides in a row: the bubbles' glass and ink, the marks, the system card's bar. */
+const useBubbleStyles = themedStyles((t: Theme) =>
+  StyleSheet.create({
+    mine: bubbleFace(t.my),
+    edith: bubbleFace(t.edith),
+    mineText: { color: t.my.ink },
+    edithText: { color: t.edith.ink },
+    mineDim: { color: t.my.inkDim },
+    edithDim: { color: t.edith.inkDim },
+    mineQuote: { backgroundColor: t.my.inkSoft, borderLeftColor: t.my.ink },
+    edithQuote: { backgroundColor: t.edith.inkSoft, borderLeftColor: t.accent },
+    failed: ring(colors.danger),
+    highlight: ring(t.accent),
+    system: { borderLeftColor: t.accent },
+  }),
+);

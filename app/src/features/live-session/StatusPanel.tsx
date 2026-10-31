@@ -15,7 +15,7 @@ import type { StatusDetails } from '../../core/api';
 import { describeLink, LINK_TONE, type Connection, type ConnectionState } from '../../core/connection';
 import { shallowEqual, useStore, type Store } from '../../core/store';
 import { clockIST } from '../../common/format';
-import { colors, legibleText, radius, space, type } from '../../core/theme';
+import { colors, legibleText, radius, space, themedStyles, type, useTheme, type Theme } from '../../core/theme';
 import { Glass } from '../../ui/Glass';
 import { Icon } from '../../ui/Icon';
 import { GrowSheet, Squish } from '../../ui/motion';
@@ -27,13 +27,13 @@ const REFRESH_MS = 10_000;
 const BUBBLE = 22;
 const LABEL_WIDTH = 88;
 
-const TONE: Record<BarSummary['tone'], string> = { idle: colors.textDim, busy: colors.accent, approval: colors.warn };
-const CHIP: Record<AgentTone, { bg: string; dot: string }> = {
-  busy: { bg: colors.accentSoft, dot: colors.accent },
+const toneOf = (t: Theme): Record<BarSummary['tone'], string> => ({ idle: colors.textDim, busy: t.accent, approval: colors.warn });
+const chipOf = (t: Theme): Record<AgentTone, { bg: string; dot: string }> => ({
+  busy: { bg: t.accentSoft, dot: t.accent },
   idle: { bg: colors.card, dot: colors.textDim },
   warn: { bg: colors.warnSoft, dot: colors.warn },
   danger: { bg: colors.dangerSoft, dot: colors.danger },
-};
+});
 
 type Fetched = { details: StatusDetails; at: number } | null;
 
@@ -235,9 +235,10 @@ function Summary({ model, fetched, now, serverNow }: { model: LiveModel; fetched
   const detail = working ? bar.detail : null;
   const extra = [bar.counts, idleFor].filter(Boolean).join(' · ');
   const label = ['EDITH', bar.label, time && `for ${time}`, detail, extra].filter(Boolean).join(', ');
+  const tone = toneOf(useTheme());
   return (
     <View style={styles.summary} accessible accessibilityLabel={label}>
-      <View style={[styles.stateDot, { backgroundColor: TONE[bar.tone] }]} />
+      <View style={[styles.stateDot, { backgroundColor: tone[bar.tone] }]} />
       <View style={styles.summaryText}>
         <Text style={[styles.summaryTitle, bar.tone === 'approval' && styles.warn]}>{bar.label}</Text>
         {detail ? <Text style={[styles.summaryDetail, styles.mono]}>{detail}</Text> : null}
@@ -265,6 +266,7 @@ function Lanes({ lanes, drift }: { lanes: StatusDetails['lanes']; drift: number 
 
 function Session({ session: s, serverNow }: { session: StatusDetails['session']; serverNow: number }) {
   const context = s?.context_tokens != null ? contextUsage(s.context_tokens) : null;
+  const ts = useStyles();
   return (
     <Section title="Session" icon="message-text-outline">
       {s ? (
@@ -282,7 +284,7 @@ function Session({ session: s, serverNow }: { session: StatusDetails['session'];
                   accessibilityLabel={`Context ${Math.round(context.fraction * 100)}% full, ${context.text}`}
                   accessibilityValue={{ min: 0, max: 100, now: Math.round(context.fraction * 100) }}
                 >
-                  <View style={[styles.fill, { width: `${Math.min(100, Math.max(2, context.fraction * 100))}%` }, context.fraction > 0.8 && styles.fillWarn]} />
+                  <View style={[styles.fill, ts.fill, { width: `${Math.min(100, Math.max(2, context.fraction * 100))}%` }, context.fraction > 0.8 && styles.fillWarn]} />
                 </View>
               ) : null}
             </Row>
@@ -297,8 +299,9 @@ function Session({ session: s, serverNow }: { session: StatusDetails['session'];
 }
 
 function CardButton({ label, onPress }: { label: string; onPress: () => void }) {
+  const ts = useStyles();
   return (
-    <Squish onPress={onPress} style={styles.cardButton} accessibilityRole="button" accessibilityLabel={label}>
+    <Squish onPress={onPress} style={[styles.cardButton, ts.cardButton]} accessibilityRole="button" accessibilityLabel={label}>
       <Text style={styles.cardButtonText}>{label}</Text>
     </Squish>
   );
@@ -331,13 +334,14 @@ function Row({ label, value, mono, warn, children }: { label: string; value: str
 
 function AgentRow({ agent: a }: { agent: StatusDetails['agents'][number] }) {
   const chip = agentChip(a);
+  const tones = chipOf(useTheme());
   const where = a.branch ?? a.dir;
   return (
     <View style={styles.agent} accessibilityLabel={`${a.name}, ${chip.label}${a.branch ? `, on ${a.branch}` : ''}${a.last ? `. ${a.last}` : ''}`}>
       <View style={styles.agentHead}>
         <Text style={styles.agentName}>{a.name}</Text>
-        <View style={[styles.agentChip, { backgroundColor: CHIP[chip.tone].bg }]}>
-          <View style={[styles.smallDot, { backgroundColor: CHIP[chip.tone].dot }]} />
+        <View style={[styles.agentChip, { backgroundColor: tones[chip.tone].bg }]}>
+          <View style={[styles.smallDot, { backgroundColor: tones[chip.tone].dot }]} />
           <Text style={styles.agentState}>{chip.label}</Text>
         </View>
       </View>
@@ -375,9 +379,9 @@ const styles = StyleSheet.create({
   mono: { fontFamily: type.mono },
   warn: { color: colors.warn },
   track: { height: 3, borderRadius: 1.5, backgroundColor: colors.hairline, overflow: 'hidden' },
-  fill: { height: 3, borderRadius: 1.5, backgroundColor: colors.accent },
+  fill: { height: 3, borderRadius: 1.5 },
   fillWarn: { backgroundColor: colors.warn },
-  cardButton: { alignSelf: 'flex-start', paddingHorizontal: space.m, paddingVertical: space.xs, borderRadius: radius.pill, backgroundColor: colors.accentSoft },
+  cardButton: { alignSelf: 'flex-start', paddingHorizontal: space.m, paddingVertical: space.xs, borderRadius: radius.pill },
   cardButtonText: { color: colors.text, fontSize: type.size.small, fontWeight: '600', ...legibleText },
   agent: { paddingVertical: space.xs, gap: 2 },
   agentHead: { flexDirection: 'row', alignItems: 'center', gap: space.s, flexWrap: 'wrap' },
@@ -388,3 +392,5 @@ const styles = StyleSheet.create({
   agentState: { color: colors.text, fontSize: type.size.caption, fontWeight: '600', ...legibleText },
   agentLast: { color: colors.textSecondary, fontSize: type.size.caption, fontWeight: '500', ...legibleText },
 });
+
+const useStyles = themedStyles((t) => StyleSheet.create({ fill: { backgroundColor: t.accent }, cardButton: { backgroundColor: t.accentSoft } }));
