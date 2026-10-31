@@ -14,7 +14,7 @@ class TelegramNotifier:
         self.paths = resolve(config)
         self._api = api
 
-    def notify(self, title: str, body: str, priority: str = "default") -> bool:
+    def notify(self, title: str, body: str, priority: str = "default", data: dict | None = None) -> bool:
         if self._api is None:
             self._api = BotApi(read_token(self.paths.telegram_dir))
         chat = next(iter(sorted(allowed_ids(self.paths.telegram_dir))), None)

@@ -42,7 +42,9 @@ TAILSCALE_DNS = "100.100.100.100"
 MAX_CONNECTIONS = 16
 MAX_CLIENTS = 4
 CLIENT_BACKLOG = 1000     # frames waiting for one stream client; more and it is disconnected
-PING_EVERY = 25.0         # seconds; a client that misses two pings is dropped
+PING_EVERY = 25.0         # seconds; a client quiet for two of these (one unanswered ping) is dropped
+PROBE_WAIT = 3.0          # app_clients(): how long a client heard from earlier gets to answer a ping
+FRESH = 2.0               # app_clients(): heard from this recently counts without a ping
 AUDIT_MAX = 5 * 1024 * 1024
 IDLE_POLL = 60.0          # serve_forever's idle wake-up; stop() wakes it at once anyway
 DRAIN_MAX = 256 * 1024    # an upload refused early: read and drop a rest up to this, so the client gets the answer
@@ -95,7 +97,9 @@ def template(path):
 class Client:
     """One /v1/stream connection: frames to send wait here; a pipe wakes its thread."""
 
-    def __init__(self):
+    def __init__(self, app=False):
+        self.app = app            # the EDITH app (/v1/stream?client=app), not some other tool
+        self.heard = time.monotonic()  # last frame from it (set by its own thread)
         self.frames, self.lock = [], threading.Lock()
         self.wake_r, self.wake_w = os.pipe()
         self.too_slow = False
@@ -144,6 +148,7 @@ class AppApi:
         self._stopping = threading.Event()
         self._clients: set[Client] = set()
         self._clients_lock = threading.Lock()
+        self._heard = threading.Condition()  # notified when a stream client sends anything
         self._audit_lock = threading.Lock()
         self._slots = threading.BoundedSemaphore(MAX_CONNECTIONS)
         self._thread = None
@@ -321,9 +326,9 @@ class AppApi:
         for c in clients:
             c.push(frame)
 
-    def stream(self, sock):
+    def stream(self, sock, app=False):
         """Serve one /v1/stream client until it leaves, falls behind or the server stops."""
-        client = Client()
+        client = Client(app)
         with self._clients_lock:
             if len(self._clients) >= MAX_CLIENTS:
                 sock.sendall(ws.close_frame(ws.CLOSE_POLICY, "too many clients"))
@@ -349,6 +354,9 @@ class AppApi:
                 if sock in ready:
                     opcode, payload = reader.read()
                     missed = 0  # anything from the client shows it is still there
+                    with self._heard:
+                        client.heard = time.monotonic()
+                        self._heard.notify_all()
                     if opcode == ws.OP_CLOSE:
                         sock.sendall(ws.close_frame(ws.CLOSE_NORMAL))
                         return
@@ -361,8 +369,8 @@ class AppApi:
                     # other text from the client is read and ignored
                 if not ready:
                     missed += 1
-                    if missed > 2:
-                        return  # gone quiet: no pong to two pings
+                    if missed > 1:
+                        return  # gone quiet: no answer to a ping within PING_EVERY
                     sock.sendall(ws.encode(ws.OP_PING, b"edith"))
         except ws.ProtocolError as e:
             try:
@@ -376,6 +384,23 @@ class AppApi:
                 self._clients.discard(client)
             client.close()
             self._notify()
+            with self._heard:
+                self._heard.notify_all()  # app_clients() stops waiting on it
+
+    def app_clients(self, wait=PROBE_WAIT):
+        """How many app clients are really there now (ports.presence; contracts/push.md). One heard from in
+        the last FRESH s counts at once; any other gets a protocol ping and counts if it answers within
+        `wait` s, so a half-open socket (a phone that slept or lost its network) never holds back a push."""
+        start = time.monotonic()
+        with self._clients_lock:
+            apps = [c for c in self._clients if c.app]
+        quiet = [c for c in apps if start - c.heard > FRESH]
+        for c in quiet:
+            c.push(ws.encode(ws.OP_PING, b"edith"))
+        with self._heard:
+            self._heard.wait_for(lambda: all(c.heard >= start for c in quiet if c in self._clients), wait)
+        with self._clients_lock:
+            return sum(1 for c in apps if c in self._clients and (c.heard >= start or c not in quiet))
 
     @staticmethod
     def _pong(payload):
@@ -623,7 +648,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.wfile.flush()
         self.close_connection = True
         self.connection.settimeout(PING_EVERY * 3)
-        self.server.api.stream(self.connection)
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+        self.server.api.stream(self.connection, app=query.get("client") == ["app"])
         return 101
 
     do_GET = do_POST = do_PATCH = do_DELETE = do_PUT = _handle

@@ -96,8 +96,8 @@ describe('parseFrame', () => {
   });
 
   it('builds the ws url', () => {
-    expect(streamUrl('http://edith:8787')).toBe('ws://edith:8787/v1/stream');
-    expect(streamUrl('https://edith:8787')).toBe('wss://edith:8787/v1/stream');
+    expect(streamUrl('http://edith:8787')).toBe('ws://edith:8787/v1/stream?client=app');
+    expect(streamUrl('https://edith:8787')).toBe('wss://edith:8787/v1/stream?client=app');
   });
 });
 
@@ -109,7 +109,7 @@ describe('EventStream', () => {
     t.stream.configure(SERVER);
     t.stream.listen({ onEvent: () => {} }); // a second listener shares the socket
     expect(t.sockets).toHaveLength(1);
-    expect(t.last().url).toBe('ws://100.64.0.1:8787/v1/stream');
+    expect(t.last().url).toBe('ws://100.64.0.1:8787/v1/stream?client=app');
     expect(t.last().headers).toEqual({ Authorization: 'Bearer secret' });
     t.last().accept();
     t.last().message({ type: 'turn.started', ts: 1, origin: 'app', data: { ref: 'r' } });

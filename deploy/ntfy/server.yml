@@ -1,0 +1,19 @@
+# ntfy for EDITH's app pushes (contracts/push.md). Installed as ~/.config/ntfy/server.yml (deploy/ntfy/README.md).
+# Tailscale IP only, deny-all: edith publishes with a write-only token, the phone reads with a read-only one.
+# Paths are absolute (ntfy does not expand ~): edith's user is ubuntu.
+
+base-url: "http://100.78.124.98:2586"
+listen-http: "100.78.124.98:2586"   # never 0.0.0.0, never a public port
+
+auth-file: "/home/ubuntu/.local/share/ntfy/user.db"
+auth-default-access: "deny-all"
+enable-signup: false
+enable-login: false
+web-root: "disable"                 # no web app: the phone is the only reader
+
+cache-file: "/home/ubuntu/.local/share/ntfy/cache.db"
+cache-duration: "1h"                # what a phone that was offline gets with ?since=
+attachment-cache-dir: ""            # no attachments
+keepalive-interval: "300s"          # one keepalive per 5 min on the phone's stream (default 45 s): battery
+
+log-level: "info"

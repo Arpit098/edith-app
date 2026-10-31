@@ -107,6 +107,45 @@ export interface OngoingStatus {
 
 export type NotificationChannel = 'replies' | 'approvals' | 'reminders' | 'errors';
 
+/** What the push service needs with the app closed (contracts/push.md): edith's ntfy and the App API for Allow/Deny. */
+export interface PushSetup {
+  ntfyUrl: string; // e.g. http://100.78.124.98:2586
+  topic: string;
+  ntfyToken: string; // the phone's read-only ntfy token
+  apiUrl: string;
+  apiToken: string;
+  mode: PushMode;
+}
+
+/** 'instant': a native service holds one ntfy stream (battery: Unrestricted); 'poll': a check every 15 minutes. */
+export type PushMode = 'instant' | 'poll';
+
+export interface PushStatus {
+  enabled: boolean;
+  ntfyUrl: string | null;
+  mode: PushMode;
+  connected: boolean; // 'instant': the ntfy stream is open now; 'poll': the last check went through
+  error: string | null; // why not, in words
+  lastCheckAt: number | null; // 'poll': when the last check went through (ms since the epoch)
+  batteryUnrestricted: boolean; // exempt from battery optimisation (OxygenOS may stop it otherwise)
+}
+
+/** Pushes while the app is closed: a native service holding one ntfy stream, or a 15-minute check (contracts/push.md). */
+export interface PushReceiver {
+  /** Save the setup (encrypted on the phone) and start. False: Android refused to start it now. */
+  enable(setup: PushSetup): boolean;
+  /** The App API moved or its token changed: Allow/Deny on pushes use the new one. No-op while off. */
+  updateApi(apiUrl: string, apiToken: string): void;
+  /** Switch between the always-on stream and the 15-minute check. False: Android refused to start it now. */
+  setMode(mode: PushMode): boolean;
+  /** At app start: restart the service (or schedule the check) if pushes are on. Harmless if it runs. */
+  resume(): boolean;
+  /** Turn off and forget the tokens. */
+  disable(): void;
+  status(): PushStatus;
+  openBatterySettings(): void;
+}
+
 /** A notification button that calls the App API in the background, without opening the app. */
 export interface NotificationAction {
   label: string;
@@ -288,6 +327,7 @@ export interface Ports {
   media?: MediaPicker; // attachments
   status?: OngoingStatus;
   notifier?: Notifier;
+  push?: PushReceiver; // absent in tests, on web and before Android 8
   visibility?: AppVisibility;
   // Built in later phases (PLAN.md §6); absent until then.
   tts?: TextToSpeech; // Phase 3
