@@ -4,20 +4,11 @@
 # screens (glass, and flat in battery saver), frame times for glass on and off, and a short screen
 # recording as the `phase-2b-screens` artifact.
 #
-# About half an hour of runner time, so it runs only on PRs that touch the look (glass, theme, ui,
-# shell) and by hand, never on main builds.
+# About half an hour of runner time, so it runs only by hand (Actions → screens → Run workflow, or
+# `gh workflow run screens.yml --ref <branch>`), never on its own.
 name: screens
 
 on:
-  pull_request:
-    paths:
-      - 'app/android-modules/edith-glass/**'
-      - 'app/src/ui/**'
-      - 'app/src/core/theme/**'
-      - 'app/src/shell/**'
-      - 'app/scripts/emulator/screens.sh'
-      - 'app/scripts/emulator/demo-api.py'
-      - '.github/workflows/screens.yml'
   workflow_dispatch:
 
 concurrency:

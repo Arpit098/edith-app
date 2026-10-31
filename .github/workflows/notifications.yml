@@ -3,19 +3,11 @@
 # states.json), checks the foreground service, the Allow button and the tap target, and saves the
 # screenshots as the `notification-screenshots` artifact.
 #
-# It costs about half an hour of runner time, so it runs only on PRs that touch the notification code
-# (and by hand), never on main builds.
+# It costs about half an hour of runner time, so it runs only by hand (Actions → notifications → Run
+# workflow, or `gh workflow run notifications.yml --ref <branch>`), never on its own.
 name: notifications
 
 on:
-  pull_request:
-    paths:
-      - 'app/android-modules/edith-system/**'
-      - 'app/src/features/live-status/**'
-      - 'app/src/features/notifications/**'
-      - 'app/src/adapters/system/**'
-      - 'app/scripts/emulator/**'
-      - '.github/workflows/notifications.yml'
   workflow_dispatch:
 
 concurrency:
