@@ -285,6 +285,41 @@ class PushConfigTest(unittest.TestCase):
         self.assertEqual(self.get()[0], 503)
         self.assert_no_token_anywhere()
 
+    def test_only_a_well_formed_ntfy_token_is_handed_out(self):
+        for bad in ("tk_" + "p1" * 15,             # 30 after tk_
+                    "tk_" + "p1" * 14 + "-",       # 29, but not letters or digits
+                    "xx_" + "p1" * 14 + "q",       # not tk_
+                    "tk_" + "p1" * 14 + "q extra"):  # trailing text on the same line
+            with self.subTest(bad=bad):
+                self.secret("phone", bad)
+                status, _, body = self.get()
+                self.assertEqual(status, 503)
+                self.assertNotIn(bad, json.dumps(body))
+        self.assertTrue(any("tk_ and 29 letters or digits" in line for line in self.logs.lines))
+        self.secret("phone", PHONE)
+        self.assertEqual(self.get()[0], 200)
+        self.assert_no_token_anywhere()
+
+    def test_refused_while_the_publish_token_cant_be_checked(self):
+        for broken in ("open", "missing"):
+            with self.subTest(broken=broken):
+                if broken == "open":
+                    os.chmod(self.publish_file, 0o644)
+                else:
+                    os.remove(self.publish_file)
+                status, _, body = self.get()
+                self.assertEqual(status, 503)
+                self.assertNotIn("token", body)
+        self.assertTrue(any("can't be checked" in line for line in self.logs.lines))
+        self.assert_no_token_anywhere()
+
+    def test_never_the_cached_publish_token_either(self):
+        self.ntfy._token = PHONE  # publishing cached it; the publish file was then rotated
+        self.assertEqual(self.get()[0], 503)
+        self.ntfy._token = TOKEN
+        self.assertEqual(self.get()[0], 200)
+        self.assert_no_token_anywhere()
+
 
 class PushConfigWithoutNtfyTest(unittest.TestCase):
     get, secret, assert_no_token_anywhere = PushConfigTest.get, PushConfigTest.secret, PushConfigTest.assert_no_token_anywhere

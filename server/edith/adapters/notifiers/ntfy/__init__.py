@@ -14,6 +14,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import stat
 import threading
 import urllib.error
@@ -22,6 +23,7 @@ import urllib.request
 log = logging.getLogger("edith.ntfy")
 
 PRIORITY = {"min": 1, "low": 2, "default": 3, "high": 4}  # ntfy's 1..5
+NTFY_TOKEN = re.compile(r"tk_[A-Za-z0-9]{29}")  # contracts/push.md: what the app accepts
 
 
 def read_token(path: str) -> str:
@@ -87,19 +89,23 @@ class NtfyNotifier:
         """What the phone subscribes with (contracts/push.md, GET /v1/push/config): this server's url and
         topic and the phone's read-only token, read fresh (it is asked for once, when push is turned
         on). Raises ValueError, without the token in the message, when the phone token file is
-        unusable or holds the publish token: that one is never handed out."""
+        unusable or not an ntfy token, or when it can't be shown not to be the publish token: the
+        publish file must be readable, and the token must differ from it and from the one in use."""
         try:
             token = read_token(self.phone_token_file)
         except (OSError, ValueError) as e:
             raise ValueError(f"phone token unusable: {e}") from None
+        if not NTFY_TOKEN.fullmatch(token):
+            raise ValueError(f"{self.phone_token_file} must hold an ntfy token (tk_ and 29 letters or digits)")
         if os.path.realpath(self.phone_token_file) == os.path.realpath(self.token_file):
             raise ValueError("phone_token_file is the publish token file")
         try:
             publish = read_token(self.token_file)
-        except (OSError, ValueError):
-            publish = None
-        if publish is not None and hmac.compare_digest(token, publish):
-            raise ValueError(f"{self.phone_token_file} holds the publish token")
+        except (OSError, ValueError) as e:  # unknown publish token: the phone one can't be checked against it
+            raise ValueError(f"publish token unreadable, so the phone token can't be checked: {e}") from None
+        for known in (publish, self._token):  # the file now, and the one cached at the last publish
+            if known is not None and hmac.compare_digest(token, known):
+                raise ValueError(f"{self.phone_token_file} holds the publish token")
         return {"url": self.url, "topic": self.topic, "token": token}
 
     def close(self) -> None:
