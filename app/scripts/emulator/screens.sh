@@ -67,6 +67,7 @@ keyboard_shown() { adb shell dumpsys input_method | grep -q "mInputShown=true"; 
 # Navigate with the header's menu (top right): open it, pick the screen (its item says
 # "<name>, current screen" when it's the one shown).
 go_to() {
+  wait_until "the menu button" on_screen Menu || return 1 # a dump can fail mid-scroll: wait, don't tap blind
   tap Menu || return 1
   wait_until "the menu" on_screen "Close the menu" || return 1
   if on_screen "$1, current screen"; then tap "$1, current screen" || return 1; else tap "$1" || return 1; fi
@@ -134,7 +135,7 @@ battery_saver() { # on|off: the glass goes flat while it's on (edith-glass's Pow
 measure() {
   local label=$1
   go_to Live || return 1
-  wait_until "the live tab" on_screen "Reminder set for Monday 2 November at 9:00." || return 1
+  wait_until "the live tab" on_screen "Now run the server tests and tell me if anything fails" || return 1
   adb shell dumpsys gfxinfo "$PKG" reset >/dev/null
   for _ in 1 2 3; do
     scroll_up 300
@@ -178,13 +179,22 @@ tap "Token"
 adb shell input text "ci-token"
 keyboard_shown && adb shell input keyevent KEYCODE_BACK
 tap Connect
-wait_until "the live session" on_screen "Reminder set for Monday 2 November at 9:00."
+wait_until "the live session" on_screen "Now run the server tests and tell me if anything fails"
 keyboard_shown && adb shell input keyevent KEYCODE_BACK
 
 screenshots() {
 shot 01-live
+# The status card open over the long chat (Arpit's second screenshot): tap the pill, shoot, close.
+tap Idle || return 1
+wait_until "the status card" on_screen "edith-notify" || return 1
+shot 01b-status-card-open
+tap Idle || return 1
 scroll_up
 shot 02-live-scrolled-under-the-glass
+scroll_down
+# Arpit's first screenshot: back at the end, then a short drag so the long reply sits under the composer.
+adb shell input swipe $((W / 2)) $((H * 45 / 100)) $((W / 2)) $((H * 62 / 100)) 400
+shot 02b-composer-over-the-long-reply
 scroll_down
 go_to Sessions || return 1
 wait_until "sessions" on_screen "Morning briefing" || return 1
@@ -222,7 +232,7 @@ cat "$OUT/frames.md"
 
 recording() {
 go_to Live || return 1
-wait_until "the live tab" on_screen "Reminder set for Monday 2 November at 9:00." || return 1
+wait_until "the live tab" on_screen "Now run the server tests and tell me if anything fails" || return 1
 adb shell screenrecord --time-limit 90 --bit-rate 8000000 /sdcard/clip.mp4 &
 rec=$!
 sleep 1.5

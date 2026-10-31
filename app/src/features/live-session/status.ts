@@ -11,7 +11,9 @@ export interface BarSummary {
   tone: 'idle' | 'busy' | 'approval';
   label: string; // "Running Bash", "Thinking", "Waiting for approval", "Idle"
   counts: string; // "1 parallel · 2 queued · 1 approval", or ""
-  title: string | null;
+  // The pill's right side: the step running ("$ npm test") or, between steps, Arpit's latest prompt.
+  // Never the session's title, which is often a long first message (it's in the card, labelled).
+  detail: string | null;
 }
 
 /** "$ npm test" -> "Bash", "Read: x.py" -> "Read": the tool behind a step summary (server/…/transcript.py describe_tool). */
@@ -34,11 +36,12 @@ export function barSummary(s: LiveState): BarSummary {
   const counts = [side ? `${side} parallel` : '', s.queued ? `${s.queued} queued` : '', approvals ? plural(approvals, 'approval') : '']
     .filter(Boolean)
     .join(' · ');
-  const title = s.session?.title ?? null;
-  if (approvals) return { state: 'waiting_approval', tone: 'approval', label: 'Waiting for approval', counts, title };
-  if (main?.active && main.step) return { state: 'tool', tone: 'busy', label: `Running ${toolName(main.step)}`, counts, title };
-  if (main || s.main === 'busy') return { state: 'thinking', tone: 'busy', label: 'Thinking', counts, title };
-  return { state: 'idle', tone: 'idle', label: 'Idle', counts, title };
+  const prompt = s.items.find((x) => x.kind === 'user' && x.text.trim() !== ''); // newest first: stops at the latest
+  const detail = main?.active && main.step ? main.step : prompt?.kind === 'user' ? prompt.text.trim() : null;
+  if (approvals) return { state: 'waiting_approval', tone: 'approval', label: 'Waiting for approval', counts, detail };
+  if (main?.active && main.step) return { state: 'tool', tone: 'busy', label: `Running ${toolName(main.step)}`, counts, detail };
+  if (main || s.main === 'busy') return { state: 'thinking', tone: 'busy', label: 'Thinking', counts, detail };
+  return { state: 'idle', tone: 'idle', label: 'Idle', counts, detail };
 }
 
 /** "0:42", "12:05", "1:02:03" */

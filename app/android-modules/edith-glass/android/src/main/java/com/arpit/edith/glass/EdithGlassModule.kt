@@ -92,7 +92,10 @@ class EdithGlassModule : Module() {
       Prop("blur") { v: GlassView, r: Float -> v.blurDp = r }
       Prop("refraction") { v: GlassView, r: Float -> v.refractionDp = r }
       Prop("bezel") { v: GlassView, r: Float -> v.bezelDp = r }
-      Prop("dispersion") { v: GlassView, d: Float -> v.dispersion = d }
+      Prop("dispersion") { v: GlassView, d: Float -> v.dispersionDp = d }
+      Prop("lift") { v: GlassView, l: Float -> v.lift = l }
+      Prop("rimWidth") { v: GlassView, w: Float -> v.rimWidthDp = w }
+      Prop("base") { v: GlassView, c: FloatArray -> if (c.size == 4) v.base = c }
       Prop("saturation") { v: GlassView, s: Float -> v.saturation = s }
       Prop("specular") { v: GlassView, s: Float -> v.specular = s }
       Prop("tint") { v: GlassView, t: FloatArray -> if (t.size == 4) v.tint = t }

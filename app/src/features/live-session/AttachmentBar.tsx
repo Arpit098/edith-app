@@ -95,7 +95,8 @@ const DraftChip = memo(function DraftChip({ draft: d, attach }: { draft: Draft; 
 });
 
 const styles = StyleSheet.create({
-  menu: { flexDirection: 'row', gap: space.s, paddingHorizontal: space.s, paddingTop: space.s, flexWrap: 'wrap' },
+  // A dark panel inside the composer's glass: its labels sit on calm colour, never on the frost's glow.
+  menu: { flexDirection: 'row', gap: space.s, padding: space.s, marginHorizontal: space.s, marginTop: space.s, flexWrap: 'wrap', backgroundColor: colors.panelDark, borderRadius: radius.m },
   strip: { gap: space.s, paddingHorizontal: space.s, paddingTop: space.s, alignItems: 'center' },
   picking: { marginHorizontal: space.s },
   error: { color: colors.danger, fontSize: 13, paddingHorizontal: space.m, paddingTop: space.s },
