@@ -2,6 +2,8 @@
 
 import { createContext, useContext, type ComponentType } from 'react';
 
+import type { Scheme } from './tokens';
+
 export * from './tokens';
 
 /**
@@ -37,6 +39,8 @@ export interface GlassSettings {
   View: ComponentType<NativeGlassProps> | null;
   /** Android's "Remove animations": motion jumps to its end state. */
   reduceMotion: boolean;
+  /** The colour scheme glass sits in (its rim): 'dark' when absent (the app is dark today). */
+  scheme?: Scheme;
 }
 
 export const SHADER_MIN_SDK = 33; // RenderEffect.createRuntimeShaderEffect: Android 13

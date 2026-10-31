@@ -39,7 +39,6 @@ export const colors = {
   diffHunk: '#A9CBEF',
   overlay: 'rgba(5, 7, 10, 0.66)', // over a thumbnail while it uploads
   overlayStrong: 'rgba(5, 7, 10, 0.8)', // small controls on a thumbnail (remove)
-  panelDark: 'rgba(10, 12, 16, 0.78)', // a text panel inside other glass (the attach menu in the composer)
 } as const;
 
 /** thin/regular/thick: chrome (the full frost and lens); panel: glass with text on it (heavy frost, dark tint). */
@@ -124,6 +123,54 @@ export const glass: Record<GlassLevel, GlassStyle> = {
   },
 };
 
+/** The colour scheme a surface sits in. The app is dark today; the rim is ready for both. */
+export type Scheme = 'dark' | 'light';
+
+/**
+ * The specular rim (Glass `rim`): light catching the glass edge. Three strokes, the usual
+ * glassmorphism recipe redrawn as SVG (react-native-svg), so it looks the same with real glass,
+ * blur only or the flat fallback:
+ * - the rim: a thin gradient stroke along the diagonal, bright at the top-left and bottom-right
+ *   corners and fading to nearly nothing at the top-right and bottom-left;
+ * - the glow: the same gradient, wider and faint, just inside the rim (an inner highlight);
+ * - the shade: a faint dark line inside the bottom edge (an inner shadow), so the pane reads thick.
+ */
+export interface RimStyle {
+  lit: string; // the bright corners (top-left; bottom-right at `far`)
+  mid: string; // a quarter of the way along
+  dim: string; // the top-right and bottom-left: nearly transparent
+  far: number; // the bottom-right corner's strength against the top-left, 0..1
+  width: number; // the rim stroke, dp
+  glow: number; // the inner highlight's opacity, 0..1
+  glowWidth: number; // dp
+  shade: string; // the inner shadow along the bottom
+}
+
+export const rims: Record<Scheme, RimStyle> = {
+  dark: {
+    lit: 'rgba(255, 255, 255, 0.78)',
+    mid: 'rgba(255, 255, 255, 0.20)',
+    dim: 'rgba(255, 255, 255, 0.03)',
+    far: 0.75,
+    width: 1,
+    glow: 0.32,
+    glowWidth: 3,
+    shade: 'rgba(0, 0, 0, 0.28)',
+  },
+  // On light glass a white line alone vanishes: brighter corners, and a slightly darker shade
+  // to keep the pane's shape.
+  light: {
+    lit: 'rgba(255, 255, 255, 1)',
+    mid: 'rgba(255, 255, 255, 0.45)',
+    dim: 'rgba(255, 255, 255, 0.06)',
+    far: 0.85,
+    width: 1.2,
+    glow: 0.55,
+    glowWidth: 3,
+    shade: 'rgba(15, 23, 42, 0.12)',
+  },
+};
+
 /** 'rgba(r, g, b, a)' or '#rrggbb' → [r, g, b, a] in 0..1, the form the native glass view takes. */
 export function rgbaOf(css: string): number[] {
   const hex = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(css);
@@ -131,6 +178,13 @@ export function rgbaOf(css: string): number[] {
   const m = /^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*(?:,\s*([\d.]+)\s*)?\)$/.exec(css);
   if (!m) return [0, 0, 0, 0];
   return [Number(m[1]) / 255, Number(m[2]) / 255, Number(m[3]) / 255, m[4] === undefined ? 1 : Number(m[4])];
+}
+
+/** A token as an SVG gradient stop: an opaque '#rrggbb' and its opacity (stops take alpha apart). */
+export function stopOf(css: string): { color: string; opacity: number } {
+  const [r, g, b, a] = rgbaOf(css);
+  const hex = (v: number) => Math.round(v * 255).toString(16).padStart(2, '0');
+  return { color: `#${hex(r!)}${hex(g!)}${hex(b!)}`, opacity: a! };
 }
 
 /** Each level's tint for the native view, parsed once. */

@@ -4,6 +4,7 @@
 import { memo, useEffect, useState, type ReactNode } from 'react';
 import { AppState, Pressable, type PressableProps, type StyleProp, type ViewStyle } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
+import { scheduleOnRN } from 'react-native-worklets';
 
 import { motion, useGlass } from '../core/theme';
 
@@ -54,6 +55,46 @@ export const GrowIn = memo(function GrowIn({ origin = 'left bottom', style, chil
   }));
   return <Animated.View style={[style, { transformOrigin: origin }, animated]}>{children}</Animated.View>;
 });
+
+/**
+ * A sheet that grows out of `origin` (where its trigger is) while `open`, and shrinks back into it
+ * when closed. It stays mounted until the closing spring settles, then unmounts, so a closed sheet
+ * costs nothing. With "Remove animations" on it appears and goes at once.
+ */
+export function GrowSheet({ open, origin, style, children }: { open: boolean; origin: string; style?: StyleProp<ViewStyle>; children?: ReactNode }) {
+  const reduce = useReduceMotion();
+  const [mounted, setMounted] = useState(open);
+  const p = useSharedValue(0);
+
+  useEffect(() => {
+    if (open) setMounted(true);
+  }, [open]);
+
+  useEffect(() => {
+    if (!mounted) return;
+    if (open) {
+      p.value = reduce ? 1 : withSpring(1, motion.grow);
+    } else if (reduce) {
+      p.value = 0;
+      setMounted(false);
+    } else {
+      p.value = withSpring(0, motion.press, (finished) => {
+        if (finished) scheduleOnRN(setMounted, false);
+      });
+    }
+  }, [open, mounted, reduce, p]);
+
+  const animated = useAnimatedStyle(() => ({
+    opacity: Math.min(1, p.value * 1.5),
+    transform: [{ scale: 0.55 + 0.45 * p.value }],
+  }));
+  if (!mounted) return null;
+  return (
+    <Animated.View style={[style, { transformOrigin: origin }, animated]} pointerEvents={open ? 'auto' : 'none'}>
+      {children}
+    </Animated.View>
+  );
+}
 
 /**
  * Settles into place from a little below on mount, when `animate` (a new message, not history or a

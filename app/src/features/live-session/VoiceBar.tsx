@@ -6,7 +6,7 @@ import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 
 import { useStore } from '../../core/store';
 import { Button } from '../../ui/Button';
-import { colors, radius, space } from '../../core/theme';
+import { colors, space } from '../../core/theme';
 import { MAX_RECORDING_MS, type VoiceModel, type VoiceState } from './voice';
 
 const selectPhase = (s: VoiceState) => s.phase;
@@ -15,7 +15,7 @@ const selectLevel = (s: VoiceState) => Math.round(s.level * 20) / 20; // 5% step
 
 export const clock = (seconds: number) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 
-/** Shown in place of the text box while recording, transcribing or sending. */
+/** Shown in the message pill in place of the text box while recording, transcribing or sending. */
 export const VoiceBar = memo(function VoiceBar({ voice, onStop }: { voice: VoiceModel; onStop: () => void }) {
   const phase = useStore(voice.store, selectPhase);
   const seconds = useStore(voice.store, selectElapsed);
@@ -46,7 +46,8 @@ export const VoiceBar = memo(function VoiceBar({ voice, onStop }: { voice: Voice
 });
 
 const styles = StyleSheet.create({
-  bar: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: space.s, minHeight: 44, paddingHorizontal: space.s, backgroundColor: colors.card, borderRadius: radius.m },
+  // Inside the composer's glass pill, in place of the text box: no card of its own.
+  bar: { flexDirection: 'row', alignItems: 'center', gap: space.s, minHeight: 48, paddingLeft: space.l, paddingRight: space.xs },
   dot: { width: 10, height: 10, borderRadius: 5, backgroundColor: colors.danger },
   dotDim: { opacity: 0.35 },
   time: { color: colors.text, fontVariant: ['tabular-nums'], fontSize: 15, minWidth: 40 },

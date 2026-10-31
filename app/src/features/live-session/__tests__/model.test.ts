@@ -244,4 +244,26 @@ describe('createLiveModel', () => {
     expect(m.store.get().items).toHaveLength(3); // the sent message, the system message and the later reply
     m.dispose();
   });
+
+  it("lists the composer menu's commands once, without the ones the app has controls for, and asks again after a failure", async () => {
+    const ctx = fakeContext();
+    let fail = true;
+    ctx.transport.on('GET /v1/commands', () => {
+      if (fail) throw new Error('offline');
+      return {
+        commands: [
+          { name: 'compact', description: 'Compact the context', usage: '', help: '' },
+          { name: 'stop', description: 'Stop', usage: '', help: '' },
+          { name: 'remind', description: 'Set a reminder', usage: '<when> <what>', help: '' },
+        ],
+      };
+    });
+    const m = createLiveModel(ctx.bus, ctx.api);
+    await expect(m.commands()).rejects.toThrow('offline');
+    fail = false;
+    expect((await m.commands()).map((c) => c.name)).toEqual(['compact', 'remind']);
+    await m.commands();
+    expect(ctx.transport.calls.filter((c) => c.path === '/v1/commands')).toHaveLength(2); // the failure and one success
+    m.dispose();
+  });
 });

@@ -1,7 +1,7 @@
 // Live session: the transcript and turn state, reduced from stream events and filled from history.
 
 import { backoffDelay, type Backoff } from '../../common/backoff';
-import { ApiError, isRetryable, type Api, type HistoryPage, type Reply, type Status, type StatusDetails } from '../../core/api';
+import { ApiError, isRetryable, type Api, type Command, type HistoryPage, type Reply, type Status, type StatusDetails } from '../../core/api';
 import { cursorOf, type ButtonRows, type EdithEvent, type EventBus, type Lane, type Origin } from '../../core/events';
 import { bool, buttonRows, num, str } from '../../core/guards';
 import type { AppVisibility, KeyValueStore } from '../../core/ports';
@@ -552,6 +552,11 @@ export interface LiveModel {
   stop(): Promise<string>;
   /** The status panel's details (GET /v1/status/details); asked only while the panel is open. */
   details(): Promise<StatusDetails>;
+  /**
+   * The server commands the composer's menu offers (/compact, /status, …), asked once and kept;
+   * a failure is asked again next time. Typed in this chat they run as commands (contracts/events.md).
+   */
+  commands(): Promise<Command[]>;
   /** Whether EDITH is on screen (the visibility port); undefined where there is none (always on screen). */
   visibility?: AppVisibility;
   press(itemId: number, action: string): Promise<string | null>;
@@ -561,6 +566,9 @@ export interface LiveModel {
 }
 
 // ---- the outbox: messages this app sent, kept across restarts until the server has them ----
+
+// Commands the composer's menu leaves out: the app has its own controls for them (Stop, Sessions).
+export const CHAT_HIDDEN_COMMANDS = new Set(['start', 'help', 'sessions', 'resume', 'name', 'new', 'stop']);
 
 export const OUTBOX_KEY = 'edith.outbox';
 const MAX_OUTBOX = 50;
@@ -641,6 +649,7 @@ export function createLiveModel(bus: EventBus, api: Api, storage?: KeyValueStore
   const store = createStore(initialLive);
   const myRefs = new Set<string>(); // presses whose later replies (command.reply) belong in this view
   let localSeq = Date.now(); // keys stay unique across restarts
+  let commandList: Promise<Command[]> | null = null;
   let flushing = false;
   let retryAttempt = 0;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -853,6 +862,16 @@ export function createLiveModel(bus: EventBus, api: Api, storage?: KeyValueStore
       return n ? `Stopped ${n} task${n === 1 ? '' : 's'}` : 'Nothing was running';
     },
     details: () => api.statusDetails(),
+    commands() {
+      commandList ??= api.commands().then(
+        (all) => all.filter((c) => !CHAT_HIDDEN_COMMANDS.has(c.name)),
+        (e: unknown) => {
+          commandList = null;
+          throw e;
+        },
+      );
+      return commandList;
+    },
     visibility,
     async press(itemId, action) {
       const r = await api.press(action);
