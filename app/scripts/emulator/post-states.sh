@@ -51,10 +51,35 @@ off_screen() { ! on_screen "$1"; }
 top_activity() { adb shell dumpsys activity activities | grep -m1 -E "topResumedActivity|ResumedActivity:"; }
 launcher_on_top() { top_activity | grep -qi launcher; }
 edith_on_top() { top_activity | grep -qF "$PKG/"; }
+LAUNCHER=$(adb shell cmd package resolve-activity --brief -c android.intent.category.HOME -a android.intent.action.MAIN | tail -1 | cut -d/ -f1 | tr -d '\r')
+[ -n "$LAUNCHER" ] || { echo "::error::no home launcher found"; exit 1; }
+echo "launcher: $LAUNCHER"
+# The launcher is resumed before its window is drawn: until then the screen is black and SystemUI
+# drops shade requests. uiautomator only sees a window once it is drawn, so wait for its views.
+launcher_drawn() { ui | grep -qF "package=\"$LAUNCHER\""; }
 home() {
+  adb shell input keyevent KEYCODE_WAKEUP
   adb shell input keyevent KEYCODE_HOME
   wait_until "the launcher" launcher_on_top
+  wait_until "the launcher to be drawn" launcher_drawn
 }
+# Open or close the shade and check it, re-sending the request on every try: SystemUI ignores one
+# that arrives during a window transition, so a single request can be lost.
+# Whether the shade is open, from the window manager: its NotificationShade window is VISIBLE (0x0)
+# when expanded and GONE when collapsed.
+shade_window() { adb shell dumpsys window windows | awk '/Window\{[^}]*NotificationShade\}:?$/ { f = 1 } f && /mViewVisibility=/ { print; exit }'; }
+shade_open() { shade_window | grep -q "mViewVisibility=0x0"; }
+# The title in the open shade: uiautomator sees it on screen; or, as uiautomator on Android 16 sometimes
+# dumps the launcher's window instead of the open shade (seen with the shade on screen in the
+# screenshot), the shade window is open and the notification with that title is posted.
+SHADE_EVIDENCE=""
+shade_shows() {
+  if ! shade_open; then adb shell cmd statusbar expand-notifications; fi
+  if on_screen "$1"; then SHADE_EVIDENCE="uiautomator"; return 0; fi
+  if shade_open && has_title "$1"; then SHADE_EVIDENCE="shade window open + notification posted"; return 0; fi
+  return 1
+}
+shade_closed_without() { adb shell cmd statusbar collapse; off_screen "$1"; }
 logged() { grep -qF "$1" "$API_LOG"; }
 
 # A screenshot once two frames in a row match (the shade has settled), at most 10 tries.
@@ -77,13 +102,14 @@ shot() {
 # A failed check here is recorded and the run goes on, so every state still gets its screenshots
 # (plus the screen's UI tree, to see why); the job fails at the end.
 shots() {
-  adb shell cmd statusbar collapse
-  wait_until "the shade to close" off_screen "$2" || FAILED+=("$1: shade did not close")
+  wait_until "the shade to close" shade_closed_without "$2" || FAILED+=("$1: shade did not close")
   shot "$1-statusbar"
-  adb shell cmd statusbar expand-notifications
-  if ! wait_until "the shade to show \"$2\"" on_screen "$2"; then
+  if wait_until "the shade to show \"$2\"" shade_shows "$2"; then
+    echo "shade shows \"$2\" ($SHADE_EVIDENCE)"
+  else
     FAILED+=("$1: \"$2\" not in the shade")
     ui >"$OUT/$1-shade-ui.xml" || true
+    shade_window >"$OUT/$1-shade-window.txt" 2>&1 || true
   fi
   shot "$1-shade"
   adb shell cmd statusbar collapse
@@ -118,6 +144,8 @@ activities() { adb shell dumpsys activity activities | grep -cE "Hist +#[0-9]+: 
 adb shell input keyevent KEYCODE_WAKEUP
 adb shell wm dismiss-keyguard
 home # boot is over once the launcher is up (a screenshot before that is black)
+# What the window manager says about the closed shade (for the artifact: the format shade_open reads).
+adb shell dumpsys window windows | grep -A30 "NotificationShade" >"$OUT/shade-window-closed.txt" 2>&1 || true
 adb install -r -g "$APK" # -g: POST_NOTIFICATIONS granted, as after Arpit's "Allow"
 adb shell settings put global heads_up_notifications_enabled 0 # heads-up pop-ups would cover the status bar
 adb shell am start -W -n "$PKG/.MainActivity" >/dev/null # in the foreground, as when Arpit sends a message:
@@ -157,8 +185,7 @@ for tag in $(jq -r '.states[] | select(.kind == "notify" and .payload.channel !=
   send cancel "$tag"
 done
 wait_until "the other notifications to go" bash -c "! adb shell dumpsys notification --noredact | grep -qF 'android.title=String (EDITH replied)'"
-adb shell cmd statusbar expand-notifications
-wait_until "the shade to show Allow" on_screen Allow
+wait_until "the shade to show Allow" shade_shows Allow
 tap Allow
 wait_until "the Allow to reach the App API" logged "permission p2 allow=true"
 wait_until "the notification to say Allowed" has_text "Allowed"
@@ -172,8 +199,7 @@ reply=$(jq -c '.states[] | select(.name == "notify-reply") | .payload' "$STATES"
 for n in 1 2; do
   send notify "$reply"
   wait_until "the reply notification" has_title "EDITH replied"
-  adb shell cmd statusbar expand-notifications
-  wait_until "the shade to show the reply" on_screen "EDITH replied"
+  wait_until "the shade to show the reply" shade_shows "EDITH replied"
   tap "EDITH replied"
   wait_until "EDITH to come forward ($n)" edith_on_top
   home
