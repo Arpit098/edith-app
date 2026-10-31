@@ -665,6 +665,56 @@ class LiveViewTest(unittest.TestCase):
         # The notification is a system wrapper: no message.user for it.
         self.assertFalse([e for e in h.events if e.type == "message.user"])
 
+    START = {"type": "assistant", "timestamp": "2026-10-31T11:06:14Z", "message": {"content": [
+        {"type": "tool_use", "id": "tu1", "name": "Bash",
+         "input": {"command": "gh pr checks 41 --watch", "description": "Wait for PR 41 CI", "run_in_background": True}}]}}
+    DONE = {"type": "user", "origin": {"kind": "task-notification"}, "message": {"content":
+            "<task-notification>\n<tool-use-id>tu1</tool-use-id>\n<status>completed</status>\n</task-notification>"}}
+
+    def test_an_older_background_list_never_goes_out_after_a_newer_one(self):
+        h = Harness(self)
+        live = h.agent._live
+        self.assertTrue(live.ready.wait(5))
+        published, entered, gate = [], threading.Event(), threading.Event()
+
+        def publish(type, origin, sid, data):
+            if type == "background.changed":
+                published.append([j["id"] for j in data["jobs"]])
+                if len(published) == 1:  # the first publish is slow (a busy bus)
+                    entered.set()
+                    gate.wait(5)
+        live.publish = publish
+        with live._bg_lock:
+            live._bg.feed(self.START)
+            live._bg_seq += 1
+        a = threading.Thread(target=live._publish_background)
+        a.start()
+        self.assertTrue(entered.wait(5))
+        with live._bg_lock:  # the job ends meanwhile, on another thread
+            live._bg.feed(self.DONE)
+            live._bg_seq += 1
+        b = threading.Thread(target=live._publish_background)
+        b.start()
+        b.join(0.3)
+        self.assertTrue(b.is_alive())  # waits for the first publish instead of overtaking it
+        gate.set()
+        a.join(5)
+        b.join(5)
+        self.assertEqual(published, [["tu1"], []])  # in order: the newest list last
+        live._publish_background()
+        self.assertEqual(published, [["tu1"], []])  # nothing new: not sent again
+
+    def test_an_entry_the_live_view_cant_read_still_counts_for_background_work(self):
+        h = Harness(self)
+        live = h.agent._live
+        self.assertTrue(live.ready.wait(5))
+
+        def broken(entry, cursor=None):
+            raise ValueError("an entry shape the event code doesn't know")
+        live.entry = broken
+        h.transcript_line(self.START)
+        self.assertEqual([j["id"] for j in h.wait("background.changed").data["jobs"]], ["tu1"])
+
 
 class HistoryTest(unittest.TestCase):
     """The app's Live view: the newest events on open, older pages, and catching up after a reconnect."""

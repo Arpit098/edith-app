@@ -279,8 +279,11 @@ class RoutesTest(unittest.TestCase):
         self.assertEqual((status, body["main"], body["queued"], body["session"]), (200, "busy", 1, {"id": "s1", "title": "First chat"}))
         job = {"id": "tu1", "kind": "shell", "label": "Wait for PR 41 CI", "started": 100.0}
         self.assertEqual(body["background"], [job])
+        self.assertAlmostEqual(body["ts"], time.time(), delta=5)  # the server's clock, to age the jobs on
         # A stop says what still runs in the background (it doesn't cancel that).
-        self.assertEqual(self.a.call("POST", "/v1/stop", {}), (200, {"running": 1, "dropped": ["q1"], "background": [job]}))
+        status, stopped = self.a.call("POST", "/v1/stop", {})
+        self.assertAlmostEqual(stopped.pop("ts"), time.time(), delta=5)
+        self.assertEqual((status, stopped), (200, {"running": 1, "dropped": ["q1"], "background": [job]}))
         self.assertEqual(self.a.call("GET", "/v1/sessions")[1]["sessions"][0]["current"], True)
         self.assertEqual(self.a.call("PATCH", "/v1/sessions/s2", {"title": " Renamed "}), (200, {"session_id": "s2", "title": "Renamed"}))
         self.assertEqual(self.a.call("PATCH", "/v1/sessions/zz", {"title": "x"})[0], 404)

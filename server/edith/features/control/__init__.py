@@ -108,13 +108,13 @@ def setup(ctx: Context) -> None:
     def api_stop(req):
         r = agent.stop()
         # `background`: what still runs, which a stop doesn't cancel (the app says so).
-        return {"running": r.running, "dropped": r.dropped,
+        return {"running": r.running, "dropped": r.dropped, "ts": time.time(),
                 "background": [{k: j[k] for k in ("id", "kind", "label", "started")} for j in agent.background()]}
 
     def api_status(req):
         runs, queued = agent.status()
         sid = agent.current_session()
-        return {"main": "busy" if agent.busy() else "idle", "queued": queued,
+        return {"main": "busy" if agent.busy() else "idle", "queued": queued, "ts": time.time(),
                 "runs": [{"ref": r.ref, "lane": r.lane, "seconds": int(time.time() - r.started), "step": r.step}
                          for r in runs],
                 "background": [{k: j[k] for k in ("id", "kind", "label", "started")} for j in agent.background()],

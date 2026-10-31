@@ -69,6 +69,10 @@ class LiveView:
         self.switched = threading.Condition()  # notified when `following` changes
         self.claude_dir = os.path.join(paths.home, ".claude")
         self._bg, self._bg_lock, self._bg_checked = Background(), threading.Lock(), 0.0
+        # background.changed goes out in the order the jobs changed: `_bg_seq` counts changes (under
+        # _bg_lock); a publish snapshots the jobs inside `_bg_pub` and skips one already sent.
+        # Re-entrant: a subscriber may ask background() on the same thread.
+        self._bg_seq, self._bg_sent, self._bg_pub = 0, 0, threading.RLock()
 
     def run(self, stopping):
         with Watch(self.paths.state_dir, self.paths.transcripts) as self.watch:
@@ -86,10 +90,15 @@ class LiveView:
                     self._follow(current)
                 changed = False
                 for entry, _, end in tail.read_spans():
+                    try:  # first, and apart: an entry the event code can't read still counts for the jobs
+                        with self._bg_lock:
+                            if self._bg.feed(entry):
+                                self._bg_seq += 1
+                                changed = True
+                    except Exception:
+                        log.exception("live view: could not read a transcript entry for background work")
                     try:
                         self.entry(entry, cursor(tail.path, end))
-                        with self._bg_lock:
-                            changed |= self._bg.feed(entry)
                     except Exception:
                         log.exception("live view: could not read a transcript entry")
                 if changed:
@@ -109,6 +118,7 @@ class LiveView:
         with self._bg_lock:
             for e in reversed(entries):  # oldest first
                 self._bg.feed(e)
+            self._bg_seq += 1
         self.background(max_age=0)
 
     def background(self, max_age=5.0) -> list[dict]:
@@ -125,9 +135,11 @@ class LiveView:
             return jobs
         with self._bg_lock:
             changed = self._bg.drop_started_before(over)
+            if changed:
+                self._bg_seq += 1
             jobs = self._bg.jobs()
         if changed:
-            self._publish_background(jobs)
+            self._publish_background()
         return jobs
 
     def _claude_idle_since(self) -> float | None:
@@ -144,11 +156,16 @@ class LiveView:
         updated = s.get("statusUpdatedAt")
         return updated / 1000 if isinstance(updated, (int, float)) else float("inf")
 
-    def _publish_background(self, jobs=None):
-        if jobs is None:
+    def _publish_background(self):
+        """background.changed with the jobs now. Publishes are one at a time, each with the list as it
+        is then, so a list another thread read earlier can never go out after a newer one."""
+        with self._bg_pub:
             with self._bg_lock:
-                jobs = self._bg.jobs()
-        self.publish("background.changed", "system", self.session().get("session_id"), {"jobs": jobs})
+                seq, jobs = self._bg_seq, self._bg.jobs()
+            if seq <= self._bg_sent:
+                return  # this change (or a later one) is out already
+            self._bg_sent = seq
+            self.publish("background.changed", "system", self.session().get("session_id"), {"jobs": jobs})
 
     def _follow(self, path):
         with self.switched:

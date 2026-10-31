@@ -42,6 +42,7 @@ export interface Run {
 }
 
 export interface Status {
+  ts: number | null; // the server's clock when it answered (unix seconds); null from an older server
   main: 'busy' | 'idle';
   queued: number;
   runs: Run[];
@@ -331,15 +332,21 @@ export function createApi(t: Transport) {
     },
 
     /** Stops the running turns; `background` is what still runs (a stop doesn't cancel it). */
-    async stop(): Promise<{ running: number; dropped: string[]; background: BackgroundJob[] }> {
+    async stop(): Promise<{ running: number; dropped: string[]; background: BackgroundJob[]; ts: number | null }> {
       const r = await t.request<Obj>('POST', '/v1/stop');
-      return { running: num(r.running), dropped: Array.isArray(r.dropped) ? r.dropped.map((d) => str(d)) : [], background: backgroundFrom(r.background) };
+      return {
+        running: num(r.running),
+        dropped: Array.isArray(r.dropped) ? r.dropped.map((d) => str(d)) : [],
+        background: backgroundFrom(r.background),
+        ts: typeof r.ts === 'number' ? r.ts : null, // the server's clock (older servers: none)
+      };
     },
 
     async status(opts?: RequestOptions): Promise<Status> {
       const r = await t.request<Obj>('GET', '/v1/status', undefined, opts);
       const session = r.session as Obj | null | undefined;
       return {
+        ts: typeof r.ts === 'number' ? r.ts : null,
         main: r.main === 'busy' ? 'busy' : 'idle',
         queued: num(r.queued),
         runs: (Array.isArray(r.runs) ? r.runs : []).map((x: Obj) => ({

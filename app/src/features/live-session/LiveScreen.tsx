@@ -341,7 +341,7 @@ const Composer = memo(function Composer({ model, voice, attach, backdrop, menu, 
   };
   // Only background work runs: say what Stop would (not) cancel, and offer to ask EDITH instead.
   const stopBackground = () => {
-    const p = backgroundStopPrompt(background, Date.now() / 1000);
+    const p = backgroundStopPrompt(background, Date.now() / 1000 + model.store.get().clockOffset); // the server's clock
     Alert.alert(p.title, p.message, [
       { text: 'Keep running', style: 'cancel' },
       { text: 'Ask EDITH to cancel', style: 'destructive', onPress: () => void model.send(p.request) },

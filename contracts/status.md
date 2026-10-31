@@ -61,6 +61,9 @@ from the transcript's last 2 MB when the bridge starts. Claude's own session fil
 says `idle` after a job started, that job is over (a missed notification); with no Claude running the
 conversation there are none. Changes come as `background.changed` events (contracts/events.md).
 `POST /v1/stop` ends turns, not background work: its answer's `background` is what still runs.
+A job's `started` is on the server's clock, so the app ages it on that clock too: `GET /v1/status` and
+`POST /v1/stop` answer with `ts` (the server's time, unix seconds), and every stream event has its `ts`; the
+app keeps the difference from its own clock, never comparing `started` with the phone's time directly.
 
 **`lanes`**: `side` lists the running side lanes (oldest first), each with its `ref`, `seconds` running,
 latest `step` (`null` while thinking) and `summary`, the first line of the message it runs (at most 80

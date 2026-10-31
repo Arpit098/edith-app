@@ -95,6 +95,9 @@ export interface LiveState {
   // Work EDITH started in the background that still runs, maybe after her reply ended the turn:
   // not a turn (no timer, nothing for Stop to end), shown as "waiting" (status.ts).
   background: BackgroundJob[];
+  // The server's clock minus the phone's (seconds), from the last answer or event that carried it:
+  // background jobs are aged on the server's clock (their `started` is the server's), never the phone's.
+  clockOffset: number;
   session: { id: string; title: string | null } | null;
   seq: number;
   // When the running turn began on the phone's clock, one value for the chip and the card alike
@@ -121,6 +124,7 @@ export const initialLive: LiveState = {
   queued: 0,
   runs: {},
   background: [],
+  clockOffset: 0,
   session: null,
   seq: 0,
   turnStart: null,
@@ -857,7 +861,11 @@ export function createLiveModel(bus: EventBus, api: Api, storage?: KeyValueStore
           if (buffer.length > MAX_BUFFER) buffer.shift();
           return;
         }
-        store.set((s) => reduce(s, e));
+        store.set((s) => {
+          const next = reduce(s, e);
+          // The stream's ts is the server's: background.changed sets the clock its jobs are aged on.
+          return e.type === 'background.changed' ? { ...next, clockOffset: e.ts - Date.now() / 1000 } : next;
+        });
       },
       'live-session',
     ),
@@ -868,7 +876,7 @@ export function createLiveModel(bus: EventBus, api: Api, storage?: KeyValueStore
         retryAttempt = 0;
         void flush(); // messages that waited for the connection go now, in order
         api.status().then(
-          (st) => store.set((s) => applyStatus(s, st)),
+          (st) => store.set((s) => ({ ...applyStatus(s, st), clockOffset: st.ts != null ? st.ts - Date.now() / 1000 : s.clockOffset })),
           () => {}, // the next reconnect tries again; the stream still updates the state
         );
       },
@@ -913,12 +921,12 @@ export function createLiveModel(bus: EventBus, api: Api, storage?: KeyValueStore
     },
     async stop() {
       const r = await api.stop();
-      store.set((s) => ({ ...s, background: r.background }));
+      const now = r.ts ?? Date.now() / 1000 + store.get().clockOffset; // the server's clock
+      store.set((s) => ({ ...s, background: r.background, clockOffset: r.ts != null ? r.ts - Date.now() / 1000 : s.clockOffset }));
       const n = r.running + r.dropped.length;
       const stopped = n ? `Stopped ${n} task${n === 1 ? '' : 's'}` : r.background.length ? 'No reply to stop' : 'Nothing was running';
       if (!r.background.length) return stopped;
       // Stop ends turns; work a turn left running in the background goes on (contracts/status.md).
-      const now = Date.now() / 1000;
       return `${stopped}. Still running in the background: ${r.background.map((j) => backgroundLine(j, now)).join('; ')}`;
     },
     details: () => api.statusDetails(),
