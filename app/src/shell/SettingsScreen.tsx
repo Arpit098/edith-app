@@ -9,8 +9,8 @@ import type { Connection, ConnectionState } from '../core/connection';
 import type { SettingsSection } from '../core/feature';
 import { str } from '../core/guards';
 import type { FrameMeter, FrameReport } from '../core/ports';
-import { useStore } from '../core/store';
-import { colors, radius, space, type, useChrome, useGlass } from '../core/theme';
+import { createStore, useStore, type Store } from '../core/store';
+import { colors, space, type, useChrome, useGlass } from '../core/theme';
 import { Button } from '../ui/Button';
 import { Glass } from '../ui/Glass';
 import { Icon } from '../ui/Icon';
@@ -46,12 +46,14 @@ function useFramesSummary(): string {
   return `Frame meter · glass: ${GLASS_SHORT[useGlass().mode]}`;
 }
 
+export const SERVER_CONNECTION = 'Server connection';
+
 /** The shell's own sections, in the same shape as the features'. */
 export function shellSections(connection: Connection, meter: FrameMeter | null): SettingsSection[] {
   const useLinkSummary = () => useStore(connection.store, linkSummary);
   const own: SettingsSection[] = [
     {
-      title: 'Server connection',
+      title: SERVER_CONNECTION,
       group: 'connection',
       icon: 'server-network',
       order: 0,
@@ -72,10 +74,18 @@ function useOnScreen(connection: Connection): boolean {
   return on;
 }
 
-export function SettingsScreen({ connection, sections, meter }: { connection: Connection; sections: SettingsSection[]; meter: FrameMeter | null }) {
+/** The page Settings shows (a section's title), or null for the list. The shell owns it, so opening
+ *  Settings from outside (a link, the token-rejected pill) can pick the page before Settings mounts. */
+export type SettingsPageStore = Store<string | null>;
+
+const selectPage = (p: string | null) => p;
+
+export function SettingsScreen({ connection, sections, meter, open: openStore }: { connection: Connection; sections: SettingsSection[]; meter: FrameMeter | null; open?: SettingsPageStore }) {
   const all = useMemo(() => [...shellSections(connection, meter), ...sections], [connection, meter, sections]);
   const groups = useMemo(() => groupSections(all), [all]);
-  const [open, setOpen] = useState<string | null>(null);
+  const [ownStore] = useState(() => openStore ?? createStore<string | null>(null));
+  const open = useStore(ownStore, selectPage);
+  const setOpen = ownStore.set;
   const page = open === null ? undefined : all.find((s) => s.title === open);
   const onScreen = useOnScreen(connection);
 
@@ -128,6 +138,7 @@ function SettingsRow({ section, first, onPress }: { section: SettingsSection; fi
       android_ripple={{ color: colors.ripple }}
       accessibilityRole="button"
       accessibilityLabel={summary ? `${section.title}, ${summary}` : section.title}
+      accessibilityHint={`Opens ${section.title}`}
       style={[styles.row, !first && styles.divider]}
     >
       <Icon name={section.icon ?? DEFAULT_ICON} size={22} color={colors.accent} />
@@ -153,12 +164,15 @@ function SettingsPage({ section, onBack }: { section: SettingsSection; onBack: (
   return (
     <SlideIn style={styles.flex}>
       <ScrollView contentContainerStyle={[styles.body, { paddingTop: insets.top + space.m, paddingBottom: insets.bottom + space.l }]} keyboardShouldPersistTaps="handled">
-        <Pressable onPress={onBack} hitSlop={10} accessibilityRole="button" accessibilityLabel="Back to Settings" style={styles.back}>
-          <Icon name="arrow-left" size={22} />
+        {/* The title is beside the button, not in it: TalkBack reads it as the page's heading. */}
+        <View style={styles.back}>
+          <Pressable onPress={onBack} hitSlop={10} accessibilityRole="button" accessibilityLabel="Back to Settings">
+            <Icon name="arrow-left" size={22} />
+          </Pressable>
           <Text style={styles.pageTitle} numberOfLines={1} accessibilityRole="header">
             {section.title}
           </Text>
-        </Pressable>
+        </View>
         <Glass level="regular" rim style={styles.section}>
           <section.component />
         </Glass>
@@ -213,7 +227,6 @@ function FrameSection({ meter }: { meter: FrameMeter }) {
   };
   return (
     <>
-      <Text style={styles.heading}>Performance</Text>
       <Text style={styles.dim}>Glass: {GLASS_MODE[mode]}</Text>
       {report ? (
         <Text style={styles.value} selectable>
@@ -238,7 +251,7 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', gap: space.m, paddingHorizontal: space.l, paddingVertical: space.m, minHeight: 60 },
   divider: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.hairline },
   section: { padding: space.l, gap: space.xs },
-  back: { flexDirection: 'row', alignItems: 'center', gap: space.s, paddingVertical: space.xs, borderRadius: radius.m },
+  back: { flexDirection: 'row', alignItems: 'center', gap: space.s, paddingVertical: space.xs },
   pageTitle: { color: colors.text, fontSize: type.size.title, fontWeight: '700', flex: 1 },
   heading: { color: colors.textDim, fontSize: type.size.caption, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.8, paddingHorizontal: space.xs },
   title: { color: colors.text, fontSize: type.size.body, fontWeight: '600' },

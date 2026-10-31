@@ -194,5 +194,37 @@ describe('Shell', () => {
       act(() => r.unmount());
       loaded.cleanup();
     });
+
+    it('opens Settings from outside on the page asked for, else on the list, never a page left open', async () => {
+      const { ctx, r, loaded, press, title } = await connected();
+      await press('Menu');
+      await press('Settings');
+      const updates = r.root.findAll((n) => n.props.accessibilityHint === 'Opens Updates' && typeof n.props.onPress === 'function')[0]!;
+      await act(async () => updates.props.onPress());
+      const pageOpen = () => r.root.findAll((n) => n.type === Text && n.props.accessibilityRole === 'header' && n.props.children === 'Updates').length > 0;
+      expect(pageOpen()).toBe(true);
+      await act(async () => {
+        ctx.bus.publish(localEvent('app.open', { screen: 'live' }));
+        ctx.bus.publish(localEvent('app.open', { screen: 'settings' })); // e.g. a link: the list, not Updates
+        await flush();
+      });
+      expect(title()).toBe('settings');
+      expect(pageOpen()).toBe(false);
+      expect(texts(r)).toContain('Connection & account');
+
+      // The token is rejected while another page is open: the status card's "Open Settings" (a feature,
+      // through app.open with a page) lands on Server connection directly.
+      await act(async () => updates.props.onPress());
+      await act(async () => {
+        ctx.bus.publish(localEvent('app.open', { screen: 'live' }));
+        ctx.bus.publish(localEvent('app.open', { screen: 'settings', page: 'Server connection' }));
+        await flush();
+      });
+      expect(title()).toBe('settings');
+      expect(pageOpen()).toBe(false);
+      expect(texts(r)).toContain('Change server');
+      act(() => r.unmount());
+      loaded.cleanup();
+    });
   });
 });
