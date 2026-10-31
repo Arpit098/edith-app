@@ -50,9 +50,12 @@ route; 401 without it) and gets what the phone subscribes with:
 | `token` | The phone's **read-only** token, read from `[adapter.ntfy] phone_token_file` (default `~/.config/edith/ntfy-phone-token`, mode 600) each time it is asked for |
 
 - Only the subscribe-only token is ever returned. The publish token never is: a phone token file that
-  is the publish token file, or holds the same token, is refused (503).
+  is the publish token file, or holds the same token as the publish file or the publish token edith
+  last used, is refused (503). So is any request while the publish token file can't be read (missing
+  or not mode 600), since the phone token can't then be checked against it.
 - 404 `{error}`: no ntfy notifier is configured. 503 `{error}`: the phone token file is missing, open to
-  others (not mode 600) or not an ntfy token. Neither error carries the token.
+  others (not mode 600) or not exactly an ntfy token (`tk_` and 29 letters or digits, the shape the app
+  accepts). Neither error carries the token.
 - The answer has `Cache-Control: no-store`. The token never appears in edith's logs or the audit log
   (the audit line is `{path, status, "push": "config"}`), and status text redacts `tk_…` tokens.
 - The app hands the token straight to the native push service, which keeps it encrypted with an
