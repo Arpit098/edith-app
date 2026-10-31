@@ -7,6 +7,8 @@ import { BackHandler, Text } from 'react-native';
 import { localEvent } from '../../core/events';
 import { loadFeatures } from '../../core/feature';
 import { features } from '../../features';
+import type { FrameMeter } from '../../core/ports';
+import { createStore } from '../../core/store';
 import { fakeContext } from '../../testing/fakes';
 import { SettingsScreen } from '../SettingsScreen';
 
@@ -38,12 +40,13 @@ async function mount() {
   await act(() => ctx.connection.connect('http://edith:8787', 'x'.repeat(40)));
   await act(async () => ctx.transport.status({ state: 'open' }));
   const loaded = loadFeatures(features, ctx);
+  const page = createStore<string | null>(null);
   let r!: ReactTestRenderer;
   await act(async () => {
-    r = create(<SettingsScreen connection={ctx.connection} sections={loaded.settings} meter={null} />);
+    r = create(<SettingsScreen connection={ctx.connection} sections={loaded.settings} meter={null} open={page} />);
   });
   const row = (label: string) => r.root.findAll((n) => typeof n.props.accessibilityLabel === 'string' && n.props.accessibilityLabel.startsWith(label) && typeof n.props.onPress === 'function')[0]!;
-  return { ctx, r, loaded, back, row };
+  return { ctx, r, loaded, back, row, page };
 }
 
 describe('SettingsScreen', () => {
@@ -83,6 +86,46 @@ describe('SettingsScreen', () => {
     expect(back.count()).toBe(before); // nothing left to close: the shell decides again
     act(() => r.unmount());
     loaded.cleanup();
+  });
+
+  it('reads well with TalkBack: rows say what they open, the page title is a heading beside Back', async () => {
+    const { r, loaded, row } = await mount();
+    expect(row('Push').props.accessibilityHint).toBe('Opens Push');
+    await act(async () => row('Updates').props.onPress());
+    const button = row('Back to Settings');
+    expect(button.findAll((n) => n.type === Text && n.props.children === 'Updates')).toHaveLength(0); // the name isn't swallowed by the button
+    const heading = r.root.findAll((n) => n.type === Text && n.props.accessibilityRole === 'header' && n.props.children === 'Updates');
+    expect(heading).toHaveLength(1);
+    act(() => r.unmount());
+    loaded.cleanup();
+  });
+
+  it('shows the page the shell asks for (or the list), whatever was open before', async () => {
+    const { r, loaded, row, page } = await mount();
+    await act(async () => row('Updates').props.onPress());
+    await act(async () => page.set('Server connection')); // e.g. the token-rejected pill
+    expect(texts(r)).toContain('Change server');
+    await act(async () => page.set(null)); // Settings opened by a link: the list
+    expect(texts(r)).not.toContain('Change server');
+    expect(texts(r)).toContain('Notifications');
+    act(() => r.unmount());
+    loaded.cleanup();
+  });
+
+  it('has no leftover Performance heading on the Developer page', async () => {
+    jest.spyOn(console, 'error').mockImplementation(() => {});
+    fakeBack();
+    const ctx = fakeContext();
+    const meter = { start: () => {}, stop: async () => null } as unknown as FrameMeter;
+    let r!: ReactTestRenderer;
+    await act(async () => {
+      r = create(<SettingsScreen connection={ctx.connection} sections={[]} meter={meter} />);
+    });
+    const open = r.root.findAll((n) => typeof n.props.accessibilityLabel === 'string' && n.props.accessibilityLabel.startsWith('Developer') && typeof n.props.onPress === 'function')[0]!;
+    await act(async () => open.props.onPress());
+    expect(texts(r)).toContain('Measure frames');
+    expect(texts(r)).not.toMatch(/performance/i);
+    act(() => r.unmount());
   });
 
   it('leaves Android back to the shell while another screen is on top', async () => {

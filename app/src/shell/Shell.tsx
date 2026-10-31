@@ -8,7 +8,7 @@ import type { Connection, ConnectionState } from '../core/connection';
 import { localEvent } from '../core/events';
 import type { LoadedFeatures } from '../core/feature';
 import type { FrameMeter } from '../core/ports';
-import { useStore } from '../core/store';
+import { createStore, useStore } from '../core/store';
 import { ChromeContext, chrome, colors, space, titleGlow, type } from '../core/theme';
 import { Ambient } from '../ui/Ambient';
 import { Glass, useBackdrop } from '../ui/Glass';
@@ -18,7 +18,7 @@ import { ConnectScreen } from './ConnectScreen';
 import { linkScreen, useDeepLinks } from './links';
 import { MenuButton, NavMenu } from './NavMenu';
 import { back, current, navigate, type NavState } from './navigation';
-import { SettingsScreen } from './SettingsScreen';
+import { SERVER_CONNECTION, SettingsScreen } from './SettingsScreen';
 import { ToolsScreen } from './ToolsScreen';
 
 interface Route {
@@ -51,18 +51,28 @@ function Main({ loaded, connection, meter }: { loaded: LoadedFeatures; connectio
   const navRef = useRef(nav);
   navRef.current = nav;
   const go = useCallback((screen: string) => setNav((s) => navigate(s, screen, tabNames)), [tabNames]);
+  // Settings opened from outside (a link, a feature, the token-rejected pill) shows the page asked
+  // for, or the list: never a page left open earlier. Switching tabs by hand keeps the page.
+  const [settingsPage] = useState(() => createStore<string | null>(null));
+  const open = useCallback(
+    (screen: string, page: string | null = null) => {
+      if (screen === 'settings') settingsPage.set(page);
+      go(screen);
+    },
+    [go, settingsPage],
+  );
 
   // Routes: the features' screens, plus the shell's own Tools and Settings tabs (after the features' tabs).
   const { tabs, routes, home } = useMemo(() => {
     const own: Route[] = [
       { name: 'tools', title: 'Tools', icon: 'view-grid-outline', component: () => <ToolsScreen tools={loaded.tools} open={go} /> },
-      { name: 'settings', title: 'Settings', icon: 'cog-outline', component: () => <SettingsScreen connection={connection} sections={loaded.settings} meter={meter} /> },
+      { name: 'settings', title: 'Settings', icon: 'cog-outline', component: () => <SettingsScreen connection={connection} sections={loaded.settings} meter={meter} open={settingsPage} /> },
     ];
     const featureRoutes: Route[] = loaded.screens.map((s) => ({ name: s.name, title: s.title, icon: s.icon ?? 'circle-outline', component: s.component }));
     const all = [...featureRoutes, ...own];
     const tabList = all.filter((r) => tabNames.has(r.name));
     return { tabs: tabList, routes: new Map(all.map((r) => [r.name, r])), home: tabList[0]!.name };
-  }, [loaded, connection, go, tabNames, meter]);
+  }, [loaded, connection, go, tabNames, meter, settingsPage]);
 
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -77,10 +87,13 @@ function Main({ loaded, connection, meter }: { loaded: LoadedFeatures; connectio
   // A tapped notification or Live Alerts pill: edith://live, edith://approvals.
   useDeepLinks((url) => {
     const screen = linkScreen(url, (name) => routes.has(name), home);
-    if (screen) go(screen);
+    if (screen) open(screen);
   });
   // A feature's own link to a screen (e.g. Settings → Train wake word).
-  useEffect(() => connection.bus.on('app.open', (e) => routes.has(String(e.data.screen)) && go(String(e.data.screen)), 'shell'), [connection, routes, go]);
+  useEffect(
+    () => connection.bus.on('app.open', (e) => routes.has(String(e.data.screen)) && open(String(e.data.screen), typeof e.data.page === 'string' ? e.data.page : null), 'shell'),
+    [connection, routes, open],
+  );
 
   const keyboard = useKeyboardVisible();
   const [visited, setVisited] = useState<ReadonlySet<string>>(() => new Set([nav.tab]));
@@ -148,7 +161,7 @@ function Main({ loaded, connection, meter }: { loaded: LoadedFeatures; connectio
                 <Icon name="arrow-left" />
               </Pressable>
             ) : null}
-            {HeaderPanel ? <HeaderPanel top={headerHeight} backdrop={backdrop.tag} /> : <ConnectionPill connection={connection} onUnauthorized={() => go('settings')} />}
+            {HeaderPanel ? <HeaderPanel top={headerHeight} backdrop={backdrop.tag} /> : <ConnectionPill connection={connection} onUnauthorized={() => open('settings', SERVER_CONNECTION)} />}
             <View style={styles.flex} />
             <MenuButton open={menuOpen} onPress={toggleMenu} />
           </View>

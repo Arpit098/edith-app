@@ -76,7 +76,7 @@ const liveSession: FeatureModule = {
     connection = conn;
     openSettings = () => {
       status.set(false);
-      bus.publish(localEvent('app.open', { screen: 'settings' }));
+      bus.publish(localEvent('app.open', { screen: 'settings', page: 'Server connection' })); // only offered when the token is rejected
     };
     return () => {
       offScreen();
