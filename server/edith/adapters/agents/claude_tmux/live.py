@@ -5,7 +5,13 @@ Telegram, the app, or someone typing in tmux ("terminal"). Each event's data car
 
 One thread. It waits on inotify (the transcript folder and tmux-session.json) and reads only the
 bytes added since its saved offset; it follows /clear and resumes to the new transcript, starting
-at its end. All parsing of Claude Code's transcript format is in transcript.py and here.
+at its end. All parsing of Claude Code's transcript format is in transcript.py, background.py and here.
+
+It also keeps the conversation's background work (background.py): the jobs are seeded from the
+transcript's last SEED_BYTES at start (a bridge restart doesn't forget a running job), kept up to
+date entry by entry, and published as `background.changed` whenever they change. Claude's own
+session file has the last word: once it says `idle` after a job started, that job is over (its end
+notification was missed, or Claude restarted).
 """
 import datetime as dt
 import difflib
@@ -13,9 +19,12 @@ import logging
 import os
 import re
 import threading
+import time
 
+from edith.common.claude_sessions import by_session_id
 from edith.common.text import HEADER_LINE, clean_prompt, reply_parts
 
+from .background import Background
 from .transcript import Tail, describe_tool, read_backward, read_forward
 from .watch import Watch
 
@@ -25,6 +34,10 @@ REF = re.compile(r"\n?\[tg-ref ([0-9a-f]+)\]")
 MAX_DIFF = 20_000    # characters of a file.diff
 MAX_TOOL_IDS = 1000  # tool_use id -> name, for naming results
 HISTORY_BYTES = 4 * 1024 * 1024  # read per history() call at most (a few huge tool results can't stall it)
+SEED_BYTES = 2 * 1024 * 1024  # of the transcript's end, read once at start for background jobs still running
+# While background jobs run, the session file is checked at most every BG_CHECK seconds, and the
+# wait wakes at least that often: Claude's session folder isn't watched (it changes on every turn).
+BG_CHECK = 15.0
 
 
 def unified(path, old, new):
@@ -54,10 +67,17 @@ class LiveView:
         self.ready = threading.Event()  # set once it is watching: nothing written after that is missed
         self.following = None           # the transcript it reads now
         self.switched = threading.Condition()  # notified when `following` changes
+        self.claude_dir = os.path.join(paths.home, ".claude")
+        self._bg, self._bg_lock, self._bg_checked = Background(), threading.Lock(), 0.0
+        # background.changed goes out in the order the jobs changed: `_bg_seq` counts changes (under
+        # _bg_lock); a publish snapshots the jobs inside `_bg_pub` and skips one already sent.
+        # Re-entrant: a subscriber may ask background() on the same thread.
+        self._bg_seq, self._bg_sent, self._bg_pub = 0, 0, threading.RLock()
 
     def run(self, stopping):
         with Watch(self.paths.state_dir, self.paths.transcripts) as self.watch:
             tail = Tail(self.session().get("transcript_path"))  # from the current end: no replay
+            self._seed(tail.path)
             self._follow(tail.path)
             self.ready.set()
             while not stopping.is_set():
@@ -68,12 +88,84 @@ class LiveView:
                     # entries aren't missed; a resumed one from its end, so its history isn't replayed.
                     tail = Tail(current, offset=0 if session.get("source") in ("clear", "startup") else None)
                     self._follow(current)
+                changed = False
                 for entry, _, end in tail.read_spans():
+                    try:  # first, and apart: an entry the event code can't read still counts for the jobs
+                        with self._bg_lock:
+                            if self._bg.feed(entry):
+                                self._bg_seq += 1
+                                changed = True
+                    except Exception:
+                        log.exception("live view: could not read a transcript entry for background work")
                     try:
                         self.entry(entry, cursor(tail.path, end))
                     except Exception:
                         log.exception("live view: could not read a transcript entry")
-                self.watch.wait(60)  # wakes on any change; the timeout is only a safety net
+                if changed:
+                    self._publish_background()
+                running = self.background(max_age=BG_CHECK)  # a session-file check, while jobs run
+                # Wakes on any change; the timeout is a safety net, shorter while jobs run (see BG_CHECK).
+                self.watch.wait(BG_CHECK if running else 60)
+
+    def _seed(self, path):
+        """Background jobs started in the last SEED_BYTES of `path` and not over yet."""
+        if not path:
+            return
+        try:
+            entries = [e for e, *_ in read_backward(path, None, SEED_BYTES)]
+        except OSError:
+            return
+        with self._bg_lock:
+            for e in reversed(entries):  # oldest first
+                self._bg.feed(e)
+            self._bg_seq += 1
+        self.background(max_age=0)
+
+    def background(self, max_age=5.0) -> list[dict]:
+        """The background jobs still running: [{id, kind, label, started}] oldest first. Checked
+        against Claude's session file when it was last checked over `max_age` seconds ago; jobs it
+        contradicts are dropped (and `background.changed` published)."""
+        with self._bg_lock:
+            jobs = self._bg.jobs()
+            if not jobs or time.monotonic() - self._bg_checked < max_age:
+                return jobs
+            self._bg_checked = time.monotonic()
+        over = self._claude_idle_since()
+        if over is None:
+            return jobs
+        with self._bg_lock:
+            changed = self._bg.drop_started_before(over)
+            if changed:
+                self._bg_seq += 1
+            jobs = self._bg.jobs()
+        if changed:
+            self._publish_background()
+        return jobs
+
+    def _claude_idle_since(self) -> float | None:
+        """When Claude last said it has nothing to do (unix seconds): +inf if no Claude runs this
+        conversation (its jobs died with it), None while it works or if unknown."""
+        sid = self.session().get("session_id")
+        if not sid:
+            return None
+        s = by_session_id(self.claude_dir, sid)
+        if s is None:
+            return float("inf")
+        if s.get("status") != "idle":
+            return None
+        updated = s.get("statusUpdatedAt")
+        return updated / 1000 if isinstance(updated, (int, float)) else float("inf")
+
+    def _publish_background(self):
+        """background.changed with the jobs now. Publishes are one at a time, each with the list as it
+        is then, so a list another thread read earlier can never go out after a newer one."""
+        with self._bg_pub:
+            with self._bg_lock:
+                seq, jobs = self._bg_seq, self._bg.jobs()
+            if seq <= self._bg_sent:
+                return  # this change (or a later one) is out already
+            self._bg_sent = seq
+            self.publish("background.changed", "system", self.session().get("session_id"), {"jobs": jobs})
 
     def _follow(self, path):
         with self.switched:

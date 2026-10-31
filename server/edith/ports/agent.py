@@ -41,6 +41,11 @@ class AgentBackend(Protocol):
     def status(self) -> tuple[list[RunInfo], int]:
         """Running turns (oldest first) and the number of queued messages."""
 
+    def background(self) -> list[dict]:
+        """Work the main session started in the background and that still runs, after its turn may
+        have ended: [{id, kind: "shell" | "agent", label, started}] oldest first. Changes also come
+        as `background.changed` events."""
+
     def busy(self) -> bool:
         """True while the main lane is working or has messages queued."""
 

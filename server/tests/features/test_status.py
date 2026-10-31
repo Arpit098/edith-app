@@ -3,6 +3,7 @@ the coding agents read from tmux (parsed, cached, read-only) and the transcript 
 import json
 import os
 import pathlib
+import shutil
 import subprocess
 import tempfile
 import time
@@ -22,10 +23,13 @@ class FakeAgent:
     max_side_lanes = 2
 
     def __init__(self):
-        self.runs, self.queued, self.sid = [], 0, "s1"
+        self.runs, self.queued, self.sid, self.jobs = [], 0, "s1", []
 
     def status(self):
         return list(self.runs), self.queued
+
+    def background(self):
+        return [dict(j) for j in self.jobs]
 
     def tmux_alive(self):
         return True
@@ -113,6 +117,26 @@ class MainLaneTest(unittest.TestCase):
         self.run_main(ref="r2", step="$ make", started=50.0)
         e = self.get()["edith"]
         self.assertEqual((e["state"], e["step"], e["ref"], e["since"]), ("tool", "$ make", "r2", 50.0))
+
+    def test_a_finished_turn_with_background_work_is_waiting(self):
+        self.run_main()
+        self.bus.publish(ev("turn.started", 10.0, ref="r1", lane="main"))
+        self.agent.jobs = [{"id": "tu1", "kind": "shell", "label": "Wait for PR 41 CI token=hunter2abc", "started": 12.0}]
+        e = self.get()["edith"]
+        self.assertEqual(e["state"], "thinking")  # the turn still runs: background work is listed, nothing more
+        self.assertEqual(e["background"], [{"id": "tu1", "kind": "shell", "label": "Wait for PR 41 CI [redacted]",
+                                            "started": 12.0}])
+        self.bus.publish(ev("turn.done", 25.0, ref="r1", lane="main"))
+        self.agent.runs = []
+        e = self.get()["edith"]
+        self.assertEqual((e["state"], e["since"], e["ref"]), ("waiting", 25.0, None))  # since the turn ended
+        self.agent.jobs.append({"id": "tu2", "kind": "agent", "label": "Review PR 41", "started": 13.0})
+        self.assertEqual([j["kind"] for j in self.get()["edith"]["background"]], ["shell", "agent"])
+        self.agent.jobs = []
+        self.assertEqual((self.get()["edith"]["state"], self.get()["edith"]["background"]), ("idle", []))
+        self.bus.publish(ev("permission.request", 30.0, id="p", tool="Bash", lane="main"))
+        self.agent.jobs = [{"id": "tu3", "kind": "shell", "label": "x", "started": 29.0}]
+        self.assertEqual(self.get()["edith"]["state"], "waiting_approval")  # a prompt still comes first
 
 
 class CachedTest(unittest.TestCase):
@@ -216,6 +240,8 @@ class RedactTest(unittest.TestCase):
         self.assertEqual(one_line("\n  first line  \nsecond"), "first line")
         self.assertEqual(len(one_line("x" * 200)), 80)
 
+
+SCREEN_IDLE = "● Started the CI watch in the background.\n────\n❯ \n────\n  ? for shortcuts\n"
 
 SCREEN_BUSY = """\
 ● I'll run the tests now.
@@ -326,14 +352,40 @@ class FakeTmux:
 
 
 class AgentsTest(unittest.TestCase):
-    PANES = ("10\tedith-dev\t%9\t/nowhere/a\n"   # not the active window
-             "11\tedith-dev\t%0\t/nowhere/edith-app\n"
-             "11\tedith-app\t%2\t/nowhere/edith-app-ui/\n")
+    PANES = ("10\tedith-dev\t%9\t/nowhere/a\t4000009\n"   # not the active window
+             "11\tedith-dev\t%0\t/nowhere/edith-app\t4000000\n"
+             "11\tedith-app\t%2\t/nowhere/edith-app-ui/\t4000002\n")
+
+    def setUp(self):
+        self.claude_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.claude_dir)
+        os.mkdir(os.path.join(self.claude_dir, "sessions"))
+
+    def session_file(self, pid, status):
+        with open(os.path.join(self.claude_dir, "sessions", f"{pid}.json"), "w") as f:
+            json.dump({"pid": pid, "sessionId": "s", "procStart": "1", "status": status}, f)
+
+    def agents(self, tmux, **kw):
+        return Agents(run=tmux, claude_dir=self.claude_dir, children=lambda pid: {4000000: [4000100]}.get(pid, []),
+                      stat=lambda pid: ("claude", "1"), **kw)
+
+    def test_a_finished_turn_with_background_work_is_waiting(self):
+        tmux = FakeTmux(self.PANES, {"%0": SCREEN_IDLE, "%2": SCREEN_IDLE})
+        self.session_file(4000100, "shell")  # edith-dev's Claude (a child of the pane's shell) runs a background shell
+        self.session_file(4000002, "idle")
+        got = self.agents(tmux).get()
+        self.assertEqual([(a["name"], a["state"], a["background"]) for a in got],
+                         [("edith-app", "idle", None), ("edith-dev", "waiting", "shell")])
+        self.session_file(4000100, "idle")  # its background work ended
+        self.assertEqual(self.agents(tmux).get()[1]["state"], "idle")
+        tmux.screens["%0"] = SCREEN_BUSY    # a turn running is busy, whatever the file says
+        self.session_file(4000100, "busy")
+        self.assertEqual((self.agents(tmux).get()[1]["state"], self.agents(tmux).get()[1]["background"]), ("busy", None))
 
     def test_reads_active_panes_only_with_capture(self):
         clock = [0.0]
         tmux = FakeTmux(self.PANES, {"%0": SCREEN_BUSY, "%2": SCREEN_PERMISSION})
-        agents = Agents(run=tmux, clock=lambda: clock[0])
+        agents = self.agents(tmux, clock=lambda: clock[0])
         got = agents.get()
         self.assertEqual([(a["name"], a["dir"], a["state"], a["branch"]) for a in got],
                          [("edith-app", "edith-app-ui", "blocked", None), ("edith-dev", "edith-app", "busy", None)])
@@ -356,9 +408,9 @@ class AgentsTest(unittest.TestCase):
         self.assertEqual(Agents(run=FakeTmux("", {}, error=subprocess.TimeoutExpired("tmux", 3))).get(), [])
 
     def test_route_redacts_last_line(self):
-        tmux = FakeTmux("11\tedith-dev\t%0\t/x\n", {"%0": "● the token=hunter2abc is set\n"})
+        tmux = FakeTmux("11\tedith-dev\t%0\t/x\t4000000\n", {"%0": "● the token=hunter2abc is set\n"})
         with mock.patch.object(status, "Agents", lambda **kw: Agents(run=tmux, **kw)):
-            _, get = load(FakeAgent(), {"agents": True})
+            _, get = load(FakeAgent(), {"agents": True, "claude_dir": self.claude_dir})
         self.assertEqual(get()["agents"][0]["last"], "the [redacted] is set")
 
 

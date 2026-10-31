@@ -1,5 +1,7 @@
 // EDITH's status in the header (plans/ui-next.md §2): a chip on the left with the connection dot,
 // the thinking bubble and, while EDITH works, the elapsed time; tapping it drops the status card.
+// When her reply is done but work it started runs on in the background ("waiting"), the chip is
+// calm: the bubble still, no timer, a small "1 bg" instead; the card lists that work.
 // The chip follows stream events only (status.ts); the card fetches GET /v1/status/details while it
 // is open and EDITH is on screen, every 10 s (paused in the background, refreshed at once on return).
 //
@@ -21,13 +23,14 @@ import { Icon } from '../../ui/Icon';
 import { GrowSheet, Squish } from '../../ui/motion';
 import { ThinkingBubble } from '../../ui/ThinkingBubble';
 import type { LiveModel, LiveState } from './model';
-import { agentChip, barSummary, contextUsage, formatAgo, formatElapsed, formatUptime, mainRun, pollDetails, type AgentTone, type BarSummary } from './status';
+import { agentChip, backgroundLine, barSummary, contextUsage, formatAgo, formatElapsed, formatUptime, mainRun, pollDetails, type AgentTone, type BarSummary } from './status';
 
 const REFRESH_MS = 10_000;
 const BUBBLE = 22;
 const LABEL_WIDTH = 88;
 
-const TONE: Record<BarSummary['tone'], string> = { idle: colors.textDim, busy: colors.accent, approval: colors.warn };
+// waiting: the turn is over and work it started runs on (calm, not working).
+const TONE: Record<BarSummary['tone'], string> = { idle: colors.textDim, busy: colors.accent, approval: colors.warn, waiting: colors.textSecondary };
 const CHIP: Record<AgentTone, { bg: string; dot: string }> = {
   busy: { bg: colors.accentSoft, dot: colors.accent },
   idle: { bg: colors.card, dot: colors.textDim },
@@ -74,7 +77,7 @@ export const StatusChip = memo(function StatusChip({ model, connection, open, ba
   const bar = useStore(model.store, barSummary, shallowEqual);
   const link = useStore(connection.store, selectLink, shallowEqual);
   const isOpen = useStore(open, selectOpen);
-  const working = bar.tone !== 'idle';
+  const working = bar.tone === 'busy' || bar.tone === 'approval'; // waiting isn't: no turn runs
   const since = useTurnSince(model);
 
   const label = `${describeLink(link)}. EDITH: ${bar.label}${bar.counts ? `, ${bar.counts}` : ''}. ${isOpen ? 'Hide' : 'Show'} details`;
@@ -89,7 +92,11 @@ export const StatusChip = memo(function StatusChip({ model, connection, open, ba
       <Glass level="thin" backdrop={backdrop} radius={radius.pill} style={styles.chip}>
         <View style={[styles.dot, { backgroundColor: colors[LINK_TONE[link.link]] }]} />
         <ThinkingBubble active={bar.tone === 'busy'} size={BUBBLE} />
-        {working ? <Elapsed since={since} style={[styles.elapsed, bar.tone === 'approval' && styles.warn]} /> : null}
+        {working ? (
+          <Elapsed since={since} style={[styles.elapsed, bar.tone === 'approval' && styles.warn]} />
+        ) : bar.background ? (
+          <Text style={styles.bg} testID="status-chip-bg">{`${bar.background} bg`}</Text>
+        ) : null}
       </Glass>
     </Squish>
   );
@@ -198,6 +205,15 @@ function Card({ model, connection, fetched, error, backdrop, onSettings }: CardP
           error ? null : <Text style={styles.cardDim}>Loading…</Text>
         ) : (
           <>
+            {d.edith.background.length ? (
+              <Section title="Background" icon="progress-clock">
+                {d.edith.background.map((j) => (
+                  <Text key={j.id} style={styles.bgLine} numberOfLines={2}>
+                    {backgroundLine(j, serverNow!)}
+                  </Text>
+                ))}
+              </Section>
+            ) : null}
             <Lanes lanes={d.lanes} drift={serverNow! - d.ts} />
             <Session session={d.session} serverNow={serverNow!} />
             <Section title="Agents" icon="robot-outline">
@@ -224,7 +240,7 @@ function Card({ model, connection, fetched, error, backdrop, onSettings }: CardP
 function Summary({ model, fetched, now, serverNow }: { model: LiveModel; fetched: Fetched; now: number; serverNow: number | null }) {
   const bar = useStore(model.store, barSummary, shallowEqual);
   const ref = useStore(model.store, selectMainRef);
-  const working = bar.tone !== 'idle';
+  const working = bar.tone === 'busy' || bar.tone === 'approval'; // waiting isn't: no turn runs
   const local = useTurnSince(model);
   const e = fetched?.details.edith;
   // The server's turn start, moved onto the phone's clock, but only for the run the stream shows
@@ -351,6 +367,8 @@ const styles = StyleSheet.create({
   chip: { flexDirection: 'row', alignItems: 'center', gap: space.s, height: 34, paddingHorizontal: space.m },
   dot: { width: 8, height: 8, borderRadius: 4 },
   elapsed: { color: colors.text, fontSize: type.size.small, fontVariant: ['tabular-nums'], minWidth: 30 },
+  bg: { color: colors.textSecondary, fontSize: type.size.caption, fontWeight: '600' },
+  bgLine: { color: colors.text, fontSize: type.size.small, fontWeight: '500', paddingVertical: 2, ...legibleText },
   popup: { position: 'absolute', left: space.m, right: space.m, maxWidth: 420 },
   // The card is clear glass with no pane behind its text: every line carries the dark halo
   // (legibleText) and a slightly heavier weight (core/theme/__tests__/contrast.test.ts).

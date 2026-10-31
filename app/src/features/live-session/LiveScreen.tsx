@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { ActivityIndicator, FlatList, StyleSheet, Text, TextInput, View, type LayoutChangeEvent } from 'react-native';
+import { ActivityIndicator, Alert, FlatList, StyleSheet, Text, TextInput, View, type LayoutChangeEvent } from 'react-native';
 
 import type { Command } from '../../core/api';
 import { createStore, useStore, type Store } from '../../core/store';
@@ -13,6 +13,7 @@ import { toast } from '../../ui/toast';
 import { ItemView, quoteLabel } from './ItemView';
 import { needsArgs, sendStatus, summarize, tickOf, type Item, type LiveModel, type LiveState, type SendStatus, type Tick } from './model';
 import { findQuoted, quoteOf, type Quote } from './reply';
+import { backgroundStopPrompt } from './status';
 import { WorkingRow } from './WorkingRow';
 import { AttachmentBar } from './AttachmentBar';
 import { CLOSE_LABEL, ComposerMenu, MENU_LABEL } from './ComposerMenu';
@@ -239,6 +240,7 @@ const OlderSpinner = memo(function OlderSpinner({ model }: { model: LiveModel })
 const selectBusy = (s: LiveState) => summarize(s).busy;
 // While EDITH works, a new message is read by the running task before it answers; /btw runs it in parallel instead.
 export const BUSY_PLACEHOLDER = 'Message · /btw runs in parallel';
+const selectBackground = (s: LiveState) => s.background;
 
 const selectVoicePhase = (s: VoiceState) => s.phase;
 const selectVoiceError = (s: VoiceState) => s.error;
@@ -273,6 +275,7 @@ interface ComposerProps {
  */
 const Composer = memo(function Composer({ model, voice, attach, backdrop, menu, reply, handle }: ComposerProps) {
   const busy = useStore(model.store, selectBusy);
+  const background = useStore(model.store, selectBackground);
   const voicePhase = useStore(voice.store, selectVoicePhase);
   const voiceError = useStore(voice.store, selectVoiceError);
   const canTalk = useStore(voice.store, selectVoiceAvailable);
@@ -336,6 +339,14 @@ const Composer = memo(function Composer({ model, voice, attach, backdrop, menu, 
     setStopping(true);
     model.stop().then(toast, (e: unknown) => toast(`Couldn't stop: ${e instanceof Error ? e.message : String(e)}`)).finally(() => setStopping(false));
   };
+  // Only background work runs: say what Stop would (not) cancel, and offer to ask EDITH instead.
+  const stopBackground = () => {
+    const p = backgroundStopPrompt(background, Date.now() / 1000 + model.store.get().clockOffset); // the server's clock
+    Alert.alert(p.title, p.message, [
+      { text: 'Keep running', style: 'cancel' },
+      { text: 'Ask EDITH to cancel', style: 'destructive', onPress: () => void model.send(p.request) },
+    ]);
+  };
   const talk = () => {
     closeMenu();
     void voice.start();
@@ -377,7 +388,12 @@ const Composer = memo(function Composer({ model, voice, attach, backdrop, menu, 
                 maxLength={8000}
                 accessibilityLabel="Message"
               />
-              {busy ? <InlineButton icon="stop-circle-outline" color={colors.danger} onPress={stop} busy={stopping} label="Stop" /> : null}
+              {busy ? (
+                <InlineButton icon="stop-circle-outline" color={colors.danger} onPress={stop} busy={stopping} label="Stop" />
+              ) : background.length ? (
+                // Not a turn: calm, and it explains rather than stops.
+                <InlineButton icon="timer-sand" color={colors.textSecondary} onPress={stopBackground} label="Background work running" />
+              ) : null}
               {canTalk ? <InlineButton icon="microphone-outline" color={colors.text} onPress={talk} busy={voicePhase === 'starting'} label="Talk to EDITH" /> : null}
             </View>
           )}
