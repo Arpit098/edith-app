@@ -1,8 +1,9 @@
 import { statusDetailsFrom, type StatusDetails } from '../../../core/api';
 import { ev, fakeContext } from '../../../testing/fakes';
+import { createStore } from '../../../core/store';
 import { initialLive, reduce, type LiveState } from '../model';
 import { DETAILS } from './details';
-import { barSummary, detailsLabel, formatElapsed, formatTokens, formatUptime, mainRun, pollDetails, toolName, turnSince } from '../status';
+import { agentChip, barSummary, contextUsage, detailsLabel, formatAgo, formatElapsed, formatTokens, formatUptime, mainRun, pollDetails, toolName, turnSince, nextTurnStart, trackTurnStart } from '../status';
 
 
 const run = (events: Parameters<typeof reduce>[1][], from: LiveState = initialLive) => events.reduce(reduce, from);
@@ -51,6 +52,26 @@ describe('formatting', () => {
     expect([formatElapsed(42), formatElapsed(725), formatElapsed(3723), formatElapsed(-3)]).toEqual(['0:42', '12:05', '1:02:03', '0:00']);
     expect([formatUptime(40), formatUptime(720), formatUptime(18_720), formatUptime(273_600)]).toEqual(['40s', '12m', '5h 12m', '3d 4h']);
     expect([formatTokens(950), formatTokens(320_562), formatTokens(1_250_000), formatTokens(1_000_000)]).toEqual(['950', '321k', '1.25M', '1M']);
+  });
+
+  it('says how long ago in plain words', () => {
+    expect([formatAgo(10), formatAgo(90), formatAgo(180), formatAgo(3600), formatAgo(7500), formatAgo(3 * 86400 + 5)]).toEqual([
+      'just now', '2 min ago', '3 min ago', '1 h ago', '2 h 5 min ago', '3 d ago',
+    ]);
+  });
+
+  it('shows the context against the smallest window that fits it, with how full it is', () => {
+    expect(contextUsage(120_000)).toEqual({ text: '120k of 200k', fraction: 0.6 });
+    expect(contextUsage(320_562)).toMatchObject({ text: '321k of 1M' });
+    expect(contextUsage(1_200_000)).toEqual({ text: '1.2M tokens', fraction: null }); // past every known window: no bar
+  });
+
+  it("gives each coding agent a chip for its state", () => {
+    const [busy, blocked] = statusDetailsFrom(DETAILS).agents;
+    expect(agentChip(busy!)).toEqual({ label: 'Busy', tone: 'busy' });
+    expect(agentChip(blocked!)).toEqual({ label: 'Needs approval', tone: 'warn' });
+    expect(agentChip({ ...busy!, state: 'idle' })).toEqual({ label: 'Idle', tone: 'idle' });
+    expect(agentChip({ ...busy!, state: 'blocked', blocked: 'usage_limit' })).toEqual({ label: 'Usage limit', tone: 'danger' });
   });
 
   it('labels the server state', () => {
@@ -136,5 +157,46 @@ describe('pollDetails', () => {
     await jest.advanceTimersByTimeAsync(0);
     expect(errors).toEqual([{ error: 'offline' }]);
     stop2();
+  });
+});
+
+describe('the shared turn start', () => {
+  it('is null idle, set when a run first appears (no elapsed: now), kept while it runs, re-anchored on elapsed, new on a new ref', () => {
+    expect(nextTurnStart(initialLive, 100)).toBeNull();
+    let s = run([ev('turn.started', { ref: 'r1', lane: 'main' })]);
+    const first = nextTurnStart(s, 100)!;
+    expect(first).toEqual({ ref: 'r1', elapsed: 0, at: 100 }); // turn.started carries no elapsed: counted from now
+    s = { ...s, turnStart: first };
+    expect(nextTurnStart(s, 130)).toBe(first); // same run, nothing new: the same object
+    s = run([ev('turn.progress', { ref: 'r1', lane: 'main', steps: 1, step: '$ ls', elapsed: 40 })], s);
+    expect(nextTurnStart(s, 150)).toEqual({ ref: 'r1', elapsed: 40, at: 110 });
+    s = run([ev('turn.done', { ref: 'r1', lane: 'main', text: 'ok' }), ev('turn.started', { ref: 'r2', lane: 'main' })], s);
+    expect(nextTurnStart(s, 200)).toEqual({ ref: 'r2', elapsed: 0, at: 200 });
+  });
+
+  it('busy before any run is seen, then the run appears: a fresh start', () => {
+    let s = run([ev('lane.status', { main: 'busy', side: 0, queued: 0 })]);
+    s = { ...s, turnStart: nextTurnStart(s, 10) };
+    expect(s.turnStart).toEqual({ ref: null, elapsed: null, at: 10 }); // run.elapsed null: no run yet
+    s = { ...s, turnStart: nextTurnStart(s, 11) };
+    expect(s.turnStart!.at).toBe(10); // kept
+    s = run([ev('turn.started', { ref: 'r1', lane: 'main' })], s);
+    expect(nextTurnStart(s, 12)).toEqual({ ref: 'r1', elapsed: 0, at: 12 });
+  });
+
+  it('trackTurnStart keeps the store current and stops on unsubscribe', () => {
+    let clock = 1000;
+    const store = createStore(initialLive);
+    const stop = trackTurnStart(store, () => clock);
+    store.set((s) => reduce(s, ev('turn.started', { ref: 'r1', lane: 'main' })));
+    expect(store.get().turnStart).toEqual({ ref: 'r1', elapsed: 0, at: 1000 });
+    clock = 1020;
+    store.set((s) => reduce(s, ev('tool.call', { id: 't1', name: 'Bash', summary: '$ ls' })));
+    expect(store.get().turnStart!.at).toBe(1000); // unchanged by other events
+    store.set((s) => [ev('turn.done', { ref: 'r1', lane: 'main', text: 'ok' }), ev('lane.status', { main: 'idle', side: 0, queued: 0 })].reduce(reduce, s));
+    expect(store.get().turnStart).toBeNull();
+    stop();
+    store.set((s) => reduce(s, ev('turn.started', { ref: 'r2', lane: 'main' })));
+    expect(store.get().turnStart).toBeNull();
   });
 });

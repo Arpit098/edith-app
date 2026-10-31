@@ -8,6 +8,7 @@ import type { AppVisibility, KeyValueStore } from '../../core/ports';
 import { createStore, type Store } from '../../core/store';
 import { ID_LIFETIME_S, type SentAttachment } from './attachments';
 import { quoteFrom, quoteText, type Quote } from './reply';
+import { trackTurnStart } from './status';
 
 export const MAX_ITEMS = 400; // the transcript keeps the newest ones; older ones drop off
 export const PAGE = 100; // history events per request
@@ -93,6 +94,15 @@ export interface LiveState {
   runs: Record<string, RunInfo>; // by turn ref
   session: { id: string; title: string | null } | null;
   seq: number;
+  // When the running turn began on the phone's clock, one value for the chip and the card alike
+  // (status.ts trackTurnStart keeps it; the reducer never touches it). null while idle.
+  turnStart: TurnStart | null;
+}
+
+export interface TurnStart {
+  ref: string | null; // the main run it belongs to (null: busy with no run seen yet)
+  elapsed: number | null; // the server's elapsed it was counted back from, if any
+  at: number; // unix seconds, phone clock
 }
 
 export const initialLive: LiveState = {
@@ -109,6 +119,7 @@ export const initialLive: LiveState = {
   runs: {},
   session: null,
   seq: 0,
+  turnStart: null,
 };
 
 function push(s: LiveState, ts: number, item: NewItem): LiveState {
@@ -665,6 +676,7 @@ function undelivered(e: unknown): boolean {
 
 export function createLiveModel(bus: EventBus, api: Api, storage?: KeyValueStore, visibility?: AppVisibility): LiveModel {
   const store = createStore(initialLive);
+  trackTurnStart(store); // lives as long as the model; the store is the model's own
   const myRefs = new Set<string>(); // presses whose later replies (command.reply) belong in this view
   let localSeq = Date.now(); // keys stay unique across restarts
   let commandList: Promise<Command[]> | null = null;

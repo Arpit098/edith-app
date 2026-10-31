@@ -65,7 +65,8 @@ describe('Shell', () => {
       await flush();
     });
     const t = texts(r);
-    expect(t).toContain('E.D.I.T.H'); // the home screen's title (plans/ui-next.md §2)
+    // The home screen's title (plans/ui-next.md §2), drawn in the theme's gradient: a header by its label.
+    expect(r.root.findAll((n) => n.props?.accessibilityRole === 'header' && n.props.accessibilityLabel === 'E.D.I.T.H')).not.toHaveLength(0);
     // The status chip on the left: connection and EDITH's state, in its label.
     expect(r.root.findAll((n) => n.props?.accessibilityLabel === 'Connected. EDITH: Idle. Show details' && typeof n.props.onPress === 'function')).not.toHaveLength(0);
     expect(t).toContain('from history');

@@ -12,6 +12,7 @@ import { createStore, useStore } from '../core/store';
 import { ChromeContext, chrome, colors, space, titleGlow, type } from '../core/theme';
 import { Ambient } from '../ui/Ambient';
 import { Glass, useBackdrop } from '../ui/Glass';
+import { GradientTitle } from '../ui/GradientTitle';
 import { Icon } from '../ui/Icon';
 import { ConnectionPill } from './ConnectionPill';
 import { ConnectScreen } from './ConnectScreen';
@@ -153,9 +154,14 @@ function Main({ loaded, connection, meter }: { loaded: LoadedFeatures; connectio
         <View onLayout={onHeaderLayout} style={{ paddingTop: insets.top }}>
           {/* [● bubble 0:42]      E.D.I.T.H      [☰] (plans/ui-next.md §2); other screens show their own title. */}
           <View style={styles.headerRow}>
-            <Text style={styles.title} numberOfLines={1} accessibilityRole="header" pointerEvents="none">
-              {top === home ? APP_TITLE : (route?.title ?? APP_TITLE)}
-            </Text>
+            {/* The home title in the theme's gradient (ui/GradientTitle); other screens' titles stay plain text. */}
+            {top === home || !route ? (
+              <GradientTitle text={APP_TITLE} fontSize={type.size.heading} letterSpacing={1.5} style={styles.titleBox} />
+            ) : (
+              <Text style={styles.title} numberOfLines={1} accessibilityRole="header" pointerEvents="none">
+                {route.title}
+              </Text>
+            )}
             {stacked ? (
               <Pressable onPress={() => setNav((s) => back(s, home) ?? s)} hitSlop={10} accessibilityRole="button" accessibilityLabel="Back" style={styles.backBtn}>
                 <Icon name="arrow-left" />
@@ -203,5 +209,6 @@ const styles = StyleSheet.create({
   backBtn: { paddingRight: space.xs },
   // Centred over the whole row whatever sits either side; its glow is a static text shadow (titleGlow).
   title: { position: 'absolute', left: 96, right: 96, textAlign: 'center', color: colors.text, fontSize: type.size.heading, fontWeight: '700', letterSpacing: 1.5, ...titleGlow },
+  titleBox: { position: 'absolute', left: 96, right: 96 },
   menuSlot: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
 });
