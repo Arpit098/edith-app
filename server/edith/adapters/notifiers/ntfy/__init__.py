@@ -23,6 +23,7 @@ import urllib.request
 log = logging.getLogger("edith.ntfy")
 
 PRIORITY = {"min": 1, "low": 2, "default": 3, "high": 4}  # ntfy's 1..5
+TAGS = {"updates": ["arrow_up"]}  # ntfy tags by push channel (a plain ntfy client shows them as emoji)
 NTFY_TOKEN = re.compile(r"tk_[A-Za-z0-9]{29}")  # contracts/push.md: what the app accepts
 
 
@@ -61,6 +62,8 @@ class NtfyNotifier:
                 return False
         payload = {"topic": self.topic, "title": title, "priority": PRIORITY.get(priority, 3),
                    "message": json.dumps(data, ensure_ascii=False, separators=(",", ":")) if data else body}
+        if data and data.get("channel") in TAGS:
+            payload["tags"] = TAGS[data["channel"]]
         raw = json.dumps(payload, ensure_ascii=False).encode()
         delay = self.backoff
         for attempt in range(self.retries + 1):

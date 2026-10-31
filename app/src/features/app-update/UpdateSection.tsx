@@ -30,7 +30,7 @@ export function UpdateSection({ model }: { model: AppUpdateModel }) {
       {s.otaReady ? (
         <View style={styles.block}>
           <Text style={styles.text}>A newer version of the app’s code is ready. It’s used on the next start.</Text>
-          <Button small label="Restart now" icon="restart" variant="primary" onPress={() => void model.applyOta()} />
+          <Button small label="Restart to update" icon="restart" variant="primary" busy={s.restarting} onPress={() => void model.restartToUpdate()} />
         </View>
       ) : null}
 

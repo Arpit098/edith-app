@@ -116,10 +116,43 @@ class FeatureTest(unittest.TestCase):
         self.assertEqual((first["tag"], first["title"]), ("rem:aa11:100", "Reminder"))
         self.assertEqual((second["tag"], second["title"]), ("rem:aa11:200", "Reminder (late)"))
 
+    def test_an_update_is_pushed_once_even_while_the_app_is_open(self):
+        self.presence.count = 1  # the app is connected but may not check for updates for hours
+        self.publish("app.update_available", origin="system", kind="ota", id="u7", runtimeVersion="rt1",
+                     summary="New: Photos in chat · Fix: Messages no longer vanish")
+        title, body, priority, data = self.ntfy.next()
+        self.assertEqual((title, priority), ("EDITH update ready", "default"))
+        self.assertEqual(data, {"v": 1, "tag": "update:ota:u7", "channel": "updates", "title": "EDITH update ready",
+                                "text": "New: Photos in chat · Fix: Messages no longer vanish",
+                                "link": "edith://settings/updates"})
+        self.publish("app.update_available", origin="system", kind="ota", id="u7", summary="again")  # same tag
+        self.publish("app.update_available", origin="system", kind="apk", id="1105", versionName="0.3.0", summary="")
+        title, body, priority, data = self.ntfy.next()
+        self.assertEqual((title, data["tag"], data["text"], data["link"]),
+                         ("New EDITH app version", "update:apk:1105", "Install it from Settings → Updates.",
+                          "edith://settings/updates"))
+        self.assertTrue(self.ntfy.sent.empty())
+        self.assertTrue(self.presence.asked.empty())  # never asked: updates go either way
+
     def test_preview_matches_the_app(self):
         self.assertEqual(preview("# Title\n```py\nx = 1\n```\nSee [docs](http://x) and `code`."),
                          "Title [code] See docs and code.")
         self.assertEqual(preview("x" * 200), "x" * 179 + "…")
+
+
+class UpdateAlertsOffTest(unittest.TestCase):
+    def test_the_config_switch_turns_update_pushes_off(self):
+        bus, registry, ntfy = EventBus(), Registry(), FakeNotifier()
+        report = load_features(["notifications"], bus, Ports(notifiers=[ntfy]), registry,
+                               {"notifications": {"update_alerts": False}})
+        self.assertEqual(report.failed, {})
+        jobs = JobRunner(list(registry.jobs.values()))
+        jobs.start()
+        self.addCleanup(jobs.stop)
+        bus.publish(Event("app.update_available", {"kind": "ota", "id": "u1", "summary": "x"}))
+        bus.publish(Event("reminder.due", {"id": "r1", "text": "still pushed", "due": 1}))
+        self.assertEqual(ntfy.next()[3]["tag"], "rem:r1:1")  # FIFO: the update would have come first
+        self.assertTrue(ntfy.sent.empty())
 
 
 class NoNotifierTest(unittest.TestCase):
@@ -167,6 +200,12 @@ class AdapterTest(unittest.TestCase):
                                 "message": '{"v":1,"tag":"perm:p1"}'})
         self.assertTrue(self.ntfy.notify("Hi", "plain"))
         self.assertEqual(self.server.seen[1][1]["message"], "plain")
+        self.assertNotIn("tags", self.server.seen[0][1])
+
+    def test_an_update_push_has_its_own_tag_at_default_priority(self):
+        self.assertTrue(self.ntfy.notify("EDITH update ready", "x", "default", {"v": 1, "tag": "update:ota:u1", "channel": "updates"}))
+        body = self.server.seen[0][1]
+        self.assertEqual((body["priority"], body["tags"]), (3, ["arrow_up"]))
 
     def test_retries_a_server_error_but_not_a_refusal(self):
         self.server.answers = [503, 200]

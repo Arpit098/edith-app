@@ -1,8 +1,9 @@
 """Pushes for the app while it is closed (Phase 5; contracts/push.md): replies and failures of app
-turns, approvals (and their cancel once answered) and reminders, through the notifier ports.
+turns, approvals (and their cancel once answered) and reminders, through the notifier ports; and app
+updates (app.update_available), which go even while the app is connected.
 
 Only while the app isn't connected (ports.presence, asked at push time); the app shows everything
-itself while it is open. Each tag is pushed once it is delivered. Publishing runs on one worker thread, so a slow or unreachable ntfy
+itself while it is open. Update alerts are the exception: the app may not check for a while. Each tag is pushed once it is delivered. Publishing runs on one worker thread, so a slow or unreachable ntfy
 never holds up the bus.
 
 GET /v1/push/config hands the app what it subscribes with (the notifier's subscription(): ntfy's url,
@@ -10,7 +11,8 @@ topic and the phone's read-only token), so turning push on needs nothing pasted.
 answer only: never logged, never in the audit line, and not cached by the client (no-store).
 
     [features.notifications]
-    via = ["ntfy"]   # notifier adapters to push through
+    via = ["ntfy"]         # notifier adapters to push through
+    update_alerts = true   # push app.update_available (a new OTA or APK)
 """
 import json
 import queue
@@ -23,7 +25,8 @@ from edith.core import ApiError, Context, Event, Feature, Response
 SEEN_MAX = 256    # tags pushed lately (oldest forgotten first)
 WAITING_MAX = 50  # pushes waiting for the worker; past that they are dropped (and logged)
 PREVIEW = 180
-LIVE, APPROVALS = "edith://live", "edith://approvals"
+LIVE, APPROVALS, UPDATES = "edith://live", "edith://approvals", "edith://settings/updates"
+ALWAYS = {"updates"}  # channels pushed even while the app is connected
 FAILED = {  # the app's wording (app/src/features/notifications/model.ts)
     "not_ready": "Claude isn't ready yet. Try again in a moment.",
     "crashed": "Claude stopped unexpectedly.",
@@ -77,11 +80,20 @@ def message(ev: Event) -> dict | None:
         return {"tag": f"rem:{rid}:{d.get('due')}", "channel": "reminders",  # once per due time
                 "title": "Reminder (late)" if d.get("late") else "Reminder",
                 "text": preview(str(d.get("text") or ""), 300), "link": LIVE}
+    if t == "app.update_available":
+        kind, uid = d.get("kind"), d.get("id")
+        if kind not in ("ota", "apk") or not uid:
+            return None
+        title = "EDITH update ready" if kind == "ota" else "New EDITH app version"
+        fallback = "Restart EDITH to use it." if kind == "ota" else "Install it from Settings → Updates."
+        return {"tag": f"update:{kind}:{uid}", "channel": "updates", "title": title,
+                "text": preview(str(d.get("summary") or ""), 300) or fallback, "link": UPDATES}
     return None
 
 
 def setup(ctx: Context) -> None:
     via = set(ctx.config.get("via", ["ntfy"]))
+    update_alerts = ctx.config.get("update_alerts", True) is not False
     notifiers = [n for n in ctx.ports.notifiers if n.name in via]
     subscribable = [n for n in notifiers if callable(getattr(n, "subscription", None))]
 
@@ -112,7 +124,7 @@ def setup(ctx: Context) -> None:
             with lock:
                 if tag not in pending:
                     return  # answered while it waited: nothing to show
-        if not cancel and ctx.ports.presence and ctx.ports.presence.app_clients():
+        if not cancel and msg.get("channel") not in ALWAYS and ctx.ports.presence and ctx.ports.presence.app_clients():
             with lock:
                 pending.discard(tag)  # the app is there and shows it itself
             return
@@ -155,6 +167,8 @@ def setup(ctx: Context) -> None:
                     return
             enqueue({"tag": tag, "cancel": True})  # answered or timed out: take it off the phone
             return
+        if ev.type == "app.update_available" and not update_alerts:
+            return
         msg = message(ev)
         if msg is None:
             return
@@ -164,7 +178,8 @@ def setup(ctx: Context) -> None:
             pending.add(msg["tag"])
         enqueue(msg)
 
-    for t in ("turn.done", "turn.failed", "permission.request", "permission.resolved", "reminder.due"):
+    for t in ("turn.done", "turn.failed", "permission.request", "permission.resolved", "reminder.due",
+              "app.update_available"):
         ctx.subscribe(t, on_event)
 
 

@@ -16,7 +16,7 @@ import { GradientTitle } from '../ui/GradientTitle';
 import { Icon } from '../ui/Icon';
 import { ConnectionPill } from './ConnectionPill';
 import { ConnectScreen } from './ConnectScreen';
-import { linkScreen, useDeepLinks } from './links';
+import { linkTarget, useDeepLinks } from './links';
 import { MenuButton, NavMenu } from './NavMenu';
 import { back, current, navigate, type NavState } from './navigation';
 import { SERVER_CONNECTION, SettingsScreen } from './SettingsScreen';
@@ -85,10 +85,10 @@ function Main({ loaded, connection, meter }: { loaded: LoadedFeatures; connectio
     return () => sub.remove();
   }, [home]);
 
-  // A tapped notification or Live Alerts pill: edith://live, edith://approvals.
+  // A tapped notification or Live Alerts pill: edith://live, edith://approvals, edith://settings/updates.
   useDeepLinks((url) => {
-    const screen = linkScreen(url, (name) => routes.has(name), home);
-    if (screen) open(screen);
+    const target = linkTarget(url, (name) => routes.has(name), home);
+    if (target) open(target.screen, target.page);
   });
   // A feature's own link to a screen (e.g. Settings → Train wake word).
   useEffect(
