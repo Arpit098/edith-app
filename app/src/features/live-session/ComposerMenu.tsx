@@ -214,9 +214,9 @@ function Row({
       accessibilityHint={hint}
       accessibilityState={{ disabled: !!disabled }}
     >
-      <Icon name={icon} size={24} color={colors.text} />
+      <Icon name={icon} size={24} color={colors.text} halo />
       <Text style={[styles.label, header && styles.headerLabel]}>{label}</Text>
-      {more ? <Icon name="chevron-right" size={20} color={colors.textSecondary} /> : null}
+      {more ? <Icon name="chevron-right" size={20} color={colors.textSecondary} halo /> : null}
     </Squish>
   );
 }
@@ -230,14 +230,14 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', gap: space.l, minHeight: ROW, paddingHorizontal: space.m, borderRadius: radius.m },
   header: { minHeight: ROW - space.s },
   disabled: { opacity: 0.45 },
-  // Text and icons at full opacity, in colours that keep 4.5:1 over any backdrop on the popup glass
-  // (core/theme/__tests__/contrast.test.ts), plus a soft shadow under the glyphs.
-  label: { color: colors.text, fontSize: type.size.title, fontWeight: '500', flex: 1, ...legibleText },
-  headerLabel: { fontWeight: '600' },
+  // Text and icons at full opacity, a little heavier, each with the dark halo (legibleText): the
+  // popup is clear glass with no pane behind them (core/theme/__tests__/contrast.test.ts).
+  label: { color: colors.text, fontSize: type.size.title, fontWeight: '600', flex: 1, ...legibleText },
+  headerLabel: { fontWeight: '700' },
   commands: { maxHeight: 6 * ROW },
   command: { minHeight: ROW, justifyContent: 'center', paddingHorizontal: space.m, borderRadius: radius.m },
-  commandName: { color: colors.text, fontSize: type.size.body, fontWeight: '600', fontFamily: type.mono, ...legibleText },
-  commandText: { color: colors.textSecondary, fontSize: type.size.small, ...legibleText },
-  note: { color: colors.textSecondary, fontSize: type.size.small, paddingHorizontal: space.m, paddingVertical: space.s },
+  commandName: { color: colors.text, fontSize: type.size.body, fontWeight: '700', fontFamily: type.mono, ...legibleText },
+  commandText: { color: colors.textSecondary, fontSize: type.size.small, fontWeight: '500', ...legibleText },
+  note: { color: colors.textSecondary, fontSize: type.size.small, fontWeight: '500', paddingHorizontal: space.m, paddingVertical: space.s, ...legibleText },
   center: { paddingVertical: space.l },
 });

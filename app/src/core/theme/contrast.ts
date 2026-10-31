@@ -36,21 +36,18 @@ export const BACKDROPS: Record<string, Rgb> = {
 };
 
 /**
- * The lowest contrast of `text` on a popup of `level`, over every backdrop, in every glass mode.
- * Deliberately pessimistic: the glass itself (frost, tint) is assumed to let the backdrop through
- * unchanged, at full brightness; only what's drawn over it in JS is counted: the flat fallback's
- * colour in flat mode, then the content area's scrim. So the number holds whatever the native view
- * does (lens, blur only, or a failure), and on every device.
+ * The lowest contrast of `text` on the flat fallback of `level` (no blur: battery saver, Android 11
+ * and older), over every backdrop. The flat pane is the only layer then, so this is exact.
+ * Real glass (lens or blur) has no such number: popups are clear glass, so what's behind sets the
+ * background, and the labels' dark halo (legibleText) is what keeps them readable. WCAG ratios don't
+ * model a text shadow, so no 4.5:1 is claimed there (see __tests__/contrast.test.ts).
  */
-export function worstPopupContrast(level: GlassLevel, text: string): number {
+export function worstFlatContrast(level: GlassLevel, text: string): number {
   const g = glass[level];
-  if (!g.legibility) throw new Error(`${level} isn't a popup level`);
   let worst = Infinity;
   for (const backdrop of Object.values(BACKDROPS)) {
-    for (const surface of [backdrop, composite(g.flat, backdrop)]) {
-      const bg = composite(g.legibility.scrim, surface);
-      worst = Math.min(worst, contrast(composite(text, bg), bg));
-    }
+    const bg = composite(g.flat, backdrop);
+    worst = Math.min(worst, contrast(composite(text, bg), bg));
   }
   return worst;
 }
