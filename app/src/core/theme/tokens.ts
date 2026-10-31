@@ -261,7 +261,7 @@ export const motion = {
   grow: { damping: 17, stiffness: 260, mass: 0.9 }, // a sheet growing out of its trigger
   pressScale: 0.95,
   blobMs: 2400, // one breath of the working blob
-  bubbleMs: 4200, // one cycle of the thinking bubble's rim wobble
+  orbMs: 9000, // one cycle of the thinking orb's swirl (the edge breathes twice in it)
   swipe: { damping: 20, stiffness: 320, mass: 0.7 }, // a swiped message springing back
 } as const;
 
@@ -280,24 +280,28 @@ export const titleGlow = {
 
 /**
  * The home title's fill (Arpit, 31 Oct: "E.D.I.T.H heading doesn't have the theme color gradient"),
- * left to right: the logo's blue, the bubble's lavender sheen, an icy cyan. All light enough to read
+ * left to right: the logo's blue, the orb's lavender, an icy cyan. All light enough to read
  * on the dark header; ui/GradientTitle draws it, with titleGlow's colour as the halo.
  */
 export const titleGradient = ['#8DB4F0', '#B6A6F0', '#8BE0EE'] as const;
 
 /**
- * The thinking bubble (ui/ThinkingBubble): a soap bubble in the app icon's colours
- * (app/assets/icon.png). The middle is see-through with only a faint blue tint; the body brightens
- * towards a thin iridescent rim (silver at the top-left, the rings' blue, a lavender sheen, a deeper
- * blue on the far side); one crisp glint at the top-left and a small one at the bottom-right.
+ * The thinking orb (ui/ThinkingBubble), a Siri-style orb in the app icon's colours
+ * (app/assets/icon.png). Arpit, 31 Oct: "like the new Siri bubble, which is not transparent from
+ * inside". It's an opaque sphere, deep indigo at the edge and the logo's blue in the middle, filled with
+ * soft colour blobs and ribbons of light. It has a soft-lit rim, a glossy highlight at the top-left
+ * and a gentle blue glow round it.
  */
-export const bubble = {
-  core: 'rgba(124, 174, 220, 0.04)', // the middle: almost clear, a faint tint
-  body: 'rgba(124, 174, 220, 0.30)', // the soft blue the body brightens to just inside the rim
-  rimLit: '#E8EEF6', // the silver catching light (top-left)
-  rimMid: brand.blue,
-  rimDeep: '#4F7FD0', // the icon's deeper blue on the rim's far side
-  sheen: 'rgba(176, 164, 236, 0.60)', // a lavender shimmer on the rim
-  glint: 'rgba(250, 252, 255, 0.95)', // the specular glints
-  reflection: 'rgba(232, 238, 246, 0.2)', // the faint inner reflection arc
+export const orb = {
+  centre: '#4F7FDA', // the body, brightest in the middle
+  mid: '#2E46AE',
+  edge: '#151B5E', // deep indigo at the edge
+  blobs: ['rgba(98, 70, 206, 0.75)', 'rgba(124, 174, 220, 0.95)', 'rgba(182, 166, 240, 0.9)', 'rgba(139, 224, 238, 0.9)'], // violet, the logo's blue, lavender, icy cyan (orbShape.BLOBS)
+  ribbons: ['rgba(236, 246, 255, 0.7)', 'rgba(150, 232, 244, 0.6)', 'rgba(206, 194, 255, 0.55)'], // icy white, cyan, lavender (orbShape.RIBBONS)
+  shade: 'rgba(14, 18, 72, 0.55)', // the sphere's edge falling away into shadow
+  rimLit: 'rgba(226, 238, 255, 0.85)', // the soft-lit rim, brightest at the top-left
+  rimMid: 'rgba(124, 174, 220, 0.2)',
+  rimFar: 'rgba(139, 224, 238, 0.75)', // icy cyan bounce light at the bottom-right
+  gloss: 'rgba(255, 255, 255, 0.9)', // the glossy highlight
+  glow: 'rgba(124, 174, 220, 0.55)', // the outer glow, fading out
 } as const;
