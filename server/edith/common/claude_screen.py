@@ -8,7 +8,16 @@ BOX = re.compile(r"[─-▟]+")  # box drawing and block elements (borders, sepa
 BOTTOM = 15  # lines at the end of the screen that hold Claude Code's prompt, footer and dialogs
 PERMISSION = re.compile(r"Do you want to (?:proceed|make this edit|create|allow|run)|Would you like to proceed"
                         r"|❯\s*1\.\s*Yes", re.I)
-USAGE_LIMIT = re.compile(r"usage limit reached|hit your limit|limit reached|limit will reset", re.I)
+# Claude Code's own wording only ("Claude usage limit reached", "5-hour limit reached ∙ resets 4pm",
+# "You've hit your limit"): never a bare "limit reached", which a reply or a tool ("rate limit
+# reached") can print too.
+USAGE_LIMIT = re.compile(r"usage limit reached|\b\d+-hour limit reached|weekly limit reached|hit your limit"
+                         r"|limit will reset", re.I)
+BLOCK = ("●", "⎿")  # how Claude Code starts a message or a tool's output
+# The menu Claude shows at a rate limit ("What do you want to do?" … "Stop and wait for limit to
+# reset"): a dialog, so it is read before the permission prompt it looks like.
+LIMIT_MENU = re.compile(r"stop and wait for (?:the )?limit to reset", re.I)
+MENU_QUESTION = re.compile(r"what do you want to do\?", re.I)
 LAST_LINE = 100  # characters
 
 
@@ -22,8 +31,13 @@ def read_screen(screen: str) -> dict:
     lines = [ln for ln in map(clean, screen.splitlines()) if ln]
     bottom = "\n".join(lines[-BOTTOM:])
     busy = "esc to interrupt" in bottom.lower()
-    blocked = ("permission" if PERMISSION.search(bottom)
-               else "usage_limit" if not busy and USAGE_LIMIT.search(bottom) else None)
+    menu = LIMIT_MENU.search(bottom) or (MENU_QUESTION.search(bottom) and USAGE_LIMIT.search(bottom))
+    # Without the menu, only the newest ●/⎿ line saying it: older output, or text further down a
+    # reply, isn't the state Claude is in now.
+    newest = next((ln for ln in reversed(lines) if ln.startswith(BLOCK)), "")
+    blocked = ("usage_limit" if menu
+               else "permission" if PERMISSION.search(bottom)
+               else "usage_limit" if not busy and USAGE_LIMIT.search(newest) else None)
     last = next((ln[1:].strip() for ln in reversed(lines) if ln.startswith("●")), None)
     if last and len(last) > LAST_LINE:
         last = last[:LAST_LINE - 1].rstrip() + "…"
