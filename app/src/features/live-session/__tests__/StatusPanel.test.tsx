@@ -120,10 +120,19 @@ describe('StatusChip and StatusPopup', () => {
     await act(async () => toggle(r));
     expect(f.details).toHaveBeenCalledTimes(1);
     const shown = texts(r);
-    for (const part of ['Now', 'Running Bash · 2 queued', '$ npm test', 'Connected', 'Lanes', 'Session', 'Agents', 'Running Bash · 0:42', '321k tokens', 'edith-dev', 'needs approval', 'Live p1-live-7']) {
+    // The summary, then the sections: friendly values, agents with a state chip and their last action.
+    for (const part of [
+      'Running Bash', '$ npm test', '2 queued', '1:40', // the turn's time from the server: began 100 s before its answer
+      'Lanes', 'check the disk · 0:12', '1 of 2 running', '2 messages', '1 waiting',
+      'Session', 'Phase 2 app', '157', '321k of 1M',
+      'Agents', 'edith-dev', 'Busy', 'release-notes', 'Running the tests', 'Needs approval',
+      'Server', 'Connected', 'p1-live-7', '14h 13m',
+    ]) {
       expect(shown).toContain(part);
     }
     expect(shown).not.toContain('Retry now');
+    expect(shown).not.toContain('tokens'); // a known window: "321k of 1M", not a bare count
+    expect(r.root.findAll((n) => n.props?.accessibilityLabel === 'Context 32% full')).not.toHaveLength(0); // the thin bar
 
     await act(async () => {
       await jest.advanceTimersByTimeAsync(10_000);
@@ -168,6 +177,24 @@ describe('StatusChip and StatusPopup', () => {
     expect(f.details).toHaveBeenCalledTimes(1); // backgrounded: nothing
     await act(async () => f.visibility.set(true));
     expect(f.details).toHaveBeenCalledTimes(2); // back on screen: at once
+    act(() => r.unmount());
+  });
+
+  it('leaves out empty rows when idle, and says how long EDITH has been idle', async () => {
+    const f = fakes();
+    const idle = {
+      ...DETAILS,
+      edith: { state: 'idle', tool: null, step: null, since: 1000 - 720, ref: null, turn_started: null, tmux: 'running' },
+      lanes: { side: [], max_side: 2, queued: 0, approvals: 0 },
+      session: { ...DETAILS.session, started: 1000 - 180, messages: 0, context_tokens: 120_000 },
+      agents: [],
+    };
+    f.details.mockResolvedValue(statusDetailsFrom(idle));
+    const r = await mount(f);
+    await act(async () => toggle(r));
+    const shown = texts(r);
+    for (const part of ['Idle', 'for 12m', 'Only the main lane, nothing waiting', '3 min ago', '120k of 200k', 'No coding agents running']) expect(shown).toContain(part);
+    for (const gone of ['Queued', 'Approvals', 'Side lanes', 'Messages', 'Parallel']) expect(shown).not.toContain(gone);
     act(() => r.unmount());
   });
 

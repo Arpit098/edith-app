@@ -2,7 +2,7 @@ import { statusDetailsFrom, type StatusDetails } from '../../../core/api';
 import { ev, fakeContext } from '../../../testing/fakes';
 import { initialLive, reduce, type LiveState } from '../model';
 import { DETAILS } from './details';
-import { barSummary, detailsLabel, formatElapsed, formatTokens, formatUptime, mainRun, pollDetails, toolName, turnSince } from '../status';
+import { agentChip, barSummary, contextUsage, detailsLabel, formatAgo, formatElapsed, formatTokens, formatUptime, mainRun, pollDetails, toolName, turnSince } from '../status';
 
 
 const run = (events: Parameters<typeof reduce>[1][], from: LiveState = initialLive) => events.reduce(reduce, from);
@@ -51,6 +51,26 @@ describe('formatting', () => {
     expect([formatElapsed(42), formatElapsed(725), formatElapsed(3723), formatElapsed(-3)]).toEqual(['0:42', '12:05', '1:02:03', '0:00']);
     expect([formatUptime(40), formatUptime(720), formatUptime(18_720), formatUptime(273_600)]).toEqual(['40s', '12m', '5h 12m', '3d 4h']);
     expect([formatTokens(950), formatTokens(320_562), formatTokens(1_250_000), formatTokens(1_000_000)]).toEqual(['950', '321k', '1.25M', '1M']);
+  });
+
+  it('says how long ago in plain words', () => {
+    expect([formatAgo(10), formatAgo(90), formatAgo(180), formatAgo(3600), formatAgo(7500), formatAgo(3 * 86400 + 5)]).toEqual([
+      'just now', '2 min ago', '3 min ago', '1 h ago', '2 h 5 min ago', '3 d ago',
+    ]);
+  });
+
+  it('shows the context against the smallest window that fits it, with how full it is', () => {
+    expect(contextUsage(120_000)).toEqual({ text: '120k of 200k', fraction: 0.6 });
+    expect(contextUsage(320_562)).toMatchObject({ text: '321k of 1M' });
+    expect(contextUsage(1_200_000)).toEqual({ text: '1.2M tokens', fraction: null }); // past every known window: no bar
+  });
+
+  it("gives each coding agent a chip for its state", () => {
+    const [busy, blocked] = statusDetailsFrom(DETAILS).agents;
+    expect(agentChip(busy!)).toEqual({ label: 'Busy', tone: 'busy' });
+    expect(agentChip(blocked!)).toEqual({ label: 'Needs approval', tone: 'warn' });
+    expect(agentChip({ ...busy!, state: 'idle' })).toEqual({ label: 'Idle', tone: 'idle' });
+    expect(agentChip({ ...busy!, state: 'blocked', blocked: 'usage_limit' })).toEqual({ label: 'Usage limit', tone: 'danger' });
   });
 
   it('labels the server state', () => {

@@ -24,7 +24,9 @@ const read = (rel: string) => fs.readFileSync(path.join(SRC, rel), 'utf8');
 const POPUP_TEXT_STYLES: Record<string, string[]> = {
   'shell/NavMenu.tsx': ['itemText'],
   'features/live-session/ComposerMenu.tsx': ['label', 'commandName', 'commandText', 'note'],
-  'features/live-session/StatusPanel.tsx': ['cardDim', 'error', 'sectionTitle', 'label', 'value', 'cardButtonText', 'agentName', 'agentBranch', 'agentState', 'agentLast', 'footer'],
+  'features/live-session/StatusPanel.tsx': [
+    'cardDim', 'error', 'summaryTitle', 'summaryDetail', 'summaryTime', 'sectionTitle', 'label', 'value', 'cardButtonText', 'agentName', 'agentBranch', 'agentState', 'agentLast',
+  ],
 };
 
 /** A style's one-line definition in the file's StyleSheet.create block. */
@@ -91,8 +93,9 @@ describe('popup text carries its own halo', () => {
   it('icons on the popups carry the halo too', () => {
     const menu = read('features/live-session/ComposerMenu.tsx');
     const nav = read('shell/NavMenu.tsx');
-    const icons = [...menu.split('\n'), ...nav.slice(nav.indexOf('<Glass level="panel"')).split('\n')].filter((l) => l.includes('<Icon '));
-    expect(icons.length).toBeGreaterThanOrEqual(4);
+    const status = read('features/live-session/StatusPanel.tsx');
+    const icons = [...menu.split('\n'), ...nav.slice(nav.indexOf('<Glass level="panel"')).split('\n'), ...status.split('\n')].filter((l) => l.includes('<Icon '));
+    expect(icons.length).toBeGreaterThanOrEqual(5);
     for (const l of icons) expect(l).toContain(' halo');
   });
 });

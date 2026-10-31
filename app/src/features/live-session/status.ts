@@ -66,6 +66,43 @@ export function formatTokens(n: number): string {
   return n >= 1000 ? `${Math.round(n / 1000)}k` : String(n);
 }
 
+/** "just now", "3 min ago", "2 h 5 min ago", "3 d ago": how long ago, for the card. */
+export function formatAgo(seconds: number): string {
+  const s = Math.max(0, Math.floor(seconds));
+  if (s < 45) return 'just now';
+  const min = Math.max(1, Math.round(s / 60));
+  if (min < 60) return `${min} min ago`;
+  if (s < 86400) {
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    return m ? `${h} h ${m} min ago` : `${h} h ago`;
+  }
+  return `${Math.floor(s / 86400)} d ago`;
+}
+
+/**
+ * Claude's context window sizes, smallest first. The server sends only the tokens in use
+ * (contracts/status.md), so the window is taken as the smallest one that fits them: 200k normally,
+ * 1M once a session has gone past 200k (only the long-context models get there).
+ */
+export const CONTEXT_WINDOWS = [200_000, 1_000_000] as const;
+
+/** "120k of 200k" and how full (0..1) for the thin bar; only the tokens if they outgrow every window. */
+export function contextUsage(tokens: number): { text: string; fraction: number | null } {
+  const max = CONTEXT_WINDOWS.find((w) => tokens <= w);
+  if (max == null) return { text: `${formatTokens(tokens)} tokens`, fraction: null };
+  return { text: `${formatTokens(tokens)} of ${formatTokens(max)}`, fraction: tokens / max };
+}
+
+export type AgentTone = 'busy' | 'idle' | 'warn' | 'danger';
+
+/** A coding agent's chip: "Busy", "Idle", "Needs approval" or "Usage limit", and its colour. */
+export function agentChip(a: StatusDetails['agents'][number]): { label: string; tone: AgentTone } {
+  if (a.blocked === 'usage_limit') return { label: 'Usage limit', tone: 'danger' };
+  if (a.blocked === 'permission' || a.state === 'blocked') return { label: 'Needs approval', tone: 'warn' };
+  return a.state === 'busy' ? { label: 'Busy', tone: 'busy' } : { label: 'Idle', tone: 'idle' };
+}
+
 /** The state's label as the server describes it, for the open card. */
 export function detailsLabel(e: StatusDetails['edith']): string {
   switch (e.state) {

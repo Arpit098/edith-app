@@ -18,10 +18,16 @@ Presentational components used by several features (buttons, chat bubble, diff v
 - **GrowSheet** (`motion.tsx`): a sheet that grows out of its trigger and shrinks back, unmounted once closed.
 - **The rim is thin** (Arpit, 31 Oct): about a hairline (0.5 dp) and about as bright as the thin
   glass edge, still lit at the top-left and bottom-right, with a 1 dp inner glow.
-- **ThinkingBubble** (`ThinkingBubble.tsx`, geometry in `bubbleShape.ts`): the header's orb in the
-  icon's colours (`bubble` tokens). Its wobbling rim and turning bands are SVG paths computed in
-  worklets and fed as animated props: one UI-thread loop, no React renders per frame. Idle, or with
+- **ThinkingBubble** (`ThinkingBubble.tsx`, geometry in `bubbleShape.ts`): the header's soap bubble
+  in the icon's colours (`bubble` tokens; Arpit, 31 Oct: "it should look like bubble"). A
+  see-through middle with a faint tint that gathers just inside a thin iridescent rim, one crisp
+  crescent glint at the top-left, a tiny one at the bottom-right and a faint reflection arc along the
+  bottom; no inner swirl. While EDITH works only the rim wobbles: an SVG path computed in a worklet
+  and fed as an animated prop, one UI-thread loop, no React renders per frame. Idle, or with
   "Remove animations" on, it's a still frame.
+- **GradientTitle** (`GradientTitle.tsx`): the home header's "E.D.I.T.H" filled with the theme's
+  gradient (`titleGradient`: blue → lavender → cyan) over a soft blue glow, all in react-native-svg
+  (the glow is the same text stroked wide and faint, so it always lines up). Static.
 - **SwipeToReply** (`SwipeToReply.tsx`, maths in `swipe.ts`): drag a row right to reply. A
   PanResponder (no gesture library) claims only clearly sideways drags; the row follows a shared
   value and springs back on the UI thread. No haptic: `Vibration` needs the VIBRATE permission,

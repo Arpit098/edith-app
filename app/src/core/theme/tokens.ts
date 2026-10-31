@@ -22,6 +22,7 @@ export const colors = {
   accentSoft: 'rgba(124, 174, 220, 0.20)',
   ok: '#8BD3A6',
   warn: '#E8C27A',
+  warnSoft: 'rgba(232, 194, 122, 0.20)',
   danger: '#F08A8A',
   dangerSoft: 'rgba(240, 138, 138, 0.18)',
   hairline: 'rgba(255, 255, 255, 0.10)',
