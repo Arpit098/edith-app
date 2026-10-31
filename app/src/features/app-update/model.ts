@@ -25,6 +25,7 @@ export interface AppUpdateState {
   checking: boolean;
   error: string | null; // the last check's problem
   otaReady: boolean; // a newer JS bundle is downloaded; used on the next start
+  otaId: string | null; // that bundle's update id (the banner's key), when known
   phase: Phase;
   received: number;
   total: number;
@@ -42,7 +43,7 @@ export interface UpdateBanner {
 
 /** What the update banner is about: a downloaded code update (for the running bundle), else a newer APK. */
 export function bannerKey(s: AppUpdateState): string | null {
-  if (s.otaReady) return `ota:${s.ota?.updateId ?? 'embedded'}`;
+  if (s.otaReady) return `ota:${s.otaId ?? s.ota?.updateId ?? 'embedded'}`;
   if (apkAvailable(s)) return `apk:${s.latest!.versionCode}`;
   return null;
 }
@@ -137,6 +138,7 @@ export function createAppUpdateModel(deps: AppUpdateDeps): AppUpdateModel {
     checking: false,
     error: null,
     otaReady: false,
+    otaId: null,
     phase: 'idle',
     received: 0,
     total: 0,
@@ -153,11 +155,24 @@ export function createAppUpdateModel(deps: AppUpdateDeps): AppUpdateModel {
   }
   let notifiedFor = 0; // the versionCode we already told Arpit about
 
+  let recheck = false; // edith announced an update during a check: one more check after it
+
   async function check(manual: boolean) {
     if (store.get().checking) return;
+    try {
+      await checkOnce(manual);
+    } finally {
+      if (recheck) {
+        recheck = false;
+        void check(false);
+      }
+    }
+  }
+
+  async function checkOnce(manual: boolean) {
     store.set((s) => ({ ...s, checking: true, error: null }));
     const problems: string[] = [];
-    const [latest, otaReady] = await Promise.all([
+    const [latest, otaId] = await Promise.all([
       api.appLatest().catch((e: unknown) => {
         problems.push(`App: ${message(e)}`);
         return store.get().latest; // keep what we knew
@@ -167,14 +182,15 @@ export function createAppUpdateModel(deps: AppUpdateDeps): AppUpdateModel {
             // The first launch after a new token still sends the placeholder header (contract §1).
             const text = /401|unauthori/i.test(message(e)) ? 'not signed in yet; works after the next app start' : message(e);
             problems.push(`Code update: ${text}`);
-            return false;
+            return null;
           })
-        : Promise.resolve(false),
+        : Promise.resolve(null),
     ]);
     store.set((s) => ({
       ...s,
       latest,
-      otaReady: s.otaReady || otaReady,
+      otaReady: s.otaReady || otaId !== null,
+      otaId: otaId ?? s.otaId,
       checking: false,
       checkedAt: now(),
       error: problems.length ? problems.join(' · ') : null,
@@ -205,7 +221,14 @@ export function createAppUpdateModel(deps: AppUpdateDeps): AppUpdateModel {
 
   const offs = [
     // edith announced a new update (contracts/app-updates.md §7): fetch it now, so the banner can offer it.
-    bus.on('app.update_available', () => void check(false), 'app-update'),
+    bus.on(
+      'app.update_available',
+      () => {
+        if (store.get().checking) recheck = true; // this check may have asked edith before the update came
+        else void check(false);
+      },
+      'app-update',
+    ),
     ...(deps.visibility
       ? [
           deps.visibility.onChange((active) => {
@@ -279,9 +302,9 @@ export function createAppUpdateModel(deps: AppUpdateDeps): AppUpdateModel {
       if (!ota || store.get().restarting) return;
       store.set((s) => ({ ...s, restarting: true }));
       try {
-        const ready = store.get().otaReady || (await ota.fetchUpdate());
-        if (ready) {
-          store.set((s) => ({ ...s, otaReady: true }));
+        const id = store.get().otaReady ? store.get().otaId : await ota.fetchUpdate();
+        if (store.get().otaReady || id !== null) {
+          store.set((s) => ({ ...s, otaReady: true, otaId: id ?? s.otaId }));
           markSeen();
           await ota.reload();
           return;

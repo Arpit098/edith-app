@@ -51,7 +51,9 @@ class FakeInstaller implements AppInstaller {
 
 class FakeOta implements OtaUpdates {
   headers: Record<string, string> | null = null;
-  next: boolean | Error = false;
+  next: string | null | Error = null; // the update id fetchUpdate downloads
+  gate: Promise<void> | null = null; // holds fetchUpdate (a check in flight)
+  fetches = 0;
   reloads = 0;
   enabled = true;
   info = (): OtaInfo => ({ enabled: this.enabled, updateId: 'u1', createdAt: 1_800_000_000, embedded: false, rolledBack: false, runtimeVersion: 'rv1' });
@@ -59,6 +61,8 @@ class FakeOta implements OtaUpdates {
     this.headers = h;
   }
   async fetchUpdate() {
+    this.fetches++;
+    if (this.gate) await this.gate;
     if (this.next instanceof Error) throw this.next;
     return this.next;
   }
@@ -143,7 +147,7 @@ describe('app update model', () => {
 
   it('tracks OTA bundles, and explains a 401 from the placeholder header', async () => {
     const { m, ota } = setup();
-    ota.next = true;
+    ota.next = 'u2';
     await m.check();
     expect(m.store.get().otaReady).toBe(true);
     await m.applyOta();
@@ -261,22 +265,22 @@ describe('app update model', () => {
     let release: (v: string | null) => void = () => {};
     const data = Object.assign(new MemoryStorage(), { get: () => new Promise<string | null>((r) => (release = r)) });
     const { m, ota } = setup(LATEST, data);
-    ota.next = true;
+    ota.next = 'u2';
     await m.check();
     expect(updateBanner(m.store.get())).toBeNull(); // `seen` not read yet: never flash a seen banner
     release('apk:1043'); // seen before, but a code update came since
     await flush();
-    expect(updateBanner(m.store.get())).toEqual({ key: 'ota:u1', text: 'Update ready · Restart', action: 'restart' });
+    expect(updateBanner(m.store.get())).toEqual({ key: 'ota:u2', text: 'Update ready · Restart', action: 'restart' });
     m.store.set((s) => ({ ...s, phase: 'downloading' }));
     expect(updateBanner(m.store.get())).toBeNull();
   });
 
   it('restart to update: downloads the code update if needed, then reloads', async () => {
     const { m, ota, notes } = setup();
-    ota.next = true;
+    ota.next = 'u2';
     await m.restartToUpdate();
     expect(ota.reloads).toBe(1);
-    expect(m.store.get()).toMatchObject({ otaReady: true, restarting: false, seen: 'ota:u1' });
+    expect(m.store.get()).toMatchObject({ otaReady: true, otaId: 'u2', restarting: false, seen: 'ota:u2' });
 
     const none = setup();
     await none.m.restartToUpdate();
@@ -315,5 +319,33 @@ describe('app update model', () => {
     m.opened();
     await flush();
     expect(ctx.transport.calls.filter((c) => c.path === '/v1/app/latest')).toHaveLength(1);
+  });
+
+  it('keys the banner on the downloaded bundle, so a later one shows again after a dismiss', async () => {
+    const { m, ota } = setup();
+    ota.next = 'u2';
+    await m.check();
+    m.markSeen();
+    expect(updateBanner(m.store.get())).toBeNull();
+    ota.next = 'u3'; // another code update before the restart
+    await m.check();
+    expect(updateBanner(m.store.get())).toEqual({ key: 'ota:u3', text: 'Update ready · Restart', action: 'restart' });
+  });
+
+  it('an announcement during a check runs one more check after it', async () => {
+    const { ctx, m, ota } = setup();
+    let open: () => void = () => {};
+    ota.gate = new Promise((r) => (open = r));
+    const first = m.check();
+    await flush();
+    ctx.bus.publish(ev('app.update_available', { kind: 'ota', id: 'u2', summary: 'New: x' }));
+    ctx.bus.publish(ev('app.update_available', { kind: 'ota', id: 'u2', summary: 'New: x' }));
+    ota.next = 'u2';
+    ota.gate = null;
+    open();
+    await first;
+    for (let i = 0; i < 4; i++) await flush();
+    expect(ota.fetches).toBe(2); // the first check, then exactly one more
+    expect(m.store.get()).toMatchObject({ checking: false, otaReady: true, otaId: 'u2' });
   });
 });

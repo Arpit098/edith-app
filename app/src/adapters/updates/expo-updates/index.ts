@@ -18,11 +18,14 @@ export function createExpoOtaUpdates(): OtaUpdates {
       if (Updates.isEnabled) Updates.setUpdateRequestHeadersOverride(headers);
     },
     async fetchUpdate() {
-      if (!Updates.isEnabled) return false;
+      if (!Updates.isEnabled) return null;
       const check = await Updates.checkForUpdateAsync();
-      if (!check.isAvailable) return false;
+      if (!check.isAvailable) return null;
       const fetched = await Updates.fetchUpdateAsync();
-      return fetched.isNew;
+      if (!fetched.isNew) return null;
+      // The downloaded bundle's id keys the update banner, so a later bundle shows it again.
+      const id = (fetched.manifest as { id?: unknown } | undefined)?.id;
+      return typeof id === 'string' && id ? id : 'downloaded';
     },
     reload: () => Updates.reloadAsync(),
   };

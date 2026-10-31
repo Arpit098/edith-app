@@ -248,16 +248,23 @@ After each collect pass the server announces a newly offerable update once on th
   string; `versionName` and `versionCode` are set.
 - **ota**: the newest update for the newest offerable APK's `runtimeVersion` has an id not announced before.
   `id` is the update id.
-- A new APK whose `runtimeVersion` equals the previous APK's (only JS changed) usually comes with an OTA
-  for that runtime: then only the `ota` is announced, since nothing needs installing. A new APK with new
-  native code (or no OTA beside it) is announced as `apk`; its own OTA is not announced too.
+- A new APK whose `runtimeVersion` equals the previous APK's (only JS changed) is decided by its run's
+  `edith-ota` artifact. Not collected yet (e.g. a failed download, retried next pass): nothing is announced
+  or recorded until it is. Collected: only the `ota` is announced (nothing, if that OTA already was), since
+  nothing needs installing, and the APK is recorded. Missing or rejected: the `apk` is announced.
+- A new APK with new native code is announced as `apk`; its own OTA is recorded, not announced too.
+- Announcing runs after every pass, also one whose GitHub part failed, so a local OTA is announced while
+  GitHub is down. An announcing error is logged and never fails the pass.
 - `summary`: the first 3 of the build's release notes as `New: …` / `Fix: …` / `Change: …`, joined with
   ` · `; without notes, `EDITH <versionName> (build <versionCode>) is ready to install` (apk) or
   `A newer version of the app's code is ready` (ota).
 - What was announced is kept in `index.json` (`announced: {apk: <versionCode>, ota: [<ids>, ≤ 50]}`) and
   written before the event is published, so an update is announced at most once, also across restarts.
-  A store with no `announced` record (the first start with this feature, or an index rebuilt from
-  scratch) records what it holds as the baseline and announces nothing.
+  A store with no `announced` record, or a malformed one (the first start with this feature, an index
+  rebuilt from scratch), records what it holds as the baseline and announces nothing. Nothing is recorded
+  while no APK is offered, so **the first offerable APK ever (and its OTA) is recorded quietly**, never announced.
 
 The app, on that event or on its own check, shows a small "Update ready · Restart" banner for an update
-it hasn't shown before (remembered on the phone), and `edith://settings/updates` opens Settings → Updates.
+it hasn't shown before (remembered on the phone, keyed on the downloaded bundle's update id or the APK's
+versionCode), and `edith://settings/updates` opens Settings → Updates. An announcement that comes in
+during a check runs one more check after it.

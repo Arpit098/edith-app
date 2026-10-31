@@ -214,8 +214,8 @@ export interface OtaUpdates {
   info(): OtaInfo;
   /** Send Arpit's token on update requests (only header names embedded at build time can be set). */
   setRequestHeaders(headers: Record<string, string>): void;
-  /** Check and, if there's a newer bundle, download it. True when one is ready for the next start. */
-  fetchUpdate(): Promise<boolean>;
+  /** Check and, if there's a newer bundle, download it. Its update id when one is ready for the next start, else null. */
+  fetchUpdate(): Promise<string | null>;
   /** Restart the JS app now on the downloaded bundle. */
   reload(): Promise<void>;
 }

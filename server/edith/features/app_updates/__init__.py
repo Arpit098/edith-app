@@ -153,6 +153,12 @@ def setup(ctx: Context) -> None:
     def collect():
         s = store()
         import_local(s)  # first: it needs no GitHub, so a gh failure doesn't hold it up
+        try:
+            return collect_github(s)
+        finally:  # also when GitHub fails: a local OTA is still announced
+            safe_announce(s)
+
+    def collect_github(s):
         runs = gh.runs()
         if runs:
             s.forget_runs_before(min(r["id"] for r in runs))
@@ -175,46 +181,72 @@ def setup(ctx: Context) -> None:
                 if outcome == "collected":
                     log.info("collected run %s %s", run["id"], kind)
         s.prune()
-        announce(s)
         if failed:
             raise GhError("; ".join(failed)[:500])  # the job runner retries with backoff
         return interval
 
+    def safe_announce(s):
+        """announce(), whose failure is logged and never masks the pass's own result or error."""
+        try:
+            announce(s)
+        except Exception:
+            log.exception("announcing app updates failed")
+
+    def announced_record(s):
+        """The index's `announced` as {apk: int, ota: [str]}, or None when absent or malformed (re-baselined)."""
+        known = s.index.get("announced")
+        if not isinstance(known, dict) or not isinstance(known.get("ota"), list):
+            return None
+        apk = known.get("apk")
+        if isinstance(apk, bool) or not isinstance(apk, int) or not all(isinstance(i, str) for i in known["ota"]):
+            return None
+        return {"apk": apk, "ota": list(known["ota"])}
+
     def announce(s):
-        """Publish app.update_available for what this pass made newly offerable (contracts/app-updates.md §7).
+        """Publish app.update_available for what is newly offerable (contracts/app-updates.md §7).
 
         - APK: the newest offerable versionCode, when it is above the last one announced.
         - OTA: the newest update for the newest APK's runtimeVersion (the code an up-to-date app runs),
           when its id wasn't announced.
-        - A new APK whose runtimeVersion is the previous one's (only JS changed) comes with an OTA for
-          the phone: then only the OTA is announced, as nothing needs installing. Either way both are
-          recorded, so each update is announced at most once.
+        - A new APK whose runtimeVersion is the previous one's (only JS changed): its run's OTA decides.
+          Not collected yet (a later pass brings it): nothing is announced or recorded. Collected: only
+          the OTA is announced (nothing if it already was), as nothing needs installing. Missing or
+          rejected: the APK is announced. Either way both are recorded, so each update goes at most once.
         The record is written before publishing: a crash in between loses one push, never repeats it."""
         apks = [a for a in s.index["apks"].values() if offerable(a)]
         if not apks:
             return
         newest = max(apks, key=lambda a: a["versionCode"])
         ota = s.newest_update(newest["runtimeVersion"], "main")
-        known = s.index.get("announced")
-        now = {"apk": newest["versionCode"], "ota": [ota["id"]] if ota else []}
-        if known is None:  # never announced from this store: what is here is the baseline, not news
-            s.set_announced(now)
+        known = announced_record(s)
+        if known is None:  # never announced (or a broken record): what is here is the baseline, not news
+            s.set_announced({"apk": newest["versionCode"], "ota": [ota["id"]] if ota else []})
             return
-        seen_ota = list(known.get("ota") or [])
-        new_apk = newest["versionCode"] > int(known.get("apk") or 0)
+        seen_ota = known["ota"]
+        new_apk = newest["versionCode"] > known["apk"]
         new_ota = ota is not None and ota["id"] not in seen_ota
         if not new_apk and not new_ota:
             return
-        previous = [a for a in apks if a["versionCode"] <= int(known.get("apk") or 0)]
+        previous = [a for a in apks if a["versionCode"] <= known["apk"]]
         native_changed = not previous or max(previous, key=lambda a: a["versionCode"])["runtimeVersion"] != newest["runtimeVersion"]
-        if new_apk and (native_changed or not new_ota):
+        data = None
+        if new_apk and not native_changed:
+            run_ota = s.index["runs"].get(str(newest.get("run_id")), {}).get("ota")
+            if run_ota is None:
+                return  # its OTA isn't collected yet: decide once it is (or is found missing)
+            if run_ota == "collected":
+                data = announcement("ota", ota, newest) if new_ota else None
+            else:
+                data = announcement("apk", newest, newest)
+        elif new_apk:
             data = announcement("apk", newest, newest)
         else:
             data = announcement("ota", ota, newest)
         if new_ota:
             seen_ota.append(ota["id"])
-        s.set_announced({"apk": max(newest["versionCode"], int(known.get("apk") or 0)),
-                         "ota": seen_ota[-ANNOUNCED_OTA_KEEP:]})
+        s.set_announced({"apk": max(newest["versionCode"], known["apk"]), "ota": seen_ota[-ANNOUNCED_OTA_KEEP:]})
+        if data is None:
+            return
         log.info("announcing %s update %s", data["kind"], data["id"])
         ctx.bus.publish(Event("app.update_available", data))
 

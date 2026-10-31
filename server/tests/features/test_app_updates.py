@@ -226,6 +226,64 @@ class AnnounceTest(unittest.TestCase):
         self.assertEqual([(a["kind"], a["id"]) for a in self.w.announced], [("ota", "u2"), ("apk", "1103")])
         self.assertTrue(self.w.announced[1]["summary"].startswith("EDITH 0.1103 (build 1103)"))
 
+    def test_a_js_only_run_split_over_two_passes_is_announced_once(self):
+        # The OTA comes a pass after the APK: the APK waits for it, then only the OTA is announced.
+        self.w.gh.add_run(102, apk=apk_artifact(102, 1102), ota=ota_artifact(102, "u2", created=1793280100))
+        self.w.gh.fail.add((102, "edith-ota"))
+        with self.assertRaises(GhError):
+            self.w.collect()
+        self.assertEqual(self.w.announced, [])
+        self.w.gh.fail.clear()
+        self.w.collect()
+        self.w.collect()
+        self.assertEqual([(a["kind"], a["id"]) for a in self.w.announced], [("ota", "u2")])
+        # The APK comes a pass after the OTA: the OTA goes, then the APK is only recorded.
+        self.w.gh.add_run(103, apk=apk_artifact(103, 1103), ota=ota_artifact(103, "u3", created=1793280200))
+        self.w.gh.fail.add((103, "edith-apk"))
+        with self.assertRaises(GhError):
+            self.w.collect()
+        self.w.gh.fail.clear()
+        self.w.collect()
+        self.w.restart()
+        self.w.collect()
+        self.assertEqual([(a["kind"], a["id"]) for a in self.w.announced], [("ota", "u2"), ("ota", "u3")])
+        self.assertEqual(json.loads((self.w.root / "index.json").read_text())["announced"]["apk"], 1103)
+
+    def test_a_local_ota_is_announced_while_github_fails(self):
+        folder = self.w.root / "inbox" / "u2"
+        for rel, data in ota_artifact(0, "u2", created=1793280100).items():
+            path = folder / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+        with mock.patch.object(self.w.gh, "runs", side_effect=GhError("gh down")):
+            with self.assertRaises(GhError):  # the pass still fails, so the job backs off as before
+                self.w.collect()
+        self.assertEqual([a["id"] for a in self.w.announced], ["u2"])
+
+    def test_an_announce_error_never_masks_the_pass(self):
+        self.w.gh.add_run(102, ota=ota_artifact(102, "u2", created=1793280100))
+        with mock.patch.object(app_updates, "announcement", side_effect=KeyError("boom")), \
+                self.assertLogs("edith.feature.app_updates", "ERROR"):
+            self.assertEqual(self.w.collect(), 120)  # no backoff for the collect job
+
+    def test_a_malformed_record_is_rebaselined_quietly(self):
+        index = self.w.root / "index.json"
+        for bad in ("junk", {"apk": "1101", "ota": []}, {"apk": 1101, "ota": "u1"}, {"apk": True, "ota": []}):
+            data = json.loads(index.read_text())
+            data["announced"] = bad
+            index.write_text(json.dumps(data))
+            self.w.restart()
+            self.w.collect()
+            self.assertEqual(self.w.announced, [])
+            self.assertEqual(json.loads(index.read_text())["announced"], {"apk": 1101, "ota": ["u1"]})
+
+    def test_the_first_apk_ever_is_recorded_quietly(self):
+        w = World(self)
+        w.collect()  # nothing collected yet: nothing recorded
+        w.gh.add_run(101, apk=apk_artifact(101, 1101), ota=ota_artifact(101, "u1"))
+        w.collect()
+        self.assertEqual(w.announced, [])
+
     def test_unoffered_apks_are_never_announced(self):
         self.w.gh.add_run(102, apk=apk_artifact(102, 1102, signing="debug"))
         self.w.gh.add_run(103, apk=apk_artifact(103, 1103, cert="AA:BB"))

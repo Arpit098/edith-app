@@ -64,7 +64,7 @@ describe('settings summaries', () => {
   });
 
   it('Updates', () => {
-    const base: AppUpdateState = { installed: { versionName: '1.0', versionCode: 1090 }, ota: null, latest: null, checkedAt: null, checking: false, error: null, otaReady: false, phase: 'idle', received: 0, total: 0, message: null, seen: null, seenLoaded: true, restarting: false };
+    const base: AppUpdateState = { installed: { versionName: '1.0', versionCode: 1090 }, ota: null, latest: null, checkedAt: null, checking: false, error: null, otaReady: false, otaId: null, phase: 'idle', received: 0, total: 0, message: null, seen: null, seenLoaded: true, restarting: false };
     const u = (patch: Partial<AppUpdateState>) => updateSummary({ ...base, ...patch });
     expect(u({})).toBe('Build 1090');
     expect(u({ checkedAt: 1 })).toBe('Up to date · build 1090');
