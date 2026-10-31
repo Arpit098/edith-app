@@ -5,6 +5,8 @@
     updates/<id>/          manifest.json, manifest.sig, update.json (served verbatim)
     assets/<sha256 hex>    every update's files, shared by content
     tmp/                   downloads in progress (emptied at start)
+    inbox/<id>/            OTA bundles built on edith (local_build.py), in the edith-ota layout; the
+                           job imports them with the same checks and removes them
 
 Every file is checked (size and SHA-256, read in chunks) before it is moved into place with
 os.replace, so a reader never sees a partial or unverified file. Only the job thread writes; route
@@ -71,7 +73,8 @@ class Store:
         self.root = root
         self.apk_dir, self.update_dir = os.path.join(root, "apks"), os.path.join(root, "updates")
         self.asset_dir, self.tmp_dir = os.path.join(root, "assets"), os.path.join(root, "tmp")
-        for d in (self.apk_dir, self.update_dir, self.asset_dir):
+        self.inbox_dir = os.path.join(root, "inbox")
+        for d in (self.apk_dir, self.update_dir, self.asset_dir, self.inbox_dir):
             os.makedirs(d, exist_ok=True)
         shutil.rmtree(self.tmp_dir, ignore_errors=True)  # partial downloads from a previous run
         os.makedirs(self.tmp_dir)
@@ -105,6 +108,31 @@ class Store:
 
     def asset_path(self, sha):
         return os.path.join(self.asset_dir, sha)
+
+    def inbox(self):
+        """Local builds ready to import, oldest first. A build is copied in under a dot name and
+        renamed when complete, so a dot entry is still being written."""
+        with os.scandir(self.inbox_dir) as it:
+            ready = [e for e in it if not e.name.startswith(".") and e.is_dir(follow_symlinks=False)]
+        return [e.path for e in sorted(ready, key=lambda e: e.stat().st_mtime)]
+
+    def set_aside(self, folder):
+        """A rejected inbox build -> .rejected-<name>, dated now (sweep_rejected removes it later)."""
+        aside = os.path.join(self.inbox_dir, f".rejected-{os.path.basename(folder)}")
+        shutil.rmtree(aside, ignore_errors=True)
+        try:
+            os.replace(folder, aside)
+            os.utime(aside)
+        except OSError:
+            shutil.rmtree(folder, ignore_errors=True)
+
+    def sweep_rejected(self, max_age, now=None):
+        """Remove the rejected inbox builds set aside more than max_age seconds ago."""
+        cutoff = (now or time.time()) - max_age
+        with os.scandir(self.inbox_dir) as it:
+            old = [e.path for e in it if e.name.startswith(".rejected-") and e.stat(follow_symlinks=False).st_mtime < cutoff]
+        for path in old:
+            shutil.rmtree(path, ignore_errors=True)
 
     def update_file(self, update_id, name):
         return os.path.join(self.update_dir, update_id, name)
@@ -175,8 +203,9 @@ class Store:
         self._commit(lambda ix: ix["apks"].__setitem__(str(version_code), record))
         return record
 
-    def add_update(self, run_id, folder):
-        """Check an extracted edith-ota artifact and put it in place; -> its record. Raises Rejected."""
+    def add_update(self, run_id, folder, source="ci"):
+        """Check an edith-ota artifact (extracted from CI, or built on edith: source "local", run_id 0)
+        and put it in place; -> its record. Raises Rejected."""
         meta = read_json(os.path.join(folder, "update.json"))
         manifest_path, sig_path = os.path.join(folder, "manifest.json"), os.path.join(folder, "manifest.sig")
         manifest = read_json(manifest_path)
@@ -184,7 +213,7 @@ class Store:
             update_id, files = str(meta["id"]), list(meta["files"])
             record = {"id": update_id, "createdAt": float(meta["createdAt"]), "runtimeVersion": str(meta["runtimeVersion"]),
                       "channel": str(meta["channel"]), "platform": str(meta["platform"]), "sha": meta.get("sha"),
-                      "run_id": int(run_id), "files": []}
+                      "run_id": int(run_id), "source": source, "files": []}
         except (KeyError, TypeError, ValueError) as e:
             raise Rejected(f"update.json: bad or missing field ({e})")
         if (manifest.get("id"), manifest.get("runtimeVersion")) != (update_id, record["runtimeVersion"]):

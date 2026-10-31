@@ -4,7 +4,9 @@
   (edith-apk, edith-ota; one at a time), verifies every file's SHA-256 and keeps them under
   <state_dir>/app-updates (store.py). It runs every `interval` seconds (2 min); a failed pass is
   retried by the job runner with backoff. A pass whose run list hasn't changed makes that one gh call
-  and nothing else: no download, no write.
+  and nothing else: no download, no write. Each pass first imports the OTA bundles built on edith
+  itself (local_build.py) from the store's inbox; the newest update per runtimeVersion is served,
+  from CI or local.
 - Routes: GET /v1/updates/manifest and /v1/updates/assets/{sha256} (Expo Updates protocol v1),
   GET /v1/app/latest and /v1/app/apk/{versionCode} (Range resume). Files are streamed from disk.
 - Only release-signed APKs whose certificate matches the pinned `cert_sha256` are offered.
@@ -12,6 +14,7 @@
 Config [features.app_updates]: cert_sha256, repo, workflow, branch, interval, gh.
 """
 import logging
+import os
 import re
 import secrets
 import shutil
@@ -30,6 +33,8 @@ EXPO_HEADERS = {"expo-current-update-id": "current_update_id", "expo-embedded-up
 OFFERED = ("versionName", "versionCode", "sha", "built_at", "runtimeVersion", "size", "sha256", "cert_sha256")
 NOTE_LISTS = {"new": 20, "fixes": 20, "changes": 20, "details": 30}  # list -> most items kept
 PLAIN = (("new", "New"), ("fixes", "Fix"), ("changes", "Change"))
+ARTIFACT_FILES = ("update.json", "manifest.json", "manifest.sig")  # an edith-ota artifact's own files
+REJECTED_KEEP = 7 * 86400  # seconds a rejected local build stays in the inbox for a look
 
 
 def release_notes(value):
@@ -97,8 +102,31 @@ def setup(ctx: Context) -> None:
         finally:
             shutil.rmtree(folder, ignore_errors=True)
 
+    def import_local(s):
+        """OTA bundles built on edith (local_build.py) waiting in the inbox: checked like a CI artifact."""
+        s.sweep_rejected(REJECTED_KEEP)
+        for folder in s.inbox():
+            name = os.path.basename(folder)
+            try:
+                missing = [f for f in ARTIFACT_FILES if not os.path.isfile(os.path.join(folder, f))]
+                if missing:  # a complete build is renamed in, so a missing file never turns up later
+                    raise Rejected(f"no {', '.join(missing)}")
+                record = s.add_update(0, folder, source="local")
+                log.info("imported local OTA update %s (%s)", record["id"], (record["sha"] or "")[:8])
+            except (Rejected, ValueError) as e:  # ValueError: a malformed JSON file
+                # Kept aside under a dot name (never imported or retried) for a look at what was wrong;
+                # removed after REJECTED_KEEP.
+                log.warning("local OTA build %s rejected: %s", name, e)
+                s.set_aside(folder)
+                continue
+            except OSError as e:  # left in the inbox: the next pass tries again
+                log.warning("local OTA build %s not imported yet: %s", name, e)
+                continue
+            shutil.rmtree(folder, ignore_errors=True)
+
     def collect():
         s = store()
+        import_local(s)  # first: it needs no GitHub, so a gh failure doesn't hold it up
         runs = gh.runs()
         if runs:
             s.forget_runs_before(min(r["id"] for r in runs))

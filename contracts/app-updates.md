@@ -115,6 +115,42 @@ dist/…               the `npx expo export --platform android` output (bundle, 
   `update.json` `files[].sha256`. `key` is the asset's MD5 (the name `expo export` gives it, which is how
   the bundle refers to it).
 
+### Local builds (OTA only, built on edith without CI)
+
+`python3 -m edith.features.app_updates.local_build [--ref origin/main]` (in `server/`) makes the same
+`edith-ota` artifact on edith, for JS-only changes when CI can't run. APKs still come only from CI.
+
+- From a clean checkout of the ref in its own clone (`<state_dir>/ota-build/src`): `npm ci --ignore-scripts`
+  (skipped while the lockfile and Node are unchanged), the runtimeVersion resolved as CI does (§4),
+  `expo export`, then `scripts/ota.js`. The release notes cover the PRs merged since the newest build the
+  server holds for that runtimeVersion.
+- The steps that run npm packages' code each run as a transient `systemd-run --user` unit, with a minimal
+  environment (`env -i`). Nothing they leave running survives the step, and none of our tokens or agent
+  sockets reach them. Only `ota.js` gets the key path.
+  - This is not a filesystem sandbox: edith blocks unprivileged user namespaces, so `ProtectHome=` can't apply.
+- The key is a file, by default `~/.config/edith-signing/ota/private-key.pem`. It must be the owner's and
+  mode 600, or the build refuses. Only `ota.js` reads it, which also checks it against
+  `app/certs/updates-certificate.pem`.
+- It refuses when the runtimeVersion matches no APK the server offers: the native side changed, so a new APK
+  is needed. It also refuses when that commit is already the newest bundle for the runtimeVersion.
+- It also refuses unless the commit contains the newest build the server holds for the runtimeVersion. That
+  is the newest bundle, or the APK's commit when there is no bundle yet (`git merge-base --is-ancestor`).
+  The newest bundle is served, so building an older ref would roll the app back.
+- The artifact goes into `<state_dir>/app-updates/inbox/<id>/`: it is copied in under a dot name, then renamed.
+  The collect job imports it before its GitHub pass, with the same checks as a CI artifact, and the record
+  gets `"source": "local"` and `run_id` 0. CI records have `"source": "ci"`. The newest update for a
+  runtimeVersion is served, whichever built it.
+- An inbox folder that fails a check, has malformed JSON or lacks `update.json`, `manifest.json` or
+  `manifest.sig` is renamed to `.rejected-<id>`. It is never retried, and it never stops CI artifacts from
+  being collected. Rejected folders are deleted after 7 days.
+- Just before copying into the inbox, the build reads `index.json` again and repeats its checks, so a CI bundle
+  imported during the build can't be rolled back.
+- Hermes: npm's `hermesc` is x86-64 only, so on edith (ARM64) the build needs `--hermes-dir` (a `hermesc` built
+  from the same Hermes release) or `--no-bytecode`. With `--no-bytecode`, the bundle is plain JS, which Hermes
+  also runs but starts a little slower.
+  - **`--no-bytecode`: verify on a phone before relying on it.** CI never ships such a bundle, so check that the
+    first one installs, starts and works on a phone before treating that path as routine.
+
 ## 3. Server routes
 
 ### OTA (Expo Updates protocol v1)
