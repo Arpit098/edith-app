@@ -18,13 +18,15 @@ Presentational components used by several features (buttons, chat bubble, diff v
 - **GrowSheet** (`motion.tsx`): a sheet that grows out of its trigger and shrinks back, unmounted once closed.
 - **The rim is thin** (Arpit, 31 Oct): about a hairline (0.5 dp) and about as bright as the thin
   glass edge, still lit at the top-left and bottom-right, with a 1 dp inner glow.
-- **ThinkingBubble** (`ThinkingBubble.tsx`, geometry in `bubbleShape.ts`): the header's soap bubble
-  in the icon's colours (`bubble` tokens; Arpit, 31 Oct: "it should look like bubble"). A
-  see-through middle with a faint tint that gathers just inside a thin iridescent rim, one crisp
-  crescent glint at the top-left, a tiny one at the bottom-right and a faint reflection arc along the
-  bottom; no inner swirl. While EDITH works only the rim wobbles: an SVG path computed in a worklet
-  and fed as an animated prop, one UI-thread loop, no React renders per frame. Idle, or with
-  "Remove animations" on, it's a still frame.
+- **ThinkingBubble** (`ThinkingBubble.tsx`, motion in `orbShape.ts`): the header's thinking orb, a
+  Siri-style orb in the icon's colours (`orb` tokens; Arpit, 31 Oct: "like the new Siri bubble, which
+  is not transparent from inside"). An opaque sphere (deep indigo edge, the logo's blue middle) filled
+  with soft colour blobs (violet, blue, lavender, icy cyan; radial gradients fading out, since SVG blur
+  isn't dependable on Android) and three ribbons of light, under a shaded edge, a glossy highlight at
+  the top-left, a soft-lit rim and a gentle outer glow. While EDITH works the blobs drift, the ribbons
+  swirl and fold, and the glow and rim breathe: animated props computed in worklets from one phase,
+  one UI-thread loop, no React renders per frame. Idle, or with "Remove animations" on, it's a still
+  frame of the same orb.
 - **SwipeToReply** (`SwipeToReply.tsx`, maths in `swipe.ts`): drag a row right to reply. A
   PanResponder (no gesture library) claims only clearly sideways drags; the row follows a shared
   value and springs back on the UI thread. No haptic: `Vibration` needs the VIBRATE permission,
