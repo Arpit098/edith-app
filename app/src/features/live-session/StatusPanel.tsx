@@ -8,7 +8,7 @@
 // Agents and Server, each with an icon, in aligned label/value rows that wrap rather than cut off.
 // Rows with nothing to say (zero queued, no approvals) are left out.
 
-import { memo, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { memo, useEffect, useState, type ReactNode } from 'react';
 import { BackHandler, Pressable, ScrollView, StyleSheet, Text, View, type StyleProp, type TextStyle } from 'react-native';
 
 import type { StatusDetails } from '../../core/api';
@@ -20,8 +20,8 @@ import { Glass } from '../../ui/Glass';
 import { Icon } from '../../ui/Icon';
 import { GrowSheet, Squish } from '../../ui/motion';
 import { ThinkingBubble } from '../../ui/ThinkingBubble';
-import type { LiveModel } from './model';
-import { agentChip, barSummary, contextUsage, formatAgo, formatElapsed, formatUptime, mainRun, pollDetails, turnSince, type AgentTone, type BarSummary } from './status';
+import type { LiveModel, LiveState } from './model';
+import { agentChip, barSummary, contextUsage, formatAgo, formatElapsed, formatUptime, mainRun, pollDetails, type AgentTone, type BarSummary } from './status';
 
 const REFRESH_MS = 10_000;
 const BUBBLE = 22;
@@ -47,13 +47,26 @@ export interface StatusProps {
   open: Store<boolean>;
 }
 
-/** When the running turn began, on the phone's clock (see turnSince). */
-function useTurnSince(model: LiveModel, working: boolean): number {
-  const run = useStore(model.store, mainRun, shallowEqual);
-  // The moment work began here (a new turn, or EDITH going busy): the fallback before any event
-  // has carried the server's elapsed time.
-  const startedHere = useMemo(() => Date.now() / 1000, [working, run.ref]);
-  return useMemo(() => turnSince(run.elapsed, Date.now() / 1000, startedHere), [run.elapsed, startedHere]);
+const selectTurnStart = (s: LiveState) => s.turnStart?.at ?? null;
+const selectMainRef = (s: LiveState) => mainRun(s).ref;
+
+/**
+ * When the running turn began, on the phone's clock: the one start the live store keeps
+ * (status.ts trackTurnStart), so the chip and the remounting card agree. Now if none is set yet.
+ */
+function useTurnSince(model: LiveModel): number {
+  const at = useStore(model.store, selectTurnStart);
+  return at ?? Date.now() / 1000;
+}
+
+/** The phone's clock in seconds, ticking every `everyMs` while the caller is mounted. */
+function useNow(everyMs: number): number {
+  const [now, setNow] = useState(() => Date.now() / 1000);
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now() / 1000), everyMs);
+    return () => clearInterval(id);
+  }, [everyMs]);
+  return now;
 }
 
 /** The header chip: `● bubble 0:42`. The bubble moves only while EDITH thinks or runs a tool. */
@@ -62,7 +75,7 @@ export const StatusChip = memo(function StatusChip({ model, connection, open, ba
   const link = useStore(connection.store, selectLink, shallowEqual);
   const isOpen = useStore(open, selectOpen);
   const working = bar.tone !== 'idle';
-  const since = useTurnSince(model, working);
+  const since = useTurnSince(model);
 
   const label = `${describeLink(link)}. EDITH: ${bar.label}${bar.counts ? `, ${bar.counts}` : ''}. ${isOpen ? 'Hide' : 'Show'} details`;
   return (
@@ -84,11 +97,7 @@ export const StatusChip = memo(function StatusChip({ model, connection, open, ba
 
 /** "0:42", ticking once a second; mounted only while EDITH works. */
 function Elapsed({ since, style }: { since: number; style: StyleProp<TextStyle> }) {
-  const [now, setNow] = useState(() => Date.now() / 1000);
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now() / 1000), 1000);
-    return () => clearInterval(id);
-  }, []);
+  const now = useNow(1000);
   return <Text style={style}>{formatElapsed(now - since)}</Text>;
 }
 
@@ -101,6 +110,13 @@ export function StatusPopup({ model, connection, open, top, backdrop, onSettings
   const [fetched, setFetched] = useState<Fetched>(null);
   const [error, setError] = useState<string | null>(null);
   const visible = useVisible(model);
+
+  // Closed: forget the last answer, so a reopened card never shows (or times from) stale details.
+  useEffect(() => {
+    if (isOpen) return;
+    setFetched(null);
+    setError(null);
+  }, [isOpen]);
 
   useEffect(() => {
     if (!isOpen || !visible) return;
@@ -159,10 +175,14 @@ interface CardProps {
 function Card({ model, connection, fetched, error, backdrop, onSettings }: CardProps) {
   const link = useStore(connection.store, selectLink, shallowEqual);
   const d = fetched?.details;
+  // One clock for every relative time on the card, ticking only while it's mounted (open), and the
+  // server's time now: its `ts` moved on by how long ago the answer arrived.
+  const now = useNow(1000);
+  const serverNow = fetched ? fetched.details.ts + (now - fetched.at) : null;
   return (
     <Glass level="panel" backdrop={backdrop} radius={radius.l} rim style={styles.card}>
       <ScrollView style={styles.scroll} nestedScrollEnabled>
-        <Summary model={model} fetched={fetched} />
+        <Summary model={model} fetched={fetched} now={now} serverNow={serverNow} />
         {link.link !== 'open' ? (
           <View style={styles.linkWarn}>
             <Text style={[styles.value, styles.warn]}>{describeLink(link)}</Text>
@@ -178,8 +198,8 @@ function Card({ model, connection, fetched, error, backdrop, onSettings }: CardP
           error ? null : <Text style={styles.cardDim}>Loading…</Text>
         ) : (
           <>
-            <Lanes lanes={d.lanes} />
-            <Session session={d.session} ts={d.ts} />
+            <Lanes lanes={d.lanes} drift={serverNow! - d.ts} />
+            <Session session={d.session} serverNow={serverNow!} />
             <Section title="Agents" icon="robot-outline">
               {d.agents.length ? d.agents.map((a) => <AgentRow key={a.name} agent={a} />) : <Text style={styles.cardDim}>No coding agents running</Text>}
             </Section>
@@ -201,30 +221,37 @@ function Card({ model, connection, fetched, error, backdrop, onSettings }: CardP
  * The top of the card: a state dot, what EDITH is doing (from the stream, so it's right before the
  * details arrive), the step or prompt under it, and the turn's time in large type while it works.
  */
-function Summary({ model, fetched }: { model: LiveModel; fetched: Fetched }) {
+function Summary({ model, fetched, now, serverNow }: { model: LiveModel; fetched: Fetched; now: number; serverNow: number | null }) {
   const bar = useStore(model.store, barSummary, shallowEqual);
+  const ref = useStore(model.store, selectMainRef);
   const working = bar.tone !== 'idle';
-  const local = useTurnSince(model, working);
+  const local = useTurnSince(model);
   const e = fetched?.details.edith;
-  // The server's turn start, moved onto the phone's clock (its `ts` against when it arrived here).
-  const since = e?.ref && e.turn_started != null ? e.turn_started + (fetched!.at - fetched!.details.ts) : local;
-  const idleFor = !working && e?.since != null ? `for ${formatUptime(fetched!.details.ts - e.since)}` : null;
+  // The server's turn start, moved onto the phone's clock, but only for the run the stream shows
+  // (an answer from before a new turn would carry the old one); else the store's shared start.
+  const since = working && e?.ref != null && e.ref === ref && e.turn_started != null ? e.turn_started + (fetched!.at - fetched!.details.ts) : local;
+  const idleFor = !working && e?.since != null && serverNow != null ? `for ${formatUptime(serverNow - e.since)}` : null;
+  const time = working ? formatElapsed(now - since) : null;
+  const detail = working ? bar.detail : null;
+  const extra = [bar.counts, idleFor].filter(Boolean).join(' · ');
+  const label = ['EDITH', bar.label, time && `for ${time}`, detail, extra].filter(Boolean).join(', ');
   return (
-    <View style={styles.summary} accessibilityLabel={`EDITH: ${bar.label}${bar.counts ? `, ${bar.counts}` : ''}`}>
+    <View style={styles.summary} accessible accessibilityLabel={label}>
       <View style={[styles.stateDot, { backgroundColor: TONE[bar.tone] }]} />
       <View style={styles.summaryText}>
         <Text style={[styles.summaryTitle, bar.tone === 'approval' && styles.warn]}>{bar.label}</Text>
-        {working && bar.detail ? <Text style={[styles.summaryDetail, styles.mono]}>{bar.detail}</Text> : null}
-        {[bar.counts, idleFor].filter(Boolean).length ? <Text style={styles.summaryDetail}>{[bar.counts, idleFor].filter(Boolean).join(' · ')}</Text> : null}
+        {detail ? <Text style={[styles.summaryDetail, styles.mono]}>{detail}</Text> : null}
+        {extra ? <Text style={styles.summaryDetail}>{extra}</Text> : null}
       </View>
-      {working ? <Elapsed since={since} style={[styles.summaryTime, bar.tone === 'approval' && styles.warn]} /> : null}
+      {time ? <Text style={[styles.summaryTime, bar.tone === 'approval' && styles.warn]}>{time}</Text> : null}
     </View>
   );
 }
 
-function Lanes({ lanes }: { lanes: StatusDetails['lanes'] }) {
+/** `drift`: seconds since the answer's `ts`, so the side lanes' times keep running between fetches. */
+function Lanes({ lanes, drift }: { lanes: StatusDetails['lanes']; drift: number }) {
   const rows = [
-    ...lanes.side.map((l) => <Row key={l.ref} label="Parallel" value={[l.summary ?? l.ref, l.step, formatElapsed(l.seconds)].filter(Boolean).join(' · ')} />),
+    ...lanes.side.map((l) => <Row key={l.ref} label="Parallel" value={[l.summary ?? l.ref, l.step, formatElapsed(l.seconds + drift)].filter(Boolean).join(' · ')} />),
     lanes.side.length ? <Row key="side" label="Side lanes" value={`${lanes.side.length} of ${lanes.max_side} running`} /> : null,
     lanes.queued ? <Row key="queued" label="Queued" value={lanes.queued === 1 ? '1 message' : `${lanes.queued} messages`} /> : null,
     lanes.approvals ? <Row key="approvals" label="Approvals" value={`${lanes.approvals} waiting`} warn /> : null,
@@ -236,19 +263,25 @@ function Lanes({ lanes }: { lanes: StatusDetails['lanes'] }) {
   );
 }
 
-function Session({ session: s, ts }: { session: StatusDetails['session']; ts: number }) {
+function Session({ session: s, serverNow }: { session: StatusDetails['session']; serverNow: number }) {
   const context = s?.context_tokens != null ? contextUsage(s.context_tokens) : null;
   return (
     <Section title="Session" icon="message-text-outline">
       {s ? (
         <>
           <Row label="Name" value={s.title ?? 'Untitled'} />
-          {s.started != null ? <Row label="Started" value={formatAgo(ts - s.started)} /> : null}
+          {s.started != null ? <Row label="Started" value={formatAgo(serverNow - s.started)} /> : null}
           {s.messages ? <Row label="Messages" value={String(s.messages)} /> : null}
           {context ? (
             <Row label="Context" value={context.text}>
               {context.fraction != null ? (
-                <View style={styles.track} accessibilityLabel={`Context ${Math.round(context.fraction * 100)}% full`}>
+                <View
+                  style={styles.track}
+                  accessible
+                  accessibilityRole="progressbar"
+                  accessibilityLabel={`Context ${Math.round(context.fraction * 100)}% full, ${context.text}`}
+                  accessibilityValue={{ min: 0, max: 100, now: Math.round(context.fraction * 100) }}
+                >
                   <View style={[styles.fill, { width: `${Math.min(100, Math.max(2, context.fraction * 100))}%` }, context.fraction > 0.8 && styles.fillWarn]} />
                 </View>
               ) : null}

@@ -5,7 +5,7 @@
 // is blurred at runtime. Static: it draws once, nothing per frame.
 
 import { memo } from 'react';
-import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
+import { PixelRatio, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 import Svg, { Defs, LinearGradient, Stop, Text as SvgText } from 'react-native-svg';
 
 import { stopOf, titleGlow, titleGradient } from '../core/theme';
@@ -16,6 +16,13 @@ const HALO = [
   { width: 7, opacity: glow.opacity * 0.16 },
   { width: 3.5, opacity: glow.opacity * 0.3 },
 ] as const;
+// SVG text ignores the system font size, so scale it ourselves, capped so the title still fits
+// between the header's 96 dp insets.
+export const MAX_TITLE_SCALE = 1.3;
+export function titleScale(fontScale: number): number {
+  return Math.min(MAX_TITLE_SCALE, Math.max(1, fontScale || 1));
+}
+
 const STOPS = titleGradient.map((color, i) => ({ color, offset: i / (titleGradient.length - 1) }));
 
 export interface GradientTitleProps {
@@ -25,7 +32,10 @@ export interface GradientTitleProps {
   style?: StyleProp<ViewStyle>;
 }
 
-export const GradientTitle = memo(function GradientTitle({ text, fontSize, letterSpacing = 0, style }: GradientTitleProps) {
+export const GradientTitle = memo(function GradientTitle({ text, fontSize: base, letterSpacing: baseSpacing = 0, style }: GradientTitleProps) {
+  const scale = titleScale(PixelRatio.getFontScale());
+  const fontSize = base * scale;
+  const letterSpacing = baseSpacing * scale;
   const height = Math.ceil(fontSize * 1.6); // room for the glow above and below
   // The baseline: the capitals' middle on the box's middle (a cap is about 0.71 em tall in Roboto).
   const y = height / 2 + fontSize * 0.355;

@@ -2,7 +2,8 @@
 // current by stream events alone, and the open card's details fetch (contracts/status.md).
 
 import type { StatusDetails } from '../../core/api';
-import type { LiveState } from './model';
+import type { Store } from '../../core/store';
+import type { LiveState, TurnStart } from './model';
 
 export type BarState = StatusDetails['edith']['state'];
 
@@ -131,6 +132,34 @@ export function mainRun(s: LiveState): { ref: string | null; elapsed: number | n
  */
 export function turnSince(elapsed: number | null, now: number, startedHere: number): number {
   return elapsed != null && elapsed > 0 ? now - elapsed : startedHere;
+}
+
+/**
+ * The turn start the state should hold at `now` (pure): null while idle; kept while the same main
+ * run goes on with no new elapsed; else counted back from the server's elapsed when an event carried
+ * one (turnSince), or `now` for a new run (or EDITH going busy) with none yet.
+ */
+export function nextTurnStart(s: LiveState, now: number): TurnStart | null {
+  if (barSummary(s).tone === 'idle') return null;
+  const { ref, elapsed } = mainRun(s);
+  const prev = s.turnStart;
+  if (prev && prev.ref === ref && prev.elapsed === elapsed) return prev;
+  const startedHere = prev && prev.ref === ref ? prev.at : now; // same run, a new elapsed: re-anchor only on it
+  return { ref, elapsed, at: turnSince(elapsed, now, startedHere) };
+}
+
+/**
+ * Keeps `turnStart` in the live store current: one shared start time, so the chip and the card
+ * (which GrowSheet remounts on every open) always show the same turn time. Returns unsubscribe.
+ */
+export function trackTurnStart(store: Store<LiveState>, now: () => number = () => Date.now() / 1000): () => void {
+  const sync = () => {
+    const s = store.get();
+    const next = nextTurnStart(s, now());
+    if (next !== s.turnStart) store.set({ ...s, turnStart: next });
+  };
+  sync();
+  return store.subscribe(sync); // a set from here re-runs sync once, which then finds nothing to do
 }
 
 /**

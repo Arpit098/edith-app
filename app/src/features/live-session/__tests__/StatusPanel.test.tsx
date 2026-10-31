@@ -11,6 +11,7 @@ import { GlassContext } from '../../../core/theme';
 import { ev, fakeContext } from '../../../testing/fakes';
 import { initialLive, reduce, type LiveModel } from '../model';
 import { StatusChip, StatusPopup } from '../StatusPanel';
+import { mainRun, trackTurnStart } from '../status';
 import { DETAILS } from './details';
 
 jest.setTimeout(30_000); // the first run transforms all of React Native: slow on a cold cache
@@ -29,6 +30,11 @@ function chip(r: ReactTestRenderer): ReactTestInstance {
 /** The thinking bubble's `active` (it moves only while EDITH thinks or runs a tool). */
 function bubbleActive(r: ReactTestRenderer): boolean {
   return r.root.findAll((n) => typeof n.props?.active === 'boolean' && typeof n.props?.size === 'number')[0]!.props.active;
+}
+
+/** The card's summary, read as one by a screen reader: state, time, detail. */
+function summaryLabel(r: ReactTestRenderer): string {
+  return r.root.findAll((n) => n.props?.accessible === true && typeof n.props.accessibilityLabel === 'string' && n.props.accessibilityLabel.startsWith('EDITH, '))[0]!.props.accessibilityLabel;
 }
 
 function toggle(r: ReactTestRenderer) {
@@ -57,6 +63,7 @@ function fakeVisibility() {
 
 function fakes() {
   const store = createStore(initialLive);
+  trackTurnStart(store); // what createLiveModel does: one shared turn start
   const details = jest.fn().mockResolvedValue(statusDetailsFrom(DETAILS));
   const visibility = fakeVisibility();
   const connection = fakeContext().connection;
@@ -132,7 +139,7 @@ describe('StatusChip and StatusPopup', () => {
     }
     expect(shown).not.toContain('Retry now');
     expect(shown).not.toContain('tokens'); // a known window: "321k of 1M", not a bare count
-    expect(r.root.findAll((n) => n.props?.accessibilityLabel === 'Context 32% full')).not.toHaveLength(0); // the thin bar
+    expect(r.root.findAll((n) => n.props?.accessibilityRole === 'progressbar' && n.props.accessibilityLabel === 'Context 32% full, 321k of 1M' && n.props.accessibilityValue?.now === 32)).not.toHaveLength(0); // the thin bar
 
     await act(async () => {
       await jest.advanceTimersByTimeAsync(10_000);
@@ -195,6 +202,79 @@ describe('StatusChip and StatusPopup', () => {
     const shown = texts(r);
     for (const part of ['Idle', 'for 12m', 'Only the main lane, nothing waiting', '3 min ago', '120k of 200k', 'No coding agents running']) expect(shown).toContain(part);
     for (const gone of ['Queued', 'Approvals', 'Side lanes', 'Messages', 'Parallel']) expect(shown).not.toContain(gone);
+    act(() => r.unmount());
+  });
+
+  it('the card times the turn from the same start as the chip, though it opens later (no elapsed yet), and restarts on a new run', async () => {
+    const f = fakes();
+    f.details.mockResolvedValue(statusDetailsFrom({ ...DETAILS, edith: { ...DETAILS.edith, state: 'thinking', ref: 'old', turn_started: 500 } }));
+    const r = await mount(f);
+    // Busy before any run is seen: no run, so no elapsed at all (run.elapsed null).
+    await act(async () => f.store.set((s) => reduce(s, ev('lane.status', { main: 'busy', side: 0, queued: 0 }))));
+    expect(mainRun(f.store.get()).elapsed).toBeNull();
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(10_000);
+    });
+    // The run appears (no elapsed carried yet): a fresh start for both.
+    await act(async () => f.store.set((s) => reduce(s, ev('turn.started', { ref: 'r1', lane: 'main' }))));
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(25_000);
+    });
+    await act(async () => toggle(r)); // GrowSheet mounts the card only now
+    expect(texts(r)).toMatch(/^0:25 \| /); // the chip
+    // The card: the shared start, not the moment it opened, and not the server's start for another run.
+    expect(summaryLabel(r)).toMatch(/^EDITH, Thinking, for 0:25/);
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(5_000);
+    });
+    expect(summaryLabel(r)).toMatch(/for 0:30/);
+
+    // Closed and reopened: GrowSheet remounts the card, the time carries on.
+    await act(async () => toggle(r));
+    await act(async () => toggle(r));
+    expect(summaryLabel(r)).toMatch(/for 0:30/);
+
+    // A new run: both start again.
+    await act(async () => f.store.set((s) => [ev('turn.done', { ref: 'r1', lane: 'main', text: 'ok' }), ev('turn.started', { ref: 'r2', lane: 'main' })].reduce(reduce, s)));
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(3_000);
+    });
+    expect(texts(r)).toMatch(/^0:0[34] \| /);
+    expect(summaryLabel(r)).toMatch(/for 0:0[34]/);
+    act(() => r.unmount());
+  });
+
+  it("uses the server's turn start only for the run the stream shows", async () => {
+    const f = fakes();
+    // DETAILS: ts 1000, the main run r1 started at 900: 1:40 in.
+    const r = await mount(f);
+    await act(async () => f.store.set((s) => reduce(s, ev('turn.started', { ref: 'r1', lane: 'main' }))));
+    await act(async () => toggle(r));
+    expect(summaryLabel(r)).toMatch(/for 1:40/);
+    act(() => r.unmount());
+  });
+
+  it('keeps relative times running between fetches, and forgets the details when closed', async () => {
+    const f = fakes();
+    f.details.mockResolvedValue(statusDetailsFrom({ ...DETAILS, edith: { ...DETAILS.edith, state: 'idle', ref: null, since: 990 }, session: { ...DETAILS.session, started: 990 } }));
+    const r = await mount(f);
+    await act(async () => toggle(r));
+    expect(texts(r)).toContain('Started | just now');
+    expect(texts(r)).toContain('check the disk · 0:12');
+    expect(summaryLabel(r)).toContain('for 10s');
+    f.details.mockRejectedValue(new Error('unreachable')); // every later poll fails: nothing new to render
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(130_000);
+    });
+    expect(texts(r)).toContain('Started | 2 min ago');
+    expect(texts(r)).toContain('check the disk · 2:22');
+    expect(summaryLabel(r)).toContain('for 2m');
+
+    await act(async () => toggle(r));
+    f.details.mockReturnValue(new Promise(() => {})); // the next answer never comes
+    await act(async () => toggle(r));
+    expect(texts(r)).toContain('Loading…'); // not the old answer
+    expect(texts(r)).not.toContain('Started');
     act(() => r.unmount());
   });
 
