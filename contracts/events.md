@@ -43,6 +43,8 @@ Fields the agent adds (new fields only; existing meanings unchanged):
   or `side`). `turn.started` is sent once the turn is really running (for the main lane, after the
   tmux Claude is ready), so a `not_ready` failure has no `turn.started` before it.
 - `turn.done` also carries `is_error` and `subtype` (Claude's result subtype, e.g. `success`).
+- A main-lane `turn.done`, `turn.stopped` or `turn.failed` carries `answers: [ref]` when Claude read other
+  messages during that turn (delivery `mid_turn`, see "While EDITH is busy"): its end is theirs too.
 - `turn.failed` with `reason: error` carries `code` (the exit code) and `stderr` (its last 800 characters).
   Two more reasons: `queue_full` (too many messages already waiting) and `bridge_error` (a bug;
   `detail` has the message).
@@ -115,7 +117,12 @@ message never vanishes from the app, whichever way it reaches Claude. All carry 
   `[tg-ref <rid>]` tag.
 - **While EDITH is busy** (busy_policy `queue`, the default): a new message is queued with `fold: true`
   and typed into the running turn at once, so Claude reads it before its answer: `message.delivered`
-  `mid_turn`, then that turn's `turn.done` answers it too (it has no turn events of its own). If the turn
+  `mid_turn`, then that turn's end (`turn.done`, `turn.stopped` or `turn.failed`) answers it too: it lists
+  the refs it took in as `answers` (it has no turn events of its own). Telegram sends the reply to a
+  Telegram message in `answers` unless it already goes to that chat; voice gives each voice message in
+  `answers` its `voice.reply` (the line said once). It is never typed while the turn is at a dialog (a
+  permission, the rate-limit menu, a question), so its Enter can't answer one; it waits for the next
+  wake-up instead. If the turn
   ends before Claude Code took it in, it becomes the next turn instead (`turn.started`, `message.delivered`
   `main`, `turn.done` with its own `ref`). `/stop` stops it with the running turn (`turn.stopped`, lane
   `main`). A message starting with `/btw` (a command: `/btw <task>`) runs in a side lane at once

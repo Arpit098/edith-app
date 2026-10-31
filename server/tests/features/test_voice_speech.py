@@ -76,6 +76,20 @@ class VoiceRepliesTest(unittest.TestCase):
         self.turn("turn.done", ref="app:v", text="late duplicate")  # the turn already ended
         self.assertEqual([r[0]["speak"] for r in self.replies], ["That task crashed."])
 
+    def test_a_voice_message_read_mid_turn_ends_with_the_turn_that_answered_it(self):
+        self.turn("voice.turn", ref="app:host")
+        self.turn("voice.turn", ref="app:rider")
+        self.turn("turn.queued", ref="app:rider", position=1, fold=True)
+        self.turn("turn.done", ref="app:host", text="Both done.\n\nDetails…", answers=["app:rider", "tg:1:2"])
+        self.assertEqual([r[0] for r in self.replies], [
+            {"ref": "app:rider", "outcome": "queued", "speak": "Got it. I'll read that before I answer."},
+            {"ref": "app:host", "outcome": "done", "speak": "Both done."},
+            {"ref": "app:rider", "outcome": "done", "speak": ""}])  # its one end, said once
+        self.replies.clear()
+        self.turn("voice.turn", ref="app:v2")
+        self.turn("turn.stopped", ref="app:typed", answers=["app:v2"])  # a typed host: the voice rider says it
+        self.assertEqual([r[0] for r in self.replies], [{"ref": "app:v2", "outcome": "stopped", "speak": "Stopped."}])
+
     def test_retried_turn_is_still_followed(self):
         self.turn("voice.turn", ref="app:r")
         self.turn("turn.retrying", ref="app:r", lane="side", reason="gone")

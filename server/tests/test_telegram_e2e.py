@@ -237,7 +237,25 @@ class TelegramEndToEndTest(unittest.TestCase):
                 self.assertEqual(len(w.tmux.submitted), 2)  # /btw never went into the main turn
                 w.tmux.finish("Both done.")
                 w.tg.wait(lambda: "Both done." in w.tg.texts())
+                w.tg.wait(lambda: "👍" in reactions(4))  # answered by that reply, in its own chat
                 self.assertEqual(w.tg.texts().count("Both done."), 1)  # one reply for both messages
+            finally:
+                w.close()
+
+    def test_a_folded_telegram_message_gets_the_answer_when_the_turn_came_from_the_app(self):
+        with temp_home() as home, mock.patch.dict(os.environ, {"FAKE_CLAUDE_PLAN": str(fixture(home)),
+                                                               "FAKE_CLAUDE_LOG": str(home / "argv.jsonl")}):
+            w = New(home, busy_policy="queue")
+            try:
+                w.agent.send("[App message from Arpit, x]\na long task", "app", "app:1")  # from the phone app
+                w.tg.wait(lambda: len(w.tmux.submitted) == 1)
+                w.message(message("and the logs?", message_id=4))
+                w.tg.wait(lambda: any(m == "setMessageReaction" and p["message_id"] == 4 and p["reaction"][0]["emoji"] == "✍"
+                                      for m, p in w.tg.calls))
+                w.tmux.finish("Logs are clean.")
+                w.tg.wait(lambda: "Logs are clean." in w.tg.texts())
+                sent = next(p for m, p in w.tg.calls if m == "sendMessage" and p["text"] == "Logs are clean.")
+                self.assertEqual((sent["chat_id"], sent["reply_parameters"]["message_id"]), (111, 4))  # quoting it
             finally:
                 w.close()
 

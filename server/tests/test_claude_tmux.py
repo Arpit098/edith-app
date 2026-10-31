@@ -19,6 +19,7 @@ from edith.adapters.agents.claude_tmux.tmux import Tmux
 from edith.core import CommandCall, EventBus, Ports, Registry, load_features
 from edith.ports.agent import TurnHandle
 from tests.fakes import FAKE_CLAUDE, FakeTmux
+from tests.fakes.tmux import PROMPT
 from tests.fakes.claude import plan
 from tests.golden import assert_matches
 from tests.home import temp_home
@@ -425,8 +426,57 @@ class BusyPolicyTest(unittest.TestCase):
     def test_the_side_lane_policy_keeps_the_old_behaviour(self):
         h = self.busy(busy_policy="side_lane")
         self.assertEqual(h.agent.send("what's up", "app", "m2").lane, "side")
-        with self.assertRaisesRegex(ValueError, "busy_policy"):
-            Harness(self, busy_policy="parallel")
+        with self.assertLogs("edith.adapter.claude_tmux", "WARNING") as logs:
+            self.assertEqual(Harness(self, busy_policy="parallel").agent.busy_policy, "queue")  # never a crash
+        self.assertIn("busy_policy 'parallel'", logs.output[0])
+
+    def test_the_turns_end_names_the_messages_it_answered(self):
+        h = self.busy()
+        h.agent.send("also check the logs", "app", "m2")
+        h.wait("message.delivered", "m2")
+        h.finish()
+        self.assertEqual(h.wait("turn.done", "m1").data["answers"], ["m2"])
+
+    def test_nothing_is_typed_into_a_dialog(self):
+        for dialog in ("Do you want to proceed?\n❯ 1. Yes\n  2. No",                       # a permission
+                       "What do you want to do?\n❯ 1. Stop and wait for limit to reset",    # the rate-limit menu
+                       "Which one?\n❯ 1. Postgres\n  2. SQLite\nEnter to select · ↑/↓ to navigate · Esc to cancel"):
+            with self.subTest(dialog=dialog.splitlines()[0]):
+                h = self.busy()
+                h.fake.pane = dialog
+                h.agent.send("also this", "app", "m2")
+                h.wait("turn.queued", "m2")
+                h.transcript_line({"type": "assistant", "message": {"content": [{"type": "text", "text": "…"}]}})  # a wake-up
+                self.assertIsNone(h.wait("message.delivered", "m2", timeout=0.5))
+                self.assertFalse(any("also this" in s for s in h.fake.submitted))  # Enter never reached the dialog
+                h.fake.pane = PROMPT  # answered: the next wake-up types it
+                h.transcript_line({"type": "assistant", "message": {"content": [{"type": "text", "text": "…"}]}})
+                self.assertEqual(h.wait("message.delivered", "m2").data["delivery"], "mid_turn")
+        h = self.busy()
+        req = pathlib.Path(h.agent.paths.perm_dir) / "x.req.json"
+        req.write_text("{}")  # a permission request waiting on Telegram or the app
+        h.agent.send("also this", "app", "m2")
+        h.wait("turn.queued", "m2")
+        h.transcript_line({"type": "assistant", "message": {"content": [{"type": "text", "text": "…"}]}})
+        self.assertIsNone(h.wait("message.delivered", "m2", timeout=0.5))
+        req.unlink()  # answered: the next wake-up types it
+        h.transcript_line({"type": "assistant", "message": {"content": [{"type": "text", "text": "…"}]}})
+        self.assertEqual(h.wait("message.delivered", "m2").data["delivery"], "mid_turn")
+
+    def test_folded_messages_fail_too_if_following_the_turn_breaks(self):
+        h = self.busy()
+        h.agent.send("also check the logs", "app", "m2")
+        h.wait("message.delivered", "m2")
+        publish = h.agent._publish
+
+        def broken(type, *a, **kw):
+            if type == "turn.done":
+                raise RuntimeError("bus down")
+            return publish(type, *a, **kw)
+        h.agent._publish = broken
+        h.finish()
+        self.assertEqual(h.wait("turn.failed", "m2").data["reason"], "bridge_error")
+        self.assertEqual(h.wait("turn.failed", "m1").data["detail"], "bus down")
 
 
 class BtwCommandTest(unittest.TestCase):
