@@ -4,6 +4,7 @@ import json
 import os
 import pathlib
 import shutil
+import subprocess
 import tempfile
 import unittest
 from unittest import mock
@@ -57,21 +58,55 @@ def apk(code, runtime, signing="release", cert=PIN):
     return {"versionCode": code, "runtimeVersion": runtime, "signing": signing, "cert_sha256": cert, "sha": f"sha{code}"}
 
 
+def history(*commits):
+    """is_ancestor over one line of history, oldest first."""
+    return lambda a, b: a in commits and b in commits and commits.index(a) <= commits.index(b)
+
+
 class PlanTest(unittest.TestCase):
     def test_a_native_change_needs_an_apk(self):
         index = {"apks": {"1": apk(1, "rtA"), "2": apk(2, "rtB", signing="debug"), "3": apk(3, "rtB", cert="AA")}}
         with self.assertRaisesRegex(Refused, "matches no APK edith offers .*rtA \\(APK 1\\).*needs a real APK build"):
-            plan(index, PIN, "rtB", "head")  # debug-signed and unpinned APKs don't count
+            plan(index, PIN, "rtB", "head", history("sha1", "head"))  # debug-signed and unpinned APKs don't count
 
     def test_the_bundle_is_for_the_newest_matching_apk_and_notes_start_at_the_newest_build(self):
         index = {"apks": {"1": apk(1, "rtA"), "2": apk(2, "rtA"), "3": apk(3, "rtB")}, "updates": {}}
-        self.assertEqual(plan(index, PIN, "rtA", "head"), (index["apks"]["2"], "sha2"))
+        line = history("sha1", "sha2", "old", "newer", "head")
+        self.assertEqual(plan(index, PIN, "rtA", "head", line), (index["apks"]["2"], "sha2"))
         index["updates"] = {"u1": {"id": "u1", "runtimeVersion": "rtA", "createdAt": 10, "sha": "old"},
                             "u2": {"id": "u2", "runtimeVersion": "rtA", "createdAt": 20, "sha": "newer"},
                             "u3": {"id": "u3", "runtimeVersion": "rtB", "createdAt": 30, "sha": "other"}}
-        self.assertEqual(plan(index, PIN, "rtA", "head")[1], "newer")
+        self.assertEqual(plan(index, PIN, "rtA", "head", line)[1], "newer")
         with self.assertRaisesRegex(Refused, "already the newest bundle"):
-            plan(index, PIN, "rtA", "newer")
+            plan(index, PIN, "rtA", "newer", line)
+
+    def test_an_older_ref_would_roll_the_app_back(self):
+        index = {"apks": {"2": apk(2, "rtA")},
+                 "updates": {"u2": {"id": "u2", "runtimeVersion": "rtA", "createdAt": 20, "sha": "ci-head"}}}
+        line = history("sha2", "older", "ci-head", "head")
+        with self.assertRaisesRegex(Refused, "older.*doesn't contain ci-head.*bundle u2.*roll the app back"):
+            plan(index, PIN, "rtA", "older", line)
+        with self.assertRaisesRegex(Refused, "side.*doesn't contain ci-head"):
+            plan(index, PIN, "rtA", "side", line)  # not in that history at all (another branch)
+        self.assertEqual(plan(index, PIN, "rtA", "head", line)[1], "ci-head")
+        del index["updates"]["u2"]  # no bundle yet: checked against the APK's commit
+        with self.assertRaisesRegex(Refused, "doesn't contain sha2.*APK 2"):
+            plan(index, PIN, "rtA", "unrelated", line)
+
+    def test_ancestry_is_gits(self):
+        repo = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, repo)
+        git = ["git", "-C", repo, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"]
+        subprocess.run(git[:3] + ["init", "-q"], check=True)
+        shas = []
+        for i in range(2):
+            subprocess.run(git + ["commit", "-q", "--allow-empty", "-m", str(i)], check=True)
+            shas.append(subprocess.run(git[:3] + ["rev-parse", "HEAD"], capture_output=True, text=True,
+                                       check=True).stdout.strip())
+        is_ancestor = local_build.ancestry(repo)
+        self.assertTrue(is_ancestor(shas[0], shas[1]))
+        self.assertFalse(is_ancestor(shas[1], shas[0]))
+        self.assertFalse(is_ancestor("0" * 40, shas[1]))  # unknown commit
 
     def test_cert_is_only_for_a_dry_run(self):
         with self.assertRaises(SystemExit):
@@ -92,15 +127,19 @@ class InboxTest(unittest.TestCase):
         return json.loads(r.body.split(b"\r\n\r\n", 1)[1].rsplit(b"\r\n--", 1)[0])["id"] if r.status == 200 else None
 
     def test_a_local_build_is_imported_like_a_ci_artifact(self):
-        self.w.gh.add_run(101, apk=apk_artifact(101, 1101))
+        self.w.gh.add_run(101, apk=apk_artifact(101, 1101), ota=ota_artifact(101, "ci1", created=1793280000))
         self.drop("local1", 1793280100)
         self.drop("partial", 1793280200, ready=False)   # still being copied in: left alone
         self.drop("bad", 1793280300, lie=True)           # a file that doesn't match its sha256
+        self.drop("garbled", 1793280400)
+        (self.inbox / "garbled" / "manifest.json").write_text("{not json")
+        (self.inbox / "empty").mkdir()                   # no update.json
         self.w.collect()
         index = json.loads((self.w.root / "index.json").read_text())
-        self.assertEqual(sorted(index["updates"]), ["local1"])
+        self.assertEqual(sorted(index["updates"]), ["ci1", "local1"])  # a bad local build doesn't stop CI's
         self.assertEqual((index["updates"]["local1"]["source"], index["updates"]["local1"]["run_id"]), ("local", 0))
-        self.assertEqual(sorted(os.listdir(self.inbox)), [".partial"])  # imported and rejected ones removed
+        self.assertEqual(sorted(os.listdir(self.inbox)),  # imported: gone; rejected: set aside, not retried
+                         [".partial", ".rejected-bad", ".rejected-empty", ".rejected-garbled"])
         self.assertEqual(self.served(), "local1")
 
     def test_the_newest_is_served_whether_ci_or_local(self):

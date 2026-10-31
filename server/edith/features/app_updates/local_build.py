@@ -6,20 +6,28 @@
 The same steps as build-apk.yml's "OTA bundle", from a clean checkout of `--ref` in its own clone
 (<state_dir>/ota-build/src, never the live checkout):
 
-1. npm ci, skipped while package-lock.json and the Node version are those of the last install;
+1. npm ci --ignore-scripts, skipped while package-lock.json and the Node version are those of the
+   last install;
 2. the runtimeVersion, resolved as CI does (EDITH_UPDATES_SIGNING=1, fingerprint policy). If no APK
-   the store offers has it, the native side changed: that needs a real APK, and the build stops;
-3. release notes (scripts/release-notes.js): the PRs merged since the newest build edith holds for
-   that runtimeVersion;
-4. expo export for android, then scripts/ota.js signs it with the key file, whose path is all this
-   tool handles: the key is never read, copied or printed here, only checked to be the owner's, mode 600;
-5. the artifact goes into the store's inbox (complete, then renamed into place). The bridge's collect
+   the store offers has it, the native side changed: that needs a real APK, and the build stops. It
+   also stops unless the commit contains the newest build edith has for that runtimeVersion (the
+   newest bundle is served, so an older one would roll the app back);
+3. expo export for android, and the public expo config;
+4. release notes (scripts/release-notes.js): the PRs merged since that newest build;
+5. scripts/ota.js signs it with the key file, whose path is all this tool handles: the key is never
+   read, copied or printed here, only checked to be the owner's, mode 600;
+6. the artifact goes into the store's inbox (complete, then renamed into place). The bridge's collect
    job imports it with the same SHA-256 checks as a CI artifact, within one pass (2 min).
 
 Hermes: `expo export` compiles to Hermes bytecode with the hermesc that npm ships, which is x86-64
 only. On edith (ARM64) give a hermesc built from the same Hermes release (--hermes-dir, read as
 REACT_NATIVE_OVERRIDE_HERMES_DIR: <dir>/build/bin/hermesc), or pass --no-bytecode for a plain-JS
-bundle, which Hermes also runs (it starts a little slower).
+bundle, which Hermes also runs (it starts a little slower). A --no-bytecode bundle is not what CI
+ships: verify it on a phone before relying on it.
+
+Steps 1-3 run npm packages' code: each runs as a transient user unit with a minimal environment
+(third_party below), and only ota.js is given the key path. That is not a filesystem sandbox (edith
+doesn't allow unprivileged user namespaces), so those packages could still read files we can.
 
 --out DIR is a dry run: the artifact is written there, not to the inbox; only then may --cert name a
 certificate other than the checkout's app/certs/updates-certificate.pem (a throwaway test key).
@@ -54,8 +62,26 @@ def step(name, cmd, cwd, env=None, timeout=900, stdout=None):
     """Run one build command, its output on our stderr; -> seconds taken. Raises on failure."""
     t = time.monotonic()
     print(f"== {name}", file=sys.stderr, flush=True)
-    subprocess.run(cmd, cwd=cwd, env=env, timeout=timeout, check=True, stdout=stdout or sys.stderr)
+    subprocess.run(cmd, cwd=cwd, env=env, timeout=timeout, check=True, stdout=stdout or sys.stderr,
+                   stdin=subprocess.DEVNULL)
     return time.monotonic() - t
+
+
+def third_party(name, cmd, cwd, env, timeout=900, stdout=None):
+    """A step that runs npm packages' code (npm ci, expo): a transient user unit, so whatever it
+    leaves running is killed when it ends, started through `env -i` with only `env`, so it gets no
+    SSH agent, D-Bus or other variable of ours (a unit would inherit the user manager's). Not a
+    filesystem sandbox: unprivileged user namespaces are off on edith
+    (kernel.apparmor_restrict_unprivileged_userns=1), so ProtectHome= and the like don't apply."""
+    unit = f"edith-ota-{name.replace(' ', '-')}-{os.getpid()}"
+    cmd = ["systemd-run", "--user", "--quiet", "--wait", "--pipe", "--collect", f"--unit={unit}",
+           f"--working-directory={cwd}", f"--property=RuntimeMaxSec={timeout}", "--property=NoNewPrivileges=yes",
+           "--", "/usr/bin/env", "-i", *(f"{k}={v}" for k, v in env.items()), *cmd]
+    try:
+        return step(name, cmd, cwd, timeout=timeout + 30, stdout=stdout)
+    except subprocess.TimeoutExpired:
+        subprocess.run(["systemctl", "--user", "stop", unit], timeout=60)
+        raise
 
 
 def check_key(path):
@@ -76,8 +102,9 @@ def offered_apks(index, pin):
             if a.get("signing") == "release" and (not pin or normalize_cert(a.get("cert_sha256")) == normalize_cert(pin))]
 
 
-def plan(index, pin, runtime, sha):
-    """-> (the APK this bundle is for, the commit the notes start from). Raises Refused."""
+def plan(index, pin, runtime, sha, is_ancestor):
+    """-> (the APK this bundle is for, the commit the notes start from). Raises Refused.
+    `is_ancestor(a, b)`: commit a is in b's history (git merge-base --is-ancestor)."""
     apks = offered_apks(index, pin)
     matching = [a for a in apks if a.get("runtimeVersion") == runtime]
     if not matching:
@@ -90,7 +117,21 @@ def plan(index, pin, runtime, sha):
     newest = max(updates, key=lambda u: u["createdAt"]) if updates else None
     if newest and newest.get("sha") == sha:
         raise Refused(f"{sha[:8]} is already the newest bundle for this runtimeVersion ({newest['id']}); nothing new")
-    return apk, (newest or apk).get("sha")
+    # The newest bundle is served, so one built from a commit that lacks what is served now would
+    # roll the app back.
+    base = (newest or apk).get("sha")
+    if not base or not is_ancestor(base, sha):
+        raise Refused(f"{sha[:8]} doesn't contain {(base or '?')[:8]}, the newest build edith has for this "
+                      f"runtimeVersion ({'bundle ' + newest['id'] if newest else 'APK ' + str(apk['versionCode'])}): "
+                      "it would roll the app back. Build a newer ref.")
+    return apk, base
+
+
+def ancestry(src):
+    def is_ancestor(a, b):
+        return subprocess.run(["git", "merge-base", "--is-ancestor", a, b], cwd=src, capture_output=True,
+                              timeout=60).returncode == 0
+    return is_ancestor
 
 
 def lock_stamp(app):
@@ -138,17 +179,22 @@ def build(a):
     app = os.path.join(src, "app")
     cert = os.path.abspath(os.path.expanduser(a.cert)) if a.cert else os.path.join(app, "certs/updates-certificate.pem")
 
-    env = {**os.environ, "EDITH_UPDATES_SIGNING": "1", "CI": "1"}  # as CI: expo-updates on, non-interactive
-    env.pop("EDITH_UPDATES_URL", None)
+    # Only what each step needs: our environment (tokens, the SSH agent) never reaches npm packages.
+    base_env = {"HOME": os.path.expanduser("~"), "PATH": "/usr/local/bin:/usr/bin:/bin", "LANG": "C.UTF-8"}
+    # As CI: expo-updates on (it is part of the fingerprint), non-interactive.
+    build_env = {**base_env, "EDITH_UPDATES_SIGNING": "1", "CI": "1"}
     hermes = a.hermes_dir or os.environ.get("REACT_NATIVE_OVERRIDE_HERMES_DIR")
     if hermes:
         if not os.access(os.path.join(hermes, "build/bin/hermesc"), os.X_OK):
             raise Refused(f"no hermesc at {hermes}/build/bin/hermesc")
-        env["REACT_NATIVE_OVERRIDE_HERMES_DIR"] = os.path.abspath(hermes)
+        build_env["REACT_NATIVE_OVERRIDE_HERMES_DIR"] = os.path.abspath(hermes)
     elif not a.no_bytecode:
         raise Refused("npm's hermesc is x86-64 only: pass --hermes-dir (a hermesc built for this machine) "
-                      "or --no-bytecode (a plain-JS bundle)")
+                      "or --no-bytecode (a plain-JS bundle; verify it on a phone before relying on it)")
 
+    tmp = os.path.join(work, "tmp")
+    shutil.rmtree(tmp, ignore_errors=True)
+    os.makedirs(tmp)
     stamp_file, stamp = os.path.join(app, "node_modules/.edith-npm-ci"), lock_stamp(app)
     try:
         with open(stamp_file) as f:
@@ -158,43 +204,43 @@ def build(a):
     if fresh:
         print("== npm ci: skipped (same package-lock.json and Node)", file=sys.stderr)
     else:
-        timings["npm ci"] = step("npm ci", ["npm", "ci", "--no-audit", "--no-fund", "--prefer-offline"], app, env)
+        # No install scripts: exporting a JS bundle needs none (the native builds they serve are CI's).
+        timings["npm ci"] = third_party("npm ci", ["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund",
+                                                   "--prefer-offline"], app, build_env)
         with open(stamp_file, "w") as f:
             f.write(stamp)
 
-    t = time.monotonic()
-    out = subprocess.run(["npx", "expo-updates", "runtimeversion:resolve", "--platform", "android"], cwd=app, env=env,
-                         capture_output=True, text=True, timeout=300, check=True).stdout
-    runtime = json.loads(out)["runtimeVersion"]
-    timings["runtimeVersion"] = time.monotonic() - t
+    resolved = os.path.join(tmp, "runtime.json")
+    with open(resolved, "w") as f:
+        timings["runtimeVersion"] = third_party("runtimeVersion", ["npx", "expo-updates", "runtimeversion:resolve",
+                                                                   "--platform", "android"], app, build_env, 300, f)
+    with open(resolved) as f:
+        runtime = json.load(f)["runtimeVersion"]
     if not runtime:
         raise RuntimeError("no runtimeVersion")
-    apk, since = plan(index, feature.get("cert_sha256") or "", runtime, sha)
-    print(f"== {sha[:8]}: runtimeVersion {runtime} (APK {apk['versionCode']}); notes since {(since or '')[:8]}",
+    apk, since = plan(index, feature.get("cert_sha256") or "", runtime, sha, ancestry(src))
+    print(f"== {sha[:8]}: runtimeVersion {runtime} (APK {apk['versionCode']}); notes since {since[:8]}",
           file=sys.stderr)
-    env["EDITH_VERSION_CODE"] = str(apk["versionCode"])  # the public config matches the installed APK
+    build_env["EDITH_VERSION_CODE"] = str(apk["versionCode"])  # the public config matches the installed APK
 
-    tmp = os.path.join(work, "tmp")
-    shutil.rmtree(tmp, ignore_errors=True)
-    os.makedirs(tmp)
+    artifact = os.path.join(tmp, "ota")
+    timings["expo export"] = third_party("expo export", ["npx", "expo", "export", "--platform", "android",
+                                                         "--output-dir", os.path.join(artifact, "dist"),
+                                                         *(["--no-bytecode"] if not hermes else [])],
+                                         app, build_env)
+    expo_config = os.path.join(tmp, "expo-config.json")
+    with open(expo_config, "w") as f:
+        third_party("expo config", ["npx", "expo", "config", "--type", "public", "--json"], app, build_env, 120, f)
+
+    # Our own scripts (Node built-ins only). gh finds its login under HOME; only ota.js gets the key.
     notes = os.path.join(tmp, "release-notes.json")
     # Never fails the build: on a GitHub problem the script writes empty notes and a warning.
     timings["release notes"] = step("release notes", ["node", "scripts/release-notes.js", "--repo", REPO, "--sha", sha,
-                                                      *(["--since", since] if since else []), "--out", notes],
-                                    app, env, timeout=180)
-
-    artifact = os.path.join(tmp, "ota")
-    timings["expo export"] = step("expo export", ["npx", "expo", "export", "--platform", "android", "--output-dir",
-                                                  os.path.join(artifact, "dist"),
-                                                  *(["--no-bytecode"] if a.no_bytecode and not hermes else [])],
-                                  app, env)
-    expo_config = os.path.join(tmp, "expo-config.json")
-    with open(expo_config, "w") as f:
-        step("expo config", ["npx", "expo", "config", "--type", "public", "--json"], app, env, timeout=120, stdout=f)
+                                                      "--since", since, "--out", notes], app, base_env, 180)
     timings["sign"] = step("sign", ["node", "scripts/ota.js", "--dir", artifact, "--runtime-version", runtime,
                                     "--key", key, "--cert", cert, "--base-url", BASE_URL, "--sha", sha,
                                     "--run-id", "0", "--expo-config", expo_config, "--release-notes", notes],
-                           app, env, timeout=120)
+                           app, base_env, 120)
     update = read_json(os.path.join(artifact, "update.json"))
 
     if a.out:

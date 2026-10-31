@@ -103,13 +103,24 @@ def setup(ctx: Context) -> None:
     def import_local(s):
         """OTA bundles built on edith (local_build.py) waiting in the inbox: checked like a CI artifact."""
         for folder in s.inbox():
+            name = os.path.basename(folder)
             try:
+                if not os.path.isfile(os.path.join(folder, "update.json")):
+                    raise Rejected("no update.json")
                 record = s.add_update(0, folder, source="local")
                 log.info("imported local OTA update %s (%s)", record["id"], (record["sha"] or "")[:8])
-            except Rejected as e:
-                log.warning("local OTA build %s rejected: %s", os.path.basename(folder), e)
+            except (Rejected, ValueError) as e:  # ValueError: a malformed JSON file
+                # Kept aside under a dot name (never imported or retried) for a look at what was wrong.
+                log.warning("local OTA build %s rejected: %s", name, e)
+                aside = os.path.join(s.inbox_dir, f".rejected-{name}")
+                shutil.rmtree(aside, ignore_errors=True)
+                try:
+                    os.replace(folder, aside)
+                except OSError:
+                    shutil.rmtree(folder, ignore_errors=True)
+                continue
             except OSError as e:  # left in the inbox: the next pass tries again
-                log.warning("local OTA build %s not imported yet: %s", os.path.basename(folder), e)
+                log.warning("local OTA build %s not imported yet: %s", name, e)
                 continue
             shutil.rmtree(folder, ignore_errors=True)
 
