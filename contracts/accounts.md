@@ -36,15 +36,25 @@ login is never touched); the code goes to its input. A sign-in left open expires
 A switch moves every Claude on the server to the chosen account: the coding agents (each Claude in a
 tmux pane on the default socket) and EDITH herself (edith-claude). The chat drops for about 30 s.
 
-**Only when idle.** Otherwise 409 with `error` saying why, e.g. `Can't switch while edith-dev is
-busy; 2 messages queued`. The reasons: EDITH is working on a task, parallel tasks are running, messages
-are queued, an approval is waiting, an agent is busy or waiting for approval (each named), EDITH's own
-Claude is busy with background work, another Claude is running outside tmux, a switch is already
-running, or the account is already in use. Busy is read from each Claude's own session file
+**Only when idle or at the usage limit.** Otherwise 409 with `error` saying why, e.g. `Can't switch
+while edith-dev is working (not at the limit); 2 messages queued`. The reasons: EDITH is working on a
+task, parallel tasks are running, messages are queued, an approval is waiting, an agent or EDITH's own
+Claude is working, has background work running or is waiting for approval (each named, `(not at the
+limit)` where it applies), another Claude is running outside tmux, a switch is already running, or the
+account is already in use. Busy is read from each Claude's own session file
 (`~/.claude/sessions/<pid>.json`): anything but `idle` counts as busy, background subagents and shells
-included. A Claude whose process isn't named `claude` blocks too (it can't be checked). An agent that
-only hit its usage limit doesn't block. The switch checks all of this again
-right before it stops anything, and ends `failed` (nothing changed) if it no longer holds.
+included. A Claude whose process isn't named `claude` blocks too (it can't be checked).
+
+**At the usage limit.** A Claude (an agent, or EDITH's under `tmux -L edith`) whose screen shows its
+usage limit (`Usage limit reached`, `You've hit your limit`… or the rate-limit menu `What do you want
+to do?` / `Stop and wait for limit to reset`) doesn't block, even though its session file stays
+non-idle for the turn the limit cut off: that is when a switch is needed. Screens are read with
+`capture-pane` only. It is restarted and resumed on the new account like the others; resuming brings
+back the conversation, not the cut-off turn, so a done switch's `detail` names each one, e.g.
+`edith-status was at the limit; it was resumed, but its interrupted task needs sending again`.
+
+The switch checks all of this again right before it stops anything, and ends `failed` (nothing
+changed) if it no longer holds.
 
 **While it runs** EDITH takes no new work: messages from the app and Telegram wait in her queue (each
 gets `turn.queued`) and run in order once the switch has ended, however it ended.
@@ -71,8 +81,9 @@ reconnecting, the app reads `switch` from `GET /v1/accounts` to show where it is
   "agents": ["edith-app", "edith-dev"] }
 ```
 
-- `state`: `running`, then `done`, `rolled_back` (the new account didn't come up; the old one is back;
-  `detail` says why) or `failed` (`detail` says why; also when a switch stopped before finishing).
+- `state`: `running`, then `done` (`detail`: who was at the usage limit, or `null`), `rolled_back` (the
+  new account didn't come up; the old one is back; `detail` says why) or `failed` (`detail` says why;
+  also when a switch stopped before finishing).
 - `previous` is the account switched from (`null` until it is known, at `saving`). `agents` are the
   tmux sessions being restarted.
 - A finished switch stays in `GET /v1/accounts` for an hour; `null` when there was none.

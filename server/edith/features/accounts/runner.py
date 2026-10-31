@@ -5,8 +5,10 @@ doesn't start edith-claude), until the last report.
 
     python3 -m edith.features.accounts.runner <plan.json>
 
-0. Check again that every Claude is idle (their session files, EDITH's included) and that the agents
-   are the ones in the plan; otherwise stop here, having changed nothing.
+0. Check again that every Claude is idle (their session files, EDITH's included) or at its usage
+   limit, and that the agents are the ones in the plan; otherwise stop here, having changed nothing.
+   A done switch's `detail` names the ones that were at the limit (resumed; an interrupted task
+   needs sending again).
 1. stopping: every agent's Claude (SIGTERM through a pidfd, after checking it is still that Claude;
    its pane kept with remain-on-exit), then edith-claude (`systemctl --user stop`). Nothing may run
    with the old login while the files change, or it could refresh and write the old one back.
@@ -51,6 +53,16 @@ BOTTOM = 15
 
 class StepError(Exception):
     pass
+
+
+def limit_note(at_limit) -> str | None:
+    """For a done switch: the Claudes that were at their usage limit, now resumed on the new account.
+    `--resume` (and EDITH's launcher) bring back the conversation, not the turn the limit cut off, so
+    an interrupted one is named as needing its task sent again."""
+    notes = [f"{c['name']} was at the limit; it was resumed"
+             + (", but its interrupted task needs sending again" if c.get("interrupted") else "")
+             for c in at_limit]
+    return "; ".join(notes) or None
 
 
 class System:
@@ -107,6 +119,7 @@ class Switch:
         self.edith_tmux = tmux + ["-L", plan.get("edith_socket", "edith")]
         self.service = plan.get("service", "edith-claude")
         self.down: set[str] = set()  # panes stopped and not started again yet
+        self.at_limit = [dict(c) for c in plan.get("at_limit", [])]  # [{name, interrupted}], as of the recheck
         self.foreign = False  # the live credentials stopped matching the profile: their origin is unknown
         self.status = {"run": plan["run"], "unit": plan.get("unit"), "target": plan["target"], "previous": None,
                        "state": "running", "step": None, "detail": None, "started": self.sys.now(),
@@ -141,8 +154,8 @@ class Switch:
         return int(parts[1]) if len(parts) == 2 and parts[0] == "0" and parts[1].isdigit() else None
 
     def recheck(self):
-        """Right before stopping anything: still idle, and still the same agents."""
-        agents, why = self.panes.blockers()
+        """Right before stopping anything: still idle (or at the usage limit), and still the same agents."""
+        agents, why, self.at_limit = self.panes.blockers()
         if why:
             raise StepError("Can't switch now: " + "; ".join(why))
         if sorted((a["pane"], a["pid"]) for a in agents) != sorted((a["pane"], a["pid"]) for a in self.agents):
@@ -264,7 +277,7 @@ class Switch:
         try:
             self.report("installing")
             self._up(target)
-            return "done", None
+            return "done", limit_note(self.at_limit)
         except Exception as e:
             detail = str(e) or type(e).__name__
         if previous is None:

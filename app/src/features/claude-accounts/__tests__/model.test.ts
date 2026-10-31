@@ -66,6 +66,14 @@ describe('claude accounts', () => {
     expect(switchLine({ ...base, state: 'failed', detail: null }, ACCOUNTS)).toBe('The switch failed.');
   });
 
+  it('says who was at the limit after a switch', () => {
+    const base = { run: 'r', target: 'aaaa1111', previous: 'bbbb2222', step: 'checking', started: 1, ts: 2, agents: [] };
+    expect(switchLine({ ...base, state: 'done', detail: null }, ACCOUNTS)).toBe('Switched to Personal.');
+    expect(switchLine({ ...base, state: 'done', detail: 'edith-status was at the limit; it was resumed' }, ACCOUNTS)).toBe(
+      'Switched to Personal. edith-status was at the limit; it was resumed.',
+    );
+  });
+
   it('adds an account: link, then the pasted code', async () => {
     const { model, t, list } = setup();
     await model.refresh();
