@@ -260,7 +260,7 @@ export const motion = {
   grow: { damping: 17, stiffness: 260, mass: 0.9 }, // a sheet growing out of its trigger
   pressScale: 0.95,
   blobMs: 2400, // one breath of the working blob
-  bubbleMs: 4200, // one cycle of the thinking bubble's wobble and swirl
+  bubbleMs: 4200, // one cycle of the thinking bubble's rim wobble
   swipe: { damping: 20, stiffness: 320, mass: 0.7 }, // a swiped message springing back
 } as const;
 
@@ -278,18 +278,25 @@ export const titleGlow = {
 } as const;
 
 /**
- * The thinking bubble (ui/ThinkingBubble): an orb like Arpit's reference, in the app icon's
- * colours (app/assets/icon.png): silver-white bands, the rings' soft blue and a deeper rim blue,
- * with a faint lavender sheen for the soap-bubble shimmer.
+ * The home title's fill (Arpit, 31 Oct: "E.D.I.T.H heading doesn't have the theme color gradient"),
+ * left to right: the logo's blue, the bubble's lavender sheen, an icy cyan. All light enough to read
+ * on the dark header; ui/GradientTitle draws it, with titleGlow's colour as the halo.
+ */
+export const titleGradient = ['#8DB4F0', '#B6A6F0', '#8BE0EE'] as const;
+
+/**
+ * The thinking bubble (ui/ThinkingBubble): a soap bubble in the app icon's colours
+ * (app/assets/icon.png). The middle is see-through with only a faint blue tint; the body brightens
+ * towards a thin iridescent rim (silver at the top-left, the rings' blue, a lavender sheen, a deeper
+ * blue on the far side); one crisp glint at the top-left and a small one at the bottom-right.
  */
 export const bubble = {
-  core: 'rgba(16, 23, 29, 0.55)', // the icon's ink, see-through: the middle of the orb
-  body: 'rgba(124, 174, 220, 0.30)', // the soft blue the body fades to at the edge
+  core: 'rgba(124, 174, 220, 0.04)', // the middle: almost clear, a faint tint
+  body: 'rgba(124, 174, 220, 0.30)', // the soft blue the body brightens to just inside the rim
   rimLit: '#E8EEF6', // the silver catching light (top-left)
   rimMid: brand.blue,
   rimDeep: '#4F7FD0', // the icon's deeper blue on the rim's far side
   sheen: 'rgba(176, 164, 236, 0.60)', // a lavender shimmer on the rim
-  bandSilver: 'rgba(232, 238, 246, 0.85)',
-  bandBlue: 'rgba(124, 174, 220, 0.85)',
-  bandDeep: 'rgba(96, 140, 222, 0.80)',
+  glint: 'rgba(250, 252, 255, 0.95)', // the specular glints
+  reflection: 'rgba(232, 238, 246, 0.28)', // the faint inner reflection arc
 } as const;
