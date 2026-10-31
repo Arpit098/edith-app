@@ -20,7 +20,7 @@ import { useReduceMotion } from './motion';
 const AnimatedPath = Animated.createAnimatedComponent(Path);
 
 const STILL = 0.18; // the phase of the still frame: the rim gently uneven
-const AMP = 0.05; // the rim's wobble, as a share of the radius
+const AMP = 0.035; // the rim's wobble, as a share of the radius: a soft skin, not a blob
 const VIEW = 100; // the SVG's own units; `size` scales it
 const C = VIEW / 2;
 const R = VIEW * 0.42; // room around it for the wobble and the rim's stroke

@@ -298,5 +298,5 @@ export const bubble = {
   rimDeep: '#4F7FD0', // the icon's deeper blue on the rim's far side
   sheen: 'rgba(176, 164, 236, 0.60)', // a lavender shimmer on the rim
   glint: 'rgba(250, 252, 255, 0.95)', // the specular glints
-  reflection: 'rgba(232, 238, 246, 0.28)', // the faint inner reflection arc
+  reflection: 'rgba(232, 238, 246, 0.2)', // the faint inner reflection arc
 } as const;
