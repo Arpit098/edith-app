@@ -24,7 +24,7 @@ export type ButtonRows = ReplyButton[][];
  */
 export interface EventDataMap {
   // Frontend messages (contracts/events.md, "Messages from Arpit"): accepted at once with the POST's ref; clean text.
-  'message.user': { text: string; voice: boolean; cursor: string; ref?: string; delivery?: 'main' | 'queued' | 'side_lane'; lane?: 'main' | 'queued' | 'side'; attachments?: string[]; replying_to?: string | null };
+  'message.user': { text: string; voice: boolean; cursor: string; ref?: string; delivery?: 'main' | 'queued' | 'side_lane' | 'command'; lane?: 'main' | 'queued' | 'side' | 'command'; attachments?: string[]; replying_to?: string | null };
   'message.assistant': { text: string; cursor: string; lane?: Lane; ref?: string; files?: string[] };
   'tool.call': { id: string; name: string; summary: string; cursor: string };
   'tool.result': { id: string; name: string; ok: boolean; summary: string; cursor: string };
@@ -44,9 +44,10 @@ export interface EventDataMap {
   'reminder.due': { id: string; text: string; every: string | null; due: number; late: boolean };
   'message.system': { text: string; buttons?: ButtonRows; key?: string; ref?: string };
   'message.buttons_cleared': { key: string };
-  'command.reply': { ref: string; text: string; buttons?: ButtonRows };
-  // How Claude took a frontend message, and the reaction Telegram would show (contracts/events.md):
-  'message.delivered': { ref: string; delivery: 'main' | 'mid_turn' | 'side_lane'; rid: string };
+  'command.reply': { ref: string; text: string; buttons?: ButtonRows }; // also the answer to a /command typed in the chat (same ref)
+  // How Claude took a frontend message, and the reaction Telegram would show (contracts/events.md).
+  // "command": a typed /command the bridge ran itself (no run id).
+  'message.delivered': { ref: string; delivery: 'main' | 'mid_turn' | 'side_lane' | 'command'; rid: string | null };
   'message.reaction': { ref: string; emoji: string }; // EDITH's reaction on Arpit's message; the latest wins
   // App-local events (never sent by the server):
   'app.connected': { first: boolean }; // core/connection.ts: the stream (re)opened; resync what may be missed

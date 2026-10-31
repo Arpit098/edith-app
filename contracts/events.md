@@ -30,7 +30,7 @@ Every event on the bus, and on the app's `/v1/stream` WebSocket, has this shape:
 | `turn.failed` | `{ref, reason, detail}` | A turn ends without a reply. `reason`: `not_ready`, `crashed` or `error` |
 | `reminder.due` | `{id, text, every, due, late}` | A reminder fires. `due` is a unix time; `late` is true if it fired over 2 minutes late |
 | `message.system` | `{text, buttons}` | A feature has something for Arpit that isn't a reply to a turn (a reminder, the crash notice). Frontends show it; Telegram sends it to the first allowed chat |
-| `command.reply` | `{ref, text, buttons}` | A command or button the app used answers later (e.g. a conversation switch); `ref` is the one its request returned |
+| `command.reply` | `{ref, text, buttons}` | A command or button the app used answers later (e.g. a conversation switch); `ref` is the one its request returned. A command typed in the chat sends all its replies this way (see "Typed commands") |
 
 | `turn.retrying` | `{ref, lane, reason}` | A turn starts over (a side lane whose conversation is gone runs again fresh); frontends drop that turn's status message |
 | `voice.turn` | `{ref}` | The App API accepted a `POST /v1/messages` with `voice: true` (sent before the turn's own events). Origin `app` |
@@ -100,15 +100,25 @@ message never vanishes from the app, whichever way it reaches Claude. All carry 
     line are taken out.
   - `attachments` is the list of saved file paths (`[]` if none); `replying_to` is the quoted text or `null`.
   - `delivery` is the expected route: `main` (the main lane takes it now), `queued` (it waits for the main
-    lane) or `side_lane` (a parallel lane runs it now). `lane` is `main`, `queued` or `side`.
+    lane), `side_lane` (a parallel lane runs it now) or `command` (see "Typed commands" below). `lane`
+    is `main`, `queued`, `side` or `command`.
 - `message.delivered.delivery` is what happened:
   - `main`: it started a main-lane turn;
   - `mid_turn`: Claude was still working, and Claude Code folded the message into the running turn
     (the transcript then has it inside a tool result, not as a user message);
-  - `side_lane`: a parallel lane (a fork of the conversation) started on it.
+  - `side_lane`: a parallel lane (a fork of the conversation) started on it;
+  - `command`: the bridge ran it as a command (`rid` is `null`).
 
   A queued message gets `message.delivered` when its turn starts. `rid` is the run id in the prompt's
   `[tg-ref <rid>]` tag.
+- **Typed commands.** An app message whose first word is a registered command (`/compact`, `/stop`,
+  `/status`, `/queue`, `/help`, …; the same list as `GET /v1/commands` plus unlisted ones like `/start`)
+  runs that command through the registry, exactly as on Telegram; Claude never sees it. In order: `message.user`
+  and `message.delivered`, both with `delivery: "command"`, then each reply as `command.reply {ref, text,
+  buttons}` with the message's `ref`, including late ones (e.g. "✅ Compacted." minutes later). The
+  reaction is 👌, as on Telegram. A command that hands text to Claude (`/queue …`, quick actions) then
+  sends the usual `message.user`/`message.delivered` for the same `ref`, which win. An unknown `/word`
+  is an ordinary message to Claude.
 - `message.reaction.emoji`, the same as Telegram's for the same moment:
   - 👀 accepted; 🥱 queued; 👨‍💻 a main-lane turn started (or back to work after an approval); ⚡ a
     side lane started (or back to work after an approval); 🙏 waiting for Arpit's approval;
@@ -143,7 +153,8 @@ message never vanishes from the app, whichever way it reaches Claude. All carry 
 | idle | `turn.done` / `turn.stopped` / `turn.failed` for that `ref` and `lane` |
 
 **Message log:** `message.user` (from frontends), `message.delivered`, `message.reaction`, the side-lane
-`message.assistant`, and side-lane `turn.started`/`turn.done` are also kept per conversation in
+`message.assistant`, side-lane `turn.started`/`turn.done`, and the `command.reply` answers to a typed
+command (those whose `ref` is a logged message) are also kept per conversation in
 `~/.cache/edith/message-log/<session>.json` (atomic writes, the newest 500 events), so they survive a
 restart and appear in History. Logged events carry `data.log_id` (unique) and no `cursor`.
 
@@ -181,7 +192,7 @@ Base `http://<edith's Tailscale IP>:8787`, reachable over Tailscale only. Every 
 
 | Method | Path | Body | Answer |
 |---|---|---|---|
-| POST | `/v1/messages` | `{text, voice?: bool, queue?: bool, attachments?: [id]}` | `{ref, lane}`; the turn's events then arrive on the stream with this `ref`. `attachments`: ids from `POST /v1/attachments` (contracts/attachments.md) |
+| POST | `/v1/messages` | `{text, voice?: bool, queue?: bool, attachments?: [id]}` | `{ref, lane}`; the turn's events then arrive on the stream with this `ref`. A typed command answers `lane: "command"` and its replies come as `command.reply` (see "Typed commands"). `attachments`: ids from `POST /v1/attachments` (contracts/attachments.md) |
 | POST | `/v1/attachments` | the raw file (image or audio), `x-filename?` | `{id, name, type, size, sha256}` (contracts/attachments.md) |
 | GET | `/v1/stream` | WebSocket | every event above as one JSON text message `{type, ts, session_id, origin, data}`; the server pings every 25 s (protocol ping) when the line is quiet. The app connects as `/v1/stream?client=app` (the push decision counts only those, contracts/push.md). The app may send `{"type": "ping", "id"?: any}`; the answer is `{"type": "pong", "ts", "session_id": null, "origin": "system", "data": {"id"?}}` (`id` echoed). Any frame from the app counts as alive; two quiet periods without one (a ping left unanswered for 25 s) and the server drops it. Other text from the app is ignored |
 | POST | `/v1/stop` | | `{running, dropped: [ref]}` |

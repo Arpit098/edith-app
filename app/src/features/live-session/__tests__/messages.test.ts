@@ -423,3 +423,46 @@ describe('review fixes (PR #8)', () => {
     expect(JSON.parse(storage.data.get(OUTBOX_KEY) ?? '[]').map((e: { text: string }) => e.text)).toEqual(['first', 'second']);
   });
 });
+
+describe('a /command typed in the chat (the bridge runs it, like on Telegram)', () => {
+  const systems = (s: LiveState) => s.items.flatMap((x) => (x.kind === 'system' ? [x.text] : [])).reverse();
+
+  it('goes out as typed, gets its ticks, and shows the command replies under it, live and from history', async () => {
+    const { ctx, m } = setup();
+    let answer: (v: unknown) => void = () => {};
+    ctx.transport.on('POST /v1/messages', () => new Promise((r) => (answer = r)));
+    const sending = m.send('/compact');
+    expect(ctx.transport.calls.find((c) => c.path === '/v1/messages')?.body).toEqual({ text: '/compact' }); // not rewritten
+
+    // The server answers on the stream while the POST is still out: accepted, delivered, the first reply.
+    const ref = 'app:c1';
+    ctx.bus.publish(ev('message.user', { ref, text: '/compact', voice: false, delivery: 'command', lane: 'command' }, { origin: 'app' }));
+    ctx.bus.publish(ev('message.delivered', { ref, delivery: 'command', rid: null }, { origin: 'app' }));
+    ctx.bus.publish(ev('command.reply', { ref, text: '🗜 Compacting the conversation…', buttons: [] }, { origin: 'app' }));
+    answer({ ref, lane: 'command' });
+    await sending;
+    // Minutes later, the worker's reply; then a catch-up page repeats it from the message log.
+    ctx.bus.publish(ev('command.reply', { ref, text: '✅ Compacted.', buttons: [] }, { origin: 'app' }));
+    ctx.bus.publish(ev('command.reply', { ref, text: '✅ Compacted.', buttons: [] }, { origin: 'app' }));
+    // Someone else's reply (a button press, the commands screen) isn't shown here.
+    ctx.bus.publish(ev('command.reply', { ref: 'app:other', text: 'not mine', buttons: [] }, { origin: 'app' }));
+
+    const s = m.store.get();
+    expect(users(s)).toHaveLength(1);
+    expect(mine(s)).toMatchObject({ text: '/compact', ref, delivery: 'command', local: { status: 'sent' } });
+    expect(tickOf(mine(s), s.turns)).toBe('delivered');
+    expect(sendStatus(mine(s), s.turns)).toBe('answered'); // not "Queued: EDITH is busy"
+    expect(systems(s)).toEqual(['🗜 Compacting the conversation…', '✅ Compacted.']);
+    expect(workingLabel(s)).toBeNull(); // no turn: nothing "working"
+
+    // History (the message log) rebuilds the same thing.
+    const events = [
+      ev('message.user', { ref, text: '/compact', voice: false, delivery: 'command', lane: 'command' }, { origin: 'app' }),
+      ev('message.delivered', { ref, delivery: 'command', rid: null }, { origin: 'app' }),
+      ev('command.reply', { ref, text: '⚠️ EDITH is busy; try /compact when the task ends.', buttons: [] }, { origin: 'app' }),
+    ];
+    const rebuilt = events.reduce(reduce, initialLive);
+    expect(systems(rebuilt)).toEqual(['⚠️ EDITH is busy; try /compact when the task ends.']);
+    expect(tickOf(users(rebuilt)[0]!, rebuilt.turns)).toBe('delivered');
+  });
+});

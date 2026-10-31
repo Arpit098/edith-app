@@ -178,6 +178,17 @@ class Registry:
             raise ValueError(f"job {job.name} already registered by {self.jobs[job.name].owner}")
         self.jobs[job.name] = job
 
+    def find_command(self, text: str) -> tuple[Command, str] | None:
+        """A message that starts with a registered /command -> (that command, the rest of the message);
+        None for anything else, unknown /commands included (those go to the agent as text). Every
+        frontend parses typed commands here, so "/compact keep x" means the same everywhere.
+        Telegram's "/name@bot" form is accepted; names are case-insensitive."""
+        if not text.startswith("/"):
+            return None
+        parts = text.split(None, 1)
+        command = self.commands.get(parts[0][1:].split("@")[0].lower())
+        return (command, parts[1] if len(parts) > 1 else "") if command else None
+
     def press(self, action: str, origin: str, reply, ref: str | None = None) -> ActionResult | None:
         """Route a button press to the feature that owns its prefix. Unknown prefixes return None."""
         handler = self.actions.get(action.split(":", 1)[0])
