@@ -86,7 +86,7 @@ export function SettingsScreen({ connection, sections, meter, open: openStore }:
   const [ownStore] = useState(() => openStore ?? createStore<string | null>(null));
   const open = useStore(ownStore, selectPage);
   const setOpen = ownStore.set;
-  const page = open === null ? undefined : all.find((s) => s.title === open);
+  const page = open === null ? undefined : all.find((s) => s.title.toLowerCase() === open.toLowerCase()); // a link's page is lower case
   const onScreen = useOnScreen(connection);
 
   useEffect(() => {

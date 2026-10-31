@@ -1,12 +1,14 @@
 """Status details: GET /v1/status/details for the app's status panel (contracts/status.md).
 
-What EDITH's main lane is doing (thinking, a tool, waiting for approval) and since when, the side
+What EDITH's main lane is doing (thinking, a tool, waiting for approval, or waiting: her turn is
+over but background work it started still runs) and since when, that background work, the side
 lanes, the queue, pending approvals, the conversation, the coding agents in tmux and the live tag.
 
 The main lane's state comes from the bus (turn.*, tool.*, permission.*), so a request reads only
-what is already known: nothing is polled. The conversation's numbers come from the agent port
-(counted incrementally), the coding agents from tmux (cached for 5 s, agents.py) and the tag from
-`git describe` once (a deploy restarts the bridge). Free text is redacted before it is sent.
+what is already known: nothing is polled. The background work and the conversation's numbers come
+from the agent port (kept from the transcript as it grows), the coding agents from tmux and their
+session files (cached for 5 s, agents.py) and the tag from `git describe` once (a deploy restarts
+the bridge). Free text is redacted before it is sent.
 """
 import collections
 import os
@@ -81,7 +83,7 @@ def setup(ctx: Context) -> None:
     approvals = {}        # pending permission id -> lane
     summaries: collections.OrderedDict[str, str] = collections.OrderedDict()
     ttl = float(cfg.get("agents_ttl", 5))
-    agents = Agents(socket=cfg.get("agents_socket"), ttl=ttl)
+    agents = Agents(socket=cfg.get("agents_socket"), ttl=ttl, claude_dir=os.path.expanduser(cfg.get("claude_dir") or "~/.claude"))
     tmux_alive = Cached(agent.tmux_alive, ttl)  # `tmux has-session` at most once per ttl, like the agents
     live_dir = os.path.expanduser(cfg.get("live_dir") or str(pathlib.Path(__file__).resolve().parents[4]))
     tag = Cached(lambda: describe_live(live_dir))  # once: a deploy restarts the bridge
@@ -146,6 +148,11 @@ def setup(ctx: Context) -> None:
                      since=run.started)
         m["turn_started"] = run.started if run else None
         m["tmux"] = "running" if tmux_alive.get() else "down"
+        background = [{"id": j["id"], "kind": j["kind"], "label": redact(j["label"]), "started": j["started"]}
+                      for j in agent.background()]
+        if m["state"] == "idle" and background:
+            m["state"] = "waiting"  # the turn is over (`since` is when), but work it started goes on
+        m["background"] = background
         return m
 
     def api_details(req):

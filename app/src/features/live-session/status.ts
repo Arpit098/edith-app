@@ -1,7 +1,7 @@
 // The status panel's logic (StatusPanel.tsx draws it): the collapsed bar from the live store, kept
 // current by stream events alone, and the open card's details fetch (contracts/status.md).
 
-import type { StatusDetails } from '../../core/api';
+import type { BackgroundJob, StatusDetails } from '../../core/api';
 import type { Store } from '../../core/store';
 import type { LiveState, TurnStart } from './model';
 
@@ -9,9 +9,12 @@ export type BarState = StatusDetails['edith']['state'];
 
 export interface BarSummary {
   state: BarState;
-  tone: 'idle' | 'busy' | 'approval';
-  label: string; // "Running Bash", "Thinking", "Waiting for approval", "Idle"
-  counts: string; // "1 parallel · 2 queued · 1 approval", or ""
+  // waiting: EDITH's turn is over but work it started runs on in the background. Calm, not working:
+  // no turn timer, and Stop has no turn to end.
+  tone: 'idle' | 'busy' | 'approval' | 'waiting';
+  label: string; // "Running Bash", "Thinking", "Waiting for approval", "Waiting on background work", "Idle"
+  counts: string; // "1 parallel · 2 queued · 1 approval · 1 bg", or ""
+  background: number; // background jobs running
   // The pill's right side: the step running ("$ npm test") or, between steps, Arpit's latest prompt.
   // Never the session's title, which is often a long first message (it's in the card, labelled).
   detail: string | null;
@@ -34,15 +37,48 @@ export function barSummary(s: LiveState): BarSummary {
   const main = runs.find((r) => r.lane === 'main') ?? runs[0];
   const approvals = Object.keys(s.approvals).length;
   const side = runs.filter((r) => r.lane === 'side').length;
-  const counts = [side ? `${side} parallel` : '', s.queued ? `${s.queued} queued` : '', approvals ? plural(approvals, 'approval') : '']
+  const background = s.background.length;
+  const counts = [side ? `${side} parallel` : '', s.queued ? `${s.queued} queued` : '', approvals ? plural(approvals, 'approval') : '', background ? `${background} bg` : '']
     .filter(Boolean)
     .join(' · ');
   const prompt = s.items.find((x) => x.kind === 'user' && x.text.trim() !== ''); // newest first: stops at the latest
   const detail = main?.active && main.step ? main.step : prompt?.kind === 'user' ? prompt.text.trim() : null;
-  if (approvals) return { state: 'waiting_approval', tone: 'approval', label: 'Waiting for approval', counts, detail };
-  if (main?.active && main.step) return { state: 'tool', tone: 'busy', label: `Running ${toolName(main.step)}`, counts, detail };
-  if (main || s.main === 'busy') return { state: 'thinking', tone: 'busy', label: 'Thinking', counts, detail };
-  return { state: 'idle', tone: 'idle', label: 'Idle', counts, detail };
+  const bar = { counts, detail, background };
+  if (approvals) return { state: 'waiting_approval', tone: 'approval', label: 'Waiting for approval', ...bar };
+  if (main?.active && main.step) return { state: 'tool', tone: 'busy', label: `Running ${toolName(main.step)}`, ...bar };
+  if (main || s.main === 'busy') return { state: 'thinking', tone: 'busy', label: 'Thinking', ...bar };
+  if (background) return { state: 'waiting', tone: 'waiting', label: 'Waiting on background work', ...bar, detail: s.background[0]!.label };
+  return { state: 'idle', tone: 'idle', label: 'Idle', ...bar };
+}
+
+const KIND: Record<BackgroundJob['kind'], string> = { shell: 'Shell', agent: 'Agent' };
+
+/** How long a job has run: "<1 min", "3 min", "1 h 5 min". */
+export function formatRunFor(seconds: number): string {
+  const m = Math.floor(Math.max(0, seconds) / 60);
+  if (m < 1) return '<1 min';
+  return m >= 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${m} min`;
+}
+
+/** "Shell · Wait for PR 41 CI · 3 min"; `now` on the same clock as `started` (the server's). */
+export function backgroundLine(job: BackgroundJob, now: number): string {
+  return [KIND[job.kind], job.label, job.started != null ? formatRunFor(now - job.started) : null].filter(Boolean).join(' · ');
+}
+
+/**
+ * What Stop says while only background work runs: there is no turn for it to end, and it doesn't
+ * cancel that work (POST /v1/stop ends turns only). `request` is the message that asks EDITH to.
+ */
+export function backgroundStopPrompt(jobs: BackgroundJob[], now: number): { title: string; message: string; request: string } {
+  const n = jobs.length;
+  return {
+    title: n === 1 ? 'Background work running' : `${n} background jobs running`,
+    message:
+      `EDITH's reply is done, so Stop has no turn to end, and it doesn't cancel ${n === 1 ? 'this' : 'these'}:\n` +
+      jobs.map((j) => `• ${backgroundLine(j, now)}`).join('\n') +
+      `\n\n${n === 1 ? 'It reports' : 'They report'} back when done. Ask EDITH to cancel ${n === 1 ? 'it' : 'them'}?`,
+    request: `Please cancel your background work: ${jobs.map((j) => j.label).join('; ')}.`,
+  };
 }
 
 /** "0:42", "12:05", "1:02:03" */
@@ -101,6 +137,8 @@ export type AgentTone = 'busy' | 'idle' | 'warn' | 'danger';
 export function agentChip(a: StatusDetails['agents'][number]): { label: string; tone: AgentTone } {
   if (a.blocked === 'usage_limit') return { label: 'Usage limit', tone: 'danger' };
   if (a.blocked === 'permission' || a.state === 'blocked') return { label: 'Needs approval', tone: 'warn' };
+  // Its turn is over; a shell or subagent it started runs on: calm, like idle, but said.
+  if (a.state === 'waiting') return { label: a.background === 'shell' ? 'Waiting · bg shell' : 'Waiting · bg work', tone: 'idle' };
   return a.state === 'busy' ? { label: 'Busy', tone: 'busy' } : { label: 'Idle', tone: 'idle' };
 }
 
@@ -113,6 +151,8 @@ export function detailsLabel(e: StatusDetails['edith']): string {
       return 'Thinking';
     case 'waiting_approval':
       return `Waiting for approval${e.tool ? ` (${e.tool})` : ''}`;
+    case 'waiting':
+      return 'Reply done · waiting on background work';
     default:
       return 'Idle';
   }

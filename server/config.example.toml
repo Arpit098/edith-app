@@ -12,6 +12,8 @@ notifiers = ["telegram"]   # add "ntfy" for app pushes (deploy/ntfy/README.md)
 work_dir = "~/edith"
 tmux_socket = "edith"
 max_side_lanes = 2
+# busy_policy = "queue"   # main lane busy: "queue" (the running turn reads new messages before it answers;
+#                         # /btw <task> runs one in a side lane) or "side_lane" (every busy message in a side lane)
 
 [adapter.whisper_cpp]
 url = "http://127.0.0.1:8178"
@@ -61,6 +63,7 @@ cert_sha256 = "2B:6C:D3:6E:EA:02:20:9B:55:D9:7D:7A:78:20:E1:F6:81:A6:B1:60:67:3A
 
 # [features.notifications]
 # via = ["ntfy"]   # notifier adapters it pushes through
+# update_alerts = true   # push "EDITH update ready" / "New EDITH app version" (even while the app is open)
 
 # Per-feature settings go in [features.<name>], e.g.:
 # [features.reminders]

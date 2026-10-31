@@ -279,13 +279,6 @@ export const titleGlow = {
 } as const;
 
 /**
- * The home title's fill (Arpit, 31 Oct: "E.D.I.T.H heading doesn't have the theme color gradient"),
- * left to right: the logo's blue, the orb's lavender, an icy cyan. All light enough to read
- * on the dark header; ui/GradientTitle draws it, with titleGlow's colour as the halo.
- */
-export const titleGradient = ['#8DB4F0', '#B6A6F0', '#8BE0EE'] as const;
-
-/**
  * The thinking orb (ui/ThinkingBubble), a Siri-style orb in the app icon's colours
  * (app/assets/icon.png). Arpit, 31 Oct: "like the new Siri bubble, which is not transparent from
  * inside". It's an opaque sphere, deep indigo at the edge and the logo's blue in the middle, filled with

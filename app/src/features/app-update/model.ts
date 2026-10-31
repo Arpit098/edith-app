@@ -4,10 +4,13 @@
 import { backoffDelay, sleep as wait, type Backoff } from '../../common/backoff';
 import { isRetryable, type Api, type AppRelease } from '../../core/api';
 import type { EventBus } from '../../core/events';
-import type { AppInstaller, InstallStatus, OtaInfo, OtaUpdates, Transport } from '../../core/ports';
+import type { AppInstaller, AppVisibility, InstallStatus, KeyValueStore, OtaInfo, OtaUpdates, Transport } from '../../core/ports';
 import { createStore, type Store } from '../../core/store';
 
 export const AUTO_CHECK_EVERY_S = 6 * 3600; // automatic checks on connect, at most this often
+export const FOREGROUND_CHECK_S = 3600; // back in the foreground: check if the last check is older than this
+export const OPENED_CHECK_S = 60; // Settings → Updates opened (e.g. from the push): check unless just checked
+export const SEEN_KEY = 'app-update.seen'; // the last update the banner (or Settings → Updates) showed
 export const DOWNLOAD_ATTEMPTS = 3; // a failed download resumes from where it stopped
 const DOWNLOAD_BACKOFF: Backoff = { baseMs: 2000, maxMs: 15_000 };
 const CHANNEL = 'main';
@@ -22,10 +25,35 @@ export interface AppUpdateState {
   checking: boolean;
   error: string | null; // the last check's problem
   otaReady: boolean; // a newer JS bundle is downloaded; used on the next start
+  otaId: string | null; // that bundle's update id (the banner's key), when known
   phase: Phase;
   received: number;
   total: number;
   message: string | null; // what the APK install is doing, or why it stopped
+  seen: string | null; // bannerKey() of the last update Arpit saw (banner dismissed, or Updates opened)
+  seenLoaded: boolean; // `seen` read from the phone: no banner before, so a seen one never flashes
+  restarting: boolean; // "Restart to update": downloading the code update, then reloading
+}
+
+export interface UpdateBanner {
+  key: string;
+  text: string;
+  action: 'restart' | 'open'; // restart on the code update; open Settings → Updates (an APK to install)
+}
+
+/** What the update banner is about: a downloaded code update (for the running bundle), else a newer APK. */
+export function bannerKey(s: AppUpdateState): string | null {
+  if (s.otaReady) return `ota:${s.otaId ?? s.ota?.updateId ?? 'embedded'}`;
+  if (apkAvailable(s)) return `apk:${s.latest!.versionCode}`;
+  return null;
+}
+
+/** The in-app banner (the fallback when push is off): an update not seen yet, unless one is underway. */
+export function updateBanner(s: AppUpdateState): UpdateBanner | null {
+  const key = bannerKey(s);
+  if (!key || !s.seenLoaded || key === s.seen || s.phase === 'downloading' || s.phase === 'installing') return null;
+  if (s.otaReady) return { key, text: 'Update ready · Restart', action: 'restart' };
+  return { key, text: `EDITH ${s.latest!.versionName} available · Install`, action: 'open' };
 }
 
 export interface NoteSections {
@@ -58,6 +86,8 @@ export interface AppUpdateDeps {
   transport: Transport;
   installer?: AppInstaller;
   ota?: OtaUpdates;
+  data?: KeyValueStore; // remembers the update the banner last showed
+  visibility?: AppVisibility; // a check when EDITH comes back to the foreground
   notify: (text: string) => void;
   now?: () => number; // unix seconds
   sleep?: (ms: number) => Promise<void>;
@@ -74,6 +104,12 @@ export interface AppUpdateModel {
   allowInstalls(): Promise<void>;
   /** Restart now on the downloaded JS bundle. */
   applyOta(): Promise<void>;
+  /** "Restart to update": download the code update if it isn't yet, then restart on it. */
+  restartToUpdate(): Promise<void>;
+  /** The banner's update was seen (dismissed or acted on): it isn't shown again. */
+  markSeen(): void;
+  /** Settings → Updates is open: what it shows counts as seen; checks unless it just did. */
+  opened(): void;
   dispose(): void;
 }
 
@@ -102,18 +138,41 @@ export function createAppUpdateModel(deps: AppUpdateDeps): AppUpdateModel {
     checking: false,
     error: null,
     otaReady: false,
+    otaId: null,
     phase: 'idle',
     received: 0,
     total: 0,
     message: null,
+    seen: null,
+    seenLoaded: !deps.data,
+    restarting: false,
   });
+  if (deps.data) {
+    deps.data.get(SEEN_KEY).then(
+      (seen) => store.set((s) => ({ ...s, seen: s.seen ?? seen, seenLoaded: true })),
+      () => store.set((s) => ({ ...s, seenLoaded: true })),
+    );
+  }
   let notifiedFor = 0; // the versionCode we already told Arpit about
+
+  let recheck = false; // edith announced an update during a check: one more check after it
 
   async function check(manual: boolean) {
     if (store.get().checking) return;
+    try {
+      await checkOnce(manual);
+    } finally {
+      if (recheck) {
+        recheck = false;
+        void check(false);
+      }
+    }
+  }
+
+  async function checkOnce(manual: boolean) {
     store.set((s) => ({ ...s, checking: true, error: null }));
     const problems: string[] = [];
-    const [latest, otaReady] = await Promise.all([
+    const [latest, otaId] = await Promise.all([
       api.appLatest().catch((e: unknown) => {
         problems.push(`App: ${message(e)}`);
         return store.get().latest; // keep what we knew
@@ -123,14 +182,15 @@ export function createAppUpdateModel(deps: AppUpdateDeps): AppUpdateModel {
             // The first launch after a new token still sends the placeholder header (contract §1).
             const text = /401|unauthori/i.test(message(e)) ? 'not signed in yet; works after the next app start' : message(e);
             problems.push(`Code update: ${text}`);
-            return false;
+            return null;
           })
-        : Promise.resolve(false),
+        : Promise.resolve(null),
     ]);
     store.set((s) => ({
       ...s,
       latest,
-      otaReady: s.otaReady || otaReady,
+      otaReady: s.otaReady || otaId !== null,
+      otaId: otaId ?? s.otaId,
       checking: false,
       checkedAt: now(),
       error: problems.length ? problems.join(' · ') : null,
@@ -147,7 +207,35 @@ export function createAppUpdateModel(deps: AppUpdateDeps): AppUpdateModel {
     store.set((s) => ({ ...s, phase, message: text && phase === 'failed' ? `${label} (${text})` : label }));
   });
 
+  function markSeen() {
+    const key = bannerKey(store.get());
+    if (!key || store.get().seen === key) return;
+    store.set((s) => ({ ...s, seen: key }));
+    deps.data?.set(SEEN_KEY, key).catch(() => {});
+  }
+
+  const stale = (seconds: number) => {
+    const last = store.get().checkedAt;
+    return last === null || now() - last >= seconds;
+  };
+
   const offs = [
+    // edith announced a new update (contracts/app-updates.md §7): fetch it now, so the banner can offer it.
+    bus.on(
+      'app.update_available',
+      () => {
+        if (store.get().checking) recheck = true; // this check may have asked edith before the update came
+        else void check(false);
+      },
+      'app-update',
+    ),
+    ...(deps.visibility
+      ? [
+          deps.visibility.onChange((active) => {
+            if (active && stale(FOREGROUND_CHECK_S)) void check(false);
+          }),
+        ]
+      : []),
     bus.on(
       'app.connected',
       () => {
@@ -209,6 +297,29 @@ export function createAppUpdateModel(deps: AppUpdateDeps): AppUpdateModel {
     },
     async applyOta() {
       await ota?.reload();
+    },
+    async restartToUpdate() {
+      if (!ota || store.get().restarting) return;
+      store.set((s) => ({ ...s, restarting: true }));
+      try {
+        const id = store.get().otaReady ? store.get().otaId : await ota.fetchUpdate();
+        if (store.get().otaReady || id !== null) {
+          store.set((s) => ({ ...s, otaReady: true, otaId: id ?? s.otaId }));
+          markSeen();
+          await ota.reload();
+          return;
+        }
+        deps.notify('No code update to restart on');
+      } catch (e) {
+        deps.notify(`Couldn’t get the update: ${message(e)}`);
+      } finally {
+        store.set((s) => ({ ...s, restarting: false }));
+      }
+    },
+    markSeen,
+    opened() {
+      markSeen();
+      if (stale(OPENED_CHECK_S)) void check(false).then(markSeen);
     },
     dispose() {
       offStatus?.();

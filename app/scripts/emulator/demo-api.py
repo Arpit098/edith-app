@@ -58,6 +58,9 @@ HISTORY = [
         "- Compacting now: the main agent and the notifications agent, since both have finished their work.\n"
         "- Later: the app agent (its glass builds are still running) and the account-switching agent (waiting on "
         "its build and review). I'll compact them once their updates are merged.")}),
+    # Short slash commands: Android once drew these as just "/" (a break after the slash, then clipped).
+    ev("message.user", 70, {"text": "/compact", "voice": False, "ref": "app:3c", "delivery": "command", "attachments": []}, "app"),
+    ev("message.user", 60, {"text": "/status", "voice": False, "rid": None, "attachments": []}, "terminal"),
     ev("message.user", 40, {"text": "Now run the server tests and tell me if anything fails", "voice": False, "ref": "app:4", "delivery": "main", "attachments": []}, "app"),
     ev("message.delivered", 39, {"ref": "app:4", "delivery": "main", "rid": "r4"}),
     ev("message.reaction", 38, {"ref": "app:4", "emoji": "👀"}),

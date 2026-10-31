@@ -1,6 +1,7 @@
 """The collected builds on disk (contracts/app-updates.md), under <state_dir>/app-updates/:
 
-    index.json             what was collected: runs seen, APKs, updates (written atomically)
+    index.json             what was collected: runs seen, APKs, updates, and what was announced
+                           (app.update_available), written atomically
     apks/<versionCode>.apk
     updates/<id>/          manifest.json, manifest.sig, update.json (served verbatim)
     assets/<sha256 hex>    every update's files, shared by content
@@ -166,6 +167,10 @@ class Store:
         if stale:
             self._commit(lambda ix: [ix["runs"].pop(r) for r in stale])
 
+    def set_announced(self, announced):
+        """What has been announced (app.update_available); kept in the index so a restart never repeats it."""
+        self._commit(lambda ix: ix.__setitem__("announced", announced))
+
     def update_apk(self, version_code, **fields):
         self._commit(lambda ix: ix["apks"][str(version_code)].update(fields))
 
@@ -213,7 +218,8 @@ class Store:
             update_id, files = str(meta["id"]), list(meta["files"])
             record = {"id": update_id, "createdAt": float(meta["createdAt"]), "runtimeVersion": str(meta["runtimeVersion"]),
                       "channel": str(meta["channel"]), "platform": str(meta["platform"]), "sha": meta.get("sha"),
-                      "run_id": int(run_id), "source": source, "files": []}
+                      "run_id": int(run_id), "source": source, "files": [],
+                      "release_notes": meta.get("release_notes") if isinstance(meta.get("release_notes"), dict) else None}
         except (KeyError, TypeError, ValueError) as e:
             raise Rejected(f"update.json: bad or missing field ({e})")
         if (manifest.get("id"), manifest.get("runtimeVersion")) != (update_id, record["runtimeVersion"]):

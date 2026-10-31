@@ -27,9 +27,6 @@ Presentational components used by several features (buttons, chat bubble, diff v
   swirl and fold, and the glow and rim breathe: animated props computed in worklets from one phase,
   one UI-thread loop, no React renders per frame. Idle, or with "Remove animations" on, it's a still
   frame of the same orb.
-- **GradientTitle** (`GradientTitle.tsx`): the home header's "E.D.I.T.H" filled with the theme's
-  gradient (`titleGradient`: blue → lavender → cyan) over a soft blue glow, all in react-native-svg
-  (the glow is the same text stroked wide and faint, so it always lines up). Static.
 - **SwipeToReply** (`SwipeToReply.tsx`, maths in `swipe.ts`): drag a row right to reply. A
   PanResponder (no gesture library) claims only clearly sideways drags; the row follows a shared
   value and springs back on the UI thread. No haptic: `Vibration` needs the VIBRATE permission,

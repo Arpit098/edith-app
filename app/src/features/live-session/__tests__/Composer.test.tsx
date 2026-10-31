@@ -3,7 +3,7 @@
 // the server's commands), which closes on a tap outside and on back.
 
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
-import { AccessibilityInfo, BackHandler, Text, TextInput } from 'react-native';
+import { AccessibilityInfo, Alert, BackHandler, Text, TextInput } from 'react-native';
 
 import type { Command } from '../../../core/api';
 import { createStore } from '../../../core/store';
@@ -11,7 +11,7 @@ import { ChromeContext, GlassContext } from '../../../core/theme';
 import type { AttachmentsModel, DraftsState } from '../attachments';
 import { CLOSE_LABEL, MENU_LABEL } from '../ComposerMenu';
 import { toast } from '../../../ui/toast';
-import { LiveScreen } from '../LiveScreen';
+import { BUSY_PLACEHOLDER, LiveScreen } from '../LiveScreen';
 import { initialLive, type LiveModel } from '../model';
 import type { Quote } from '../reply';
 import type { VoiceModel, VoiceState } from '../voice';
@@ -139,6 +139,40 @@ describe('Composer', () => {
     await act(async () => press(r, 'Stop'));
     expect(f.model.stop).toHaveBeenCalled();
     expect(toast).toHaveBeenCalledWith('Stopped');
+  });
+
+  it('says /btw runs a message in parallel while EDITH works (a plain one is read by the running task)', () => {
+    const f = fakes();
+    const r = render(f);
+    const box = () => r.root.findAllByType(TextInput).find((n) => n.props.accessibilityLabel === 'Message')!;
+    expect(box().props.placeholder).toBe('Message');
+    act(() => f.model.store.set((s) => ({ ...s, main: 'busy' })));
+    expect(box().props.placeholder).toBe(BUSY_PLACEHOLDER);
+    expect(BUSY_PLACEHOLDER).toContain('/btw');
+    act(() => f.model.store.set((s) => ({ ...s, main: 'idle' })));
+    expect(box().props.placeholder).toBe('Message');
+  });
+
+  it('with only background work running: no Stop, a calm button that says what Stop would and would not cancel', async () => {
+    const f = fakes();
+    const r = render(f);
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    const job = { id: 'tu1', kind: 'shell' as const, label: 'Wait for PR 41 CI', started: Date.now() / 1000 - 125 };
+    act(() => f.model.store.set((s) => ({ ...s, background: [job] })));
+    expect(byLabel(r, 'Stop')).toHaveLength(0); // no turn runs: nothing looks like one
+    await act(async () => press(r, 'Background work running'));
+    expect(f.model.stop).not.toHaveBeenCalled();
+    const [title, message, buttons] = alert.mock.calls[0]!;
+    expect(title).toBe('Background work running');
+    expect(message).toContain("Stop has no turn to end, and it doesn't cancel this:\n• Shell · Wait for PR 41 CI · 2 min");
+    expect(buttons!.map((b) => b.text)).toEqual(['Keep running', 'Ask EDITH to cancel']);
+    await act(async () => buttons![1]!.onPress!());
+    expect(f.model.send).toHaveBeenCalledWith('Please cancel your background work: Wait for PR 41 CI.');
+    // A turn starts: the real Stop is back.
+    act(() => f.model.store.set((s) => ({ ...s, main: 'busy' })));
+    expect(byLabel(r, 'Stop')).toHaveLength(1);
+    expect(byLabel(r, 'Background work running')).toHaveLength(0);
+    alert.mockRestore();
   });
 });
 

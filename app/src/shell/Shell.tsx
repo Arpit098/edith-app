@@ -12,11 +12,10 @@ import { createStore, useStore } from '../core/store';
 import { ChromeContext, chrome, colors, space, titleGlow, type } from '../core/theme';
 import { Ambient } from '../ui/Ambient';
 import { Glass, useBackdrop } from '../ui/Glass';
-import { GradientTitle } from '../ui/GradientTitle';
 import { Icon } from '../ui/Icon';
 import { ConnectionPill } from './ConnectionPill';
 import { ConnectScreen } from './ConnectScreen';
-import { linkScreen, useDeepLinks } from './links';
+import { linkTarget, useDeepLinks } from './links';
 import { MenuButton, NavMenu } from './NavMenu';
 import { back, current, navigate, type NavState } from './navigation';
 import { SERVER_CONNECTION, SettingsScreen } from './SettingsScreen';
@@ -85,10 +84,10 @@ function Main({ loaded, connection, meter }: { loaded: LoadedFeatures; connectio
     return () => sub.remove();
   }, [home]);
 
-  // A tapped notification or Live Alerts pill: edith://live, edith://approvals.
+  // A tapped notification or Live Alerts pill: edith://live, edith://approvals, edith://settings/updates.
   useDeepLinks((url) => {
-    const screen = linkScreen(url, (name) => routes.has(name), home);
-    if (screen) open(screen);
+    const target = linkTarget(url, (name) => routes.has(name), home);
+    if (target) open(target.screen, target.page);
   });
   // A feature's own link to a screen (e.g. Settings → Train wake word).
   useEffect(
@@ -154,14 +153,10 @@ function Main({ loaded, connection, meter }: { loaded: LoadedFeatures; connectio
         <View onLayout={onHeaderLayout} style={{ paddingTop: insets.top }}>
           {/* [● bubble 0:42]      E.D.I.T.H      [☰] (plans/ui-next.md §2); other screens show their own title. */}
           <View style={styles.headerRow}>
-            {/* The home title in the theme's gradient (ui/GradientTitle); other screens' titles stay plain text. */}
-            {top === home || !route ? (
-              <GradientTitle text={APP_TITLE} fontSize={type.size.heading} letterSpacing={1.5} style={styles.titleBox} />
-            ) : (
-              <Text style={styles.title} numberOfLines={1} accessibilityRole="header" pointerEvents="none">
-                {route.title}
-              </Text>
-            )}
+            {/* The title in off-white with the logo's soft blue glow (titleGlow); E.D.I.T.H on the home screen. */}
+            <Text style={styles.title} numberOfLines={1} accessibilityRole="header" pointerEvents="none">
+              {top === home || !route ? APP_TITLE : route.title}
+            </Text>
             {stacked ? (
               <Pressable onPress={() => setNav((s) => back(s, home) ?? s)} hitSlop={10} accessibilityRole="button" accessibilityLabel="Back" style={styles.backBtn}>
                 <Icon name="arrow-left" />
@@ -209,6 +204,5 @@ const styles = StyleSheet.create({
   backBtn: { paddingRight: space.xs },
   // Centred over the whole row whatever sits either side; its glow is a static text shadow (titleGlow).
   title: { position: 'absolute', left: 96, right: 96, textAlign: 'center', color: colors.text, fontSize: type.size.heading, fontWeight: '700', letterSpacing: 1.5, ...titleGlow },
-  titleBox: { position: 'absolute', left: 96, right: 96 },
   menuSlot: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
 });

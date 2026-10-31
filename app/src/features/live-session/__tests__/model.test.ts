@@ -97,15 +97,51 @@ describe('reduce', () => {
 
   it('seeds from /v1/status', () => {
     const s = applyStatus(initialLive, {
+      ts: null,
       main: 'busy',
       queued: 1,
       runs: [{ ref: 'r', lane: 'main', seconds: 40, step: 'Read a.ts' }],
+      background: [{ id: 'tu1', kind: 'shell', label: 'Wait for PR 41 CI', started: 100 }],
       tmux: 'running',
       conversation: true,
       session: { id: 's1', title: 'T' },
     });
     expect(summarize(s)).toEqual({ busy: true, step: 'Read a.ts', elapsed: 40, running: 1, queued: 1 });
     expect(s.session).toEqual({ id: 's1', title: 'T' });
+    expect(s.background).toEqual([{ id: 'tu1', kind: 'shell', label: 'Wait for PR 41 CI', started: 100 }]);
+  });
+
+  it('keeps the background work from background.changed, whole list each time', () => {
+    const bg = (jobs: unknown[]) => ev('background.changed', { jobs });
+    let s = reduce(initialLive, bg([{ id: 'tu1', kind: 'shell', label: 'Wait for PR 41 CI', started: 100 }, { id: 'tu2', kind: 'agent', label: 'Review PR 41', started: null }, 'junk']));
+    expect(s.background).toEqual([
+      { id: 'tu1', kind: 'shell', label: 'Wait for PR 41 CI', started: 100 },
+      { id: 'tu2', kind: 'agent', label: 'Review PR 41', started: null },
+    ]);
+    expect(summarize(s).busy).toBe(false); // not a turn: no Stop, no timer
+    s = reduce(s, bg([]));
+    expect(s.background).toEqual([]);
+  });
+
+  it("the main lane is idle once its turn ends, with no lane.status (the server sends none)", () => {
+    // Arpit's report: after the reply, the chip kept thinking, with its timer and Stop, until a reconnect.
+    const start = run([ev('turn.started', { ref: 'r1', lane: 'main' })]);
+    expect(summarize(start).busy).toBe(true);
+    for (const end of [
+      ev('turn.done', { ref: 'r1', lane: 'main', text: 'ok' }),
+      ev('turn.stopped', { ref: 'r1', lane: 'main' }),
+      ev('turn.failed', { ref: 'r1', lane: 'main', reason: 'crashed', detail: '' }),
+    ]) {
+      expect([reduce(start, end).main, summarize(reduce(start, end)).busy]).toEqual(['idle', false]);
+    }
+    // Ends that aren't the running main turn leave it busy: a side lane, a dropped queued message, a refused one.
+    for (const other of [
+      ev('turn.done', { ref: 's1', lane: 'side', text: 'ok' }),
+      ev('turn.stopped', { ref: 'q1', lane: 'queued' }),
+      ev('turn.failed', { ref: 'q2', lane: 'main', reason: 'queue_full', detail: '' }),
+    ]) {
+      expect(reduce(start, other).main).toBe('busy');
+    }
   });
 });
 
@@ -219,6 +255,20 @@ describe('createLiveModel', () => {
     ctx.bus.publish(say(7));
     await flush();
     expect(texts(m.store.get())).toEqual(['m7']);
+    m.dispose();
+  });
+
+  it("ages background work on the server's clock, never the phone's", async () => {
+    const ctx = fakeContext();
+    const server = Date.now() / 1000 + 3600; // edith's clock is an hour ahead of this phone
+    const job = { id: 'tu1', kind: 'shell', label: 'Wait for CI', started: server - 125 };
+    const m = createLiveModel(ctx.bus, ctx.api);
+    ctx.bus.publish(ev('background.changed', { jobs: [job] }, { ts: server }));
+    expect(m.store.get().clockOffset).toBeCloseTo(3600, 0);
+    ctx.transport.on('POST /v1/stop', { running: 0, dropped: [], background: [job], ts: server + 60 });
+    expect(await m.stop()).toBe('No reply to stop. Still running in the background: Shell · Wait for CI · 3 min'); // 185 s on edith's clock
+    ctx.transport.on('POST /v1/stop', { running: 0, dropped: [], background: [job] }); // an older server: no ts
+    expect(await m.stop()).toContain('Wait for CI · 3 min'); // the offset from the last answer (the phone's raw clock: "<1 min")
     m.dispose();
   });
 

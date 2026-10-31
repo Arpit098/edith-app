@@ -42,6 +42,10 @@ export interface ItemViewProps {
 }
 
 const REPLY_ACTIONS = [{ name: 'reply', label: 'Reply' }];
+// Android's default ("highQuality") line breaking can measure a short line narrower than it draws
+// with some system fonts (OnePlus's): the text then wraps where it may break ("/compact" after the
+// slash) and the bubble, sized for one line, clips the rest. "simple" measures and draws alike.
+const BREAK = 'simple';
 
 export const ItemView = memo(function ItemView({ item, onPress, tick, status, onRetry, onReply, onQuote, highlight }: ItemViewProps) {
   const a11yReply = onReply ? { accessibilityActions: REPLY_ACTIONS, onAccessibilityAction: () => onReply(item) } : {};
@@ -64,7 +68,7 @@ export const ItemView = memo(function ItemView({ item, onPress, tick, status, on
             {item.replyTo ? <QuoteView quote={item.replyTo} onPress={onQuote ? () => onQuote(item.id, item.replyTo!.text) : undefined} /> : null}
             {item.attachments.length ? <SentAttachments list={item.attachments} /> : null}
             {item.text ? (
-              <Text style={styles.text} selectable>
+              <Text style={styles.text} selectable textBreakStrategy={BREAK}>
                 {item.text}
               </Text>
             ) : null}
@@ -90,7 +94,7 @@ export const ItemView = memo(function ItemView({ item, onPress, tick, status, on
       return (
         <View style={[styles.bubble, styles.assistant, highlight && styles.highlight]} {...a11yReply}>
           {item.lane === 'side' ? <Text style={styles.meta}>⚡ Parallel answer (the main conversation was busy)</Text> : null}
-          <Text style={styles.text} selectable>
+          <Text style={styles.text} selectable textBreakStrategy={BREAK}>
             {item.text}
           </Text>
         </View>
@@ -102,7 +106,7 @@ export const ItemView = memo(function ItemView({ item, onPress, tick, status, on
     case 'system':
       return (
         <View style={[styles.system, item.tone === 'error' && styles.systemError]}>
-          <Text style={styles.text} selectable>
+          <Text style={styles.text} selectable textBreakStrategy={BREAK}>
             {item.text}
           </Text>
           {item.note ? <Text style={styles.note}>{item.note}</Text> : null}
