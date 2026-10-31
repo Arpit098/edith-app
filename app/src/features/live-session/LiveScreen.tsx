@@ -1,4 +1,4 @@
-import { memo, useCallback, useImperativeHandle, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { ActivityIndicator, FlatList, StyleSheet, Text, TextInput, View, type LayoutChangeEvent } from 'react-native';
 
 import type { Command } from '../../core/api';
@@ -7,11 +7,12 @@ import { colors, radius, space, type, useChrome } from '../../core/theme';
 import { Empty } from '../../ui/Empty';
 import { Glass, useBackdrop } from '../../ui/Glass';
 import { Icon } from '../../ui/Icon';
-import { SettleIn, Squish } from '../../ui/motion';
+import { SettleIn, Squish, useReduceMotion } from '../../ui/motion';
+import { SwipeToReply } from '../../ui/SwipeToReply';
 import { toast } from '../../ui/toast';
-import { ItemView } from './ItemView';
+import { ItemView, quoteLabel } from './ItemView';
 import { needsArgs, sendStatus, summarize, tickOf, type Item, type LiveModel, type LiveState } from './model';
-import { StatusPanel } from './StatusPanel';
+import { findQuoted, quoteOf, type Quote } from './reply';
 import { WorkingRow } from './WorkingRow';
 import { AttachmentBar } from './AttachmentBar';
 import { CLOSE_LABEL, ComposerMenu, MENU_LABEL } from './ComposerMenu';
@@ -29,9 +30,13 @@ export interface LiveScreenProps {
   attach: AttachmentsModel;
   /** Whether the composer's menu is open: its button and panel share it, and the feature closes it when another screen comes up. */
   menu: Store<boolean>;
+  /** The message being replied to (swipe to reply): its quote bar sits above the composer until sent or cancelled. */
+  reply: Store<Quote | null>;
 }
 
-export function LiveScreen({ model, voice, attach, menu }: LiveScreenProps) {
+const FLASH_MS = 1600; // how long the message a quote jumped to stays marked
+
+export function LiveScreen({ model, voice, attach, menu, reply }: LiveScreenProps) {
   const items = useStore(model.store, selectItems);
   const onPress = useCallback(
     (id: number, action: string) =>
@@ -40,19 +45,57 @@ export function LiveScreen({ model, voice, attach, menu }: LiveScreenProps) {
   );
   const turns = useStore(model.store, selectTurns); // changes only when a turn changes phase (not per progress event)
   const onRetry = useCallback((key: string) => void model.retry(key), [model]);
+  const onReply = useCallback((item: Item) => reply.set(quoteOf(item)), [reply]);
+
+  // Tapping a reply's quote scrolls to the message it quotes and marks it for a moment.
+  const list = useRef<FlatList<Item>>(null);
+  const reduce = useReduceMotion();
+  const [flash, setFlash] = useState<number | null>(null);
+  useEffect(() => {
+    if (flash === null) return;
+    const t = setTimeout(() => setFlash(null), FLASH_MS);
+    return () => clearTimeout(t);
+  }, [flash]);
+  const onQuote = useCallback(
+    (replyId: number, quote: string) => {
+      const items = model.store.get().items;
+      const index = findQuoted(items, quote, replyId);
+      if (index < 0) {
+        toast("The original message is further back than what's loaded.");
+        return;
+      }
+      setFlash(items[index]!.id);
+      list.current?.scrollToIndex({ index, viewPosition: 0.5, animated: !reduce });
+    },
+    [model, reduce],
+  );
+  // A row far up hasn't been measured yet: jump near it by the average height, then aim again.
+  const onScrollToIndexFailed = useCallback(
+    (info: { index: number; averageItemLength: number }) => {
+      list.current?.scrollToOffset({ offset: info.averageItemLength * info.index, animated: false });
+      setTimeout(() => list.current?.scrollToIndex({ index: info.index, viewPosition: 0.5, animated: !reduce }), 50);
+    },
+    [reduce],
+  );
+
   const renderItem = useCallback(
-    ({ item, index }: { item: Item; index: number }) => (
+    ({ item, index }: { item: Item; index: number }) => {
+      const replyable = item.kind === 'user' || item.kind === 'assistant';
+      const row =
+        item.kind === 'user' ? (
+          <ItemView item={item} onPress={onPress} tick={tickOf(item, turns)} status={sendStatus(item, turns)} onRetry={onRetry} onReply={onReply} onQuote={onQuote} highlight={flash === item.id} />
+        ) : (
+          <ItemView item={item} onPress={onPress} onReply={replyable ? onReply : undefined} highlight={flash === item.id} />
+        );
       // The newest message, if it just arrived, settles in on a spring; history and rows scrolled
       // back into view don't move.
-      <SettleIn animate={index === 0 && Date.now() / 1000 - item.ts < FRESH_S}>
-        {item.kind === 'user' ? (
-          <ItemView item={item} onPress={onPress} tick={tickOf(item, turns)} status={sendStatus(item, turns)} onRetry={onRetry} />
-        ) : (
-          <ItemView item={item} onPress={onPress} />
-        )}
-      </SettleIn>
-    ),
-    [onPress, onRetry, turns],
+      return (
+        <SettleIn animate={index === 0 && Date.now() / 1000 - item.ts < FRESH_S}>
+          {replyable ? <SwipeToReply onReply={() => onReply(item)}>{row}</SwipeToReply> : row}
+        </SettleIn>
+      );
+    },
+    [onPress, onRetry, onReply, onQuote, flash, turns],
   );
   const loadOlder = useCallback(() => void model.loadOlder(), [model]);
   const chromeInsets = useChrome();
@@ -62,7 +105,7 @@ export function LiveScreen({ model, voice, attach, menu }: LiveScreenProps) {
   const [composerHeight, setComposerHeight] = useState(COMPOSER_HEIGHT);
   const onComposerLayout = useCallback((e: LayoutChangeEvent) => setComposerHeight(Math.round(e.nativeEvent.layout.height)), []);
   const below = chromeInsets.bottom + composerHeight;
-  const listInsets = useMemo(() => ({ paddingBottom: chromeInsets.top + TURN_BAR_SPACE, paddingTop: below + space.s }), [chromeInsets.top, below]);
+  const listInsets = useMemo(() => ({ paddingBottom: chromeInsets.top + space.s, paddingTop: below + space.s }), [chromeInsets.top, below]);
   // The composer's menu (`menu`): its button (in the composer) and its panel (over the whole
   // screen, so a tap anywhere outside closes it) share it; toggling it re-renders only those two
   // and the transcript's wrapper (hidden from TalkBack while the menu is open).
@@ -80,6 +123,7 @@ export function LiveScreen({ model, voice, attach, menu }: LiveScreenProps) {
       <Transcript menu={menu} viewRef={backdrop.ref}>
         {items.length ? (
           <FlatList
+            ref={list}
             data={items}
             inverted // items are stored newest first: the newest sits at the bottom with no scroll-to-end
             keyExtractor={keyOf}
@@ -90,6 +134,7 @@ export function LiveScreen({ model, voice, attach, menu }: LiveScreenProps) {
             windowSize={9}
             removeClippedSubviews
             keyboardShouldPersistTaps="handled"
+            onScrollToIndexFailed={onScrollToIndexFailed}
             onEndReached={loadOlder} // the "end" of an inverted list is the top: older history
             onEndReachedThreshold={0.5}
             ListFooterComponent={<OlderSpinner model={model} />}
@@ -97,23 +142,19 @@ export function LiveScreen({ model, voice, attach, menu }: LiveScreenProps) {
           />
         ) : (
           // Outside the list: an inverted list would draw its empty component upside down.
-          <View style={[styles.screen, { paddingTop: chromeInsets.top + TURN_BAR_SPACE, paddingBottom: below }]}>
+          <View style={[styles.screen, { paddingTop: chromeInsets.top + space.s, paddingBottom: below }]}>
             <Empty icon="message-processing-outline" title="Nothing yet" detail="EDITH's live session shows up here as it happens, from the app, Telegram or the terminal." />
           </View>
         )}
       </Transcript>
       <ComposerMenu open={menu} bottom={below + space.xs} backdrop={backdrop.tag} attach={attach} voice={voice} loadCommands={loadCommands} onCommand={onCommand} />
       <View style={[styles.composerSlot, { bottom: chromeInsets.bottom }]} onLayout={onComposerLayout} pointerEvents="box-none">
-        <Composer model={model} voice={voice} attach={attach} backdrop={backdrop.tag} menu={menu} handle={draft} />
-      </View>
-      <View style={[styles.barSlot, { top: chromeInsets.top + space.s }]} pointerEvents="box-none">
-        <StatusPanel model={model} backdrop={backdrop.tag} />
+        <Composer model={model} voice={voice} attach={attach} backdrop={backdrop.tag} menu={menu} reply={reply} handle={draft} />
       </View>
     </View>
   );
 }
 
-const TURN_BAR_SPACE = 52; // the floating status pill plus its margins
 const COMPOSER_HEIGHT = 60; // until the composer has measured itself
 const FRESH_S = 4; // a message this new (by its timestamp) arrived just now
 
@@ -148,6 +189,7 @@ const selectDrafts = (s: DraftsState) => s.drafts;
 const selectAttachError = (s: DraftsState) => s.error;
 const selectPicking = (s: DraftsState) => s.picking;
 const selectOpen = (s: boolean) => s; // the composer menu's store
+const selectQuote = (s: Quote | null) => s; // the reply's store
 
 /** What the composer's menu can do to the message box. */
 export interface DraftHandle {
@@ -161,6 +203,7 @@ interface ComposerProps {
   attach: AttachmentsModel;
   backdrop: number | null;
   menu: Store<boolean>;
+  reply: Store<Quote | null>;
   handle: RefObject<DraftHandle | null>;
 }
 
@@ -169,7 +212,7 @@ interface ComposerProps {
  * the mic, or Stop while EDITH works, inside on the right) and the round send button. Attachments
  * and errors sit on their own glass above. It never re-renders for the keyboard: its props don't change.
  */
-const Composer = memo(function Composer({ model, voice, attach, backdrop, menu, handle }: ComposerProps) {
+const Composer = memo(function Composer({ model, voice, attach, backdrop, menu, reply, handle }: ComposerProps) {
   const busy = useStore(model.store, selectBusy);
   const voicePhase = useStore(voice.store, selectVoicePhase);
   const voiceError = useStore(voice.store, selectVoiceError);
@@ -178,6 +221,7 @@ const Composer = memo(function Composer({ model, voice, attach, backdrop, menu, 
   const attachError = useStore(attach.store, selectAttachError);
   const picking = useStore(attach.store, selectPicking);
   const menuOpen = useStore(menu, selectOpen);
+  const quote = useStore(reply, selectQuote);
   const [text, setText] = useState('');
   const [fromVoice, setFromVoice] = useState(false); // the box holds words Arpit said: send them as voice
   const [stopping, setStopping] = useState(false);
@@ -194,6 +238,11 @@ const Composer = memo(function Composer({ model, voice, attach, backdrop, menu, 
     }),
     [],
   );
+  // A message just swiped: type the reply straight away.
+  useEffect(() => {
+    if (quote) input.current?.focus();
+  }, [quote]);
+  const cancelReply = useCallback(() => reply.set(null), [reply]);
 
   const uploading = drafts.some((d) => d.status === 'uploading');
   const attachmentsReady = drafts.length > 0 && drafts.every((d) => d.status === 'ready');
@@ -220,8 +269,10 @@ const Composer = memo(function Composer({ model, voice, attach, backdrop, menu, 
     // The message shows at once with its ticks; a failure stays on its bubble with Retry.
     setText('');
     setFromVoice(false);
-    void model.send(t, { voice: fromVoice, attachments });
-  }, [closeMenu, canSend, attach, text, fromVoice, model]);
+    const replyTo = reply.get();
+    reply.set(null);
+    void model.send(t, { voice: fromVoice, attachments, replyTo });
+  }, [closeMenu, canSend, attach, text, fromVoice, model, reply]);
   const stop = () => {
     setStopping(true);
     model.stop().then(toast, (e: unknown) => toast(`Couldn't stop: ${e instanceof Error ? e.message : String(e)}`)).finally(() => setStopping(false));
@@ -238,11 +289,12 @@ const Composer = memo(function Composer({ model, voice, attach, backdrop, menu, 
     });
 
   const talking = voicePhase !== 'idle' && voicePhase !== 'starting';
-  const extras = (!!voiceError && !talking) || drafts.length > 0 || !!attachError || picking;
+  const extras = (!!voiceError && !talking) || drafts.length > 0 || !!attachError || picking || !!quote;
   return (
     <View style={styles.composer}>
       {extras ? (
         <Glass level="control" backdrop={backdrop} radius={radius.l} rim style={styles.extras}>
+          {quote ? <ReplyBar quote={quote} onCancel={cancelReply} /> : null}
           {voiceError && !talking ? <Text style={styles.voiceError}>{voiceError}</Text> : null}
           <AttachmentBar attach={attach} />
         </Glass>
@@ -260,7 +312,7 @@ const Composer = memo(function Composer({ model, voice, attach, backdrop, menu, 
                 value={text}
                 onChangeText={edit}
                 onFocus={closeMenu}
-                placeholder="Message EDITH"
+                placeholder="Message"
                 placeholderTextColor={colors.textFaint}
                 multiline
                 maxLength={8000}
@@ -321,6 +373,24 @@ const RoundButton = memo(function RoundButton({
   );
 });
 
+/** The quote bar above the message box: what the next message replies to, with ✕ to drop it. */
+function ReplyBar({ quote, onCancel }: { quote: Quote; onCancel: () => void }) {
+  const who = quote.from === 'edith' ? 'EDITH' : quote.from === 'arpit' ? 'your message' : 'a message';
+  return (
+    <View style={styles.reply}>
+      <View style={styles.replyText} accessible accessibilityLabel={`Replying to ${who}: ${quote.text}`}>
+        <Text style={styles.replyFrom}>{quote.from ? `Replying to ${quoteLabel(quote.from)}` : quoteLabel(null)}</Text>
+        <Text style={styles.replyQuote} numberOfLines={2}>
+          {quote.text}
+        </Text>
+      </View>
+      <Squish onPress={onCancel} style={styles.replyClose} hitSlop={8} accessibilityRole="button" accessibilityLabel="Cancel the reply">
+        <Icon name="close" size={18} color={colors.textDim} />
+      </Squish>
+    </View>
+  );
+}
+
 /** An icon button inside the message pill (the mic, Stop). */
 function InlineButton({ icon, color, onPress, busy, label }: { icon: string; color: string; onPress: () => void; busy?: boolean; label: string }) {
   return (
@@ -356,10 +426,14 @@ const styles = StyleSheet.create({
   screen: { flex: 1 },
   list: { paddingHorizontal: space.m, paddingTop: space.s, flexGrow: 1 },
   older: { padding: space.m },
-  barSlot: { position: 'absolute', left: space.l, right: space.l },
   composerSlot: { position: 'absolute', left: 0, right: 0 },
   composer: { marginHorizontal: space.m, marginBottom: space.s, gap: GAP },
   extras: { paddingBottom: space.s },
+  reply: { flexDirection: 'row', alignItems: 'center', gap: space.s, paddingLeft: space.m, paddingRight: space.xs, paddingTop: space.s },
+  replyText: { flex: 1, borderLeftWidth: 3, borderLeftColor: colors.accent, paddingLeft: space.s },
+  replyFrom: { color: colors.accent, fontSize: type.size.caption, fontWeight: '700' },
+  replyQuote: { color: colors.textDim, fontSize: type.size.small },
+  replyClose: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
   row: { flexDirection: 'row', alignItems: 'flex-end', gap: GAP },
   round: { width: ROUND, height: ROUND },
   roundGlass: { flex: 1, alignItems: 'center', justifyContent: 'center' },

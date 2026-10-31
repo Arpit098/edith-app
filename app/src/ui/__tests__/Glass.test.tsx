@@ -93,8 +93,10 @@ describe('Rim', () => {
     expect(g.props).toMatchObject({ x1: '0%', y1: '0%', x2: '100%', y2: '100%' }); // the bounding box's diagonal
     const op = g.findAllByType(Stop).map((s) => s.props.stopOpacity as number);
     const mid = op[2]!;
-    expect(op[0]).toBeGreaterThan(0.5); // top-left
-    expect(op[4]).toBeGreaterThan(0.5); // bottom-right
+    // Lit, yet near the thin glass edge's brightness (0.22): a hairline, not a frame (Arpit, 31 Oct).
+    expect(op[0]).toBeGreaterThan(0.3); // top-left
+    expect(op[0]).toBeLessThanOrEqual(0.6);
+    expect(op[4]).toBeGreaterThan(0.3); // bottom-right
     expect(mid).toBeLessThan(0.1); // halfway along the diagonal: the top-right and bottom-left corners
     expect(op[0]).toBeGreaterThanOrEqual(op[4]!); // the light comes from the top-left
   });
@@ -114,6 +116,13 @@ describe('Rim', () => {
         expect(p.rx).toBeCloseTo(Math.min(radius, w / 2, h / 2) - p.x);
         expect(p.fill).toBe('none');
       }
+    }
+  });
+
+  it('is thin: the rim and its inner glow about a hairline each, not a frame', () => {
+    for (const scheme of ['dark', 'light'] as const) {
+      expect(rims[scheme].width).toBeLessThanOrEqual(1);
+      expect(rims[scheme].glowWidth).toBeLessThanOrEqual(1);
     }
   });
 

@@ -21,6 +21,36 @@ export interface ConnectionState {
   retryInMs: number | null;
 }
 
+/** The link's dot colour, as a theme colour name (the shell's pill and the header's status chip). */
+export const LINK_TONE = {
+  loading: 'textDim',
+  unconfigured: 'textDim',
+  connecting: 'warn',
+  open: 'ok',
+  offline: 'danger',
+  unauthorized: 'danger',
+} as const satisfies Record<LinkState, string>;
+
+/** The link in words: "Connected", "Offline (…) · retrying in 5s", … */
+export function describeLink(s: Pick<ConnectionState, 'link' | 'error' | 'retryInMs'>): string {
+  switch (s.link) {
+    case 'open':
+      return 'Connected';
+    case 'connecting':
+      return 'Connecting…';
+    case 'offline': {
+      const retry = s.retryInMs ? ` · retrying in ${Math.ceil(s.retryInMs / 1000)}s` : '';
+      return `Offline${s.error ? ` (${s.error})` : ''}${retry}`;
+    }
+    case 'unauthorized':
+      return 'The server rejected the token. Change server to enter a new one.';
+    case 'loading':
+      return 'Loading…';
+    case 'unconfigured':
+      return 'Not set up';
+  }
+}
+
 /**
  * "edith", "100.1.2.3:8787", "http://edith:8787/" → "http://edith:8787".
  * Throws on anything that isn't a plain http(s) host[:port].

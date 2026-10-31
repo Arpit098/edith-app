@@ -184,11 +184,12 @@ keyboard_shown && adb shell input keyevent KEYCODE_BACK
 
 screenshots() {
 shot 01-live
-# The status card open over the long chat (Arpit's second screenshot): tap the pill, shoot, close.
-tap Idle || return 1
+# The status card open over the long chat (Arpit's second screenshot): tap the header's status
+# chip, shoot, close (the chip's spot is under the card's tap-outside layer, which closes it).
+tap "Connected. EDITH: Idle. Show details" || return 1
 wait_until "the status card" on_screen "edith-notify" || return 1
 shot 01b-status-card-open
-tap Idle || return 1
+tap "Connected. EDITH: Idle. Hide details" || return 1
 scroll_up
 shot 02-live-scrolled-under-the-glass
 scroll_down
@@ -274,7 +275,7 @@ go_to Live || return 1
 curl -s -X POST localhost:8787/demo/work >/dev/null
 wait $rec || true
 adb pull /sdcard/clip.mp4 "$OUT/phase-2b-clip.mp4"
-shot 08-live-working # the task running: blob, spinner, the status pill's step
+shot 08-live-working # the task running: blob, spinner, the header chip's bubble and timer
 }
 # Each part runs even if one before it failed (a failure is recorded, its screen saved), so the
 # artifact always has what could be made; the job fails at the end.

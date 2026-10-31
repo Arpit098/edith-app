@@ -12,6 +12,7 @@ import { colors, type, radius, space } from '../../core/theme';
 import { clockIST } from '../../common/format';
 import type { SentAttachment } from './attachments';
 import type { Item, SendStatus, Tick } from './model';
+import type { Quote } from './reply';
 
 const ORIGIN_LABEL: Record<string, string> = { telegram: 'Telegram', terminal: 'Terminal', app: '', system: '' };
 
@@ -32,9 +33,18 @@ export interface ItemViewProps {
   tick?: Tick | null; // for Arpit's messages
   status?: SendStatus | null;
   onRetry?: (key: string) => void;
+  /** Quote this message in the composer (TalkBack's "Reply" action; sighted users swipe the row). */
+  onReply?: (item: Item) => void;
+  /** The quote on a reply was tapped: scroll to the message it quotes. */
+  onQuote?: (itemId: number, quote: string) => void;
+  /** Briefly marked: the message a tapped quote jumped to. */
+  highlight?: boolean;
 }
 
-export const ItemView = memo(function ItemView({ item, onPress, tick, status, onRetry }: ItemViewProps) {
+const REPLY_ACTIONS = [{ name: 'reply', label: 'Reply' }];
+
+export const ItemView = memo(function ItemView({ item, onPress, tick, status, onRetry, onReply, onQuote, highlight }: ItemViewProps) {
+  const a11yReply = onReply ? { accessibilityActions: REPLY_ACTIONS, onAccessibilityAction: () => onReply(item) } : {};
   switch (item.kind) {
     case 'user': {
       const from = ORIGIN_LABEL[item.origin];
@@ -43,8 +53,15 @@ export const ItemView = memo(function ItemView({ item, onPress, tick, status, on
       const caption = failed ? (item.local?.error ?? 'Not sent') : status ? STATUS_TEXT[status] : undefined;
       return (
         <View style={styles.userWrap}>
-          <Pressable style={[styles.bubble, styles.user, failed && styles.userFailed]} onPress={retry} disabled={!retry} accessibilityHint={retry ? 'Send again' : undefined}>
+          <Pressable
+            style={[styles.bubble, styles.user, failed && styles.userFailed, highlight && styles.highlight]}
+            onPress={retry}
+            disabled={!retry}
+            accessibilityHint={retry ? 'Send again' : undefined}
+            {...a11yReply}
+          >
             {from || item.voice ? <Text style={styles.meta}>{[from, item.voice ? '🎙 voice' : ''].filter(Boolean).join(' · ')}</Text> : null}
+            {item.replyTo ? <QuoteView quote={item.replyTo} onPress={onQuote ? () => onQuote(item.id, item.replyTo!.text) : undefined} /> : null}
             {item.attachments.length ? <SentAttachments list={item.attachments} /> : null}
             {item.text ? (
               <Text style={styles.text} selectable>
@@ -71,7 +88,7 @@ export const ItemView = memo(function ItemView({ item, onPress, tick, status, on
     }
     case 'assistant':
       return (
-        <View style={[styles.bubble, styles.assistant]}>
+        <View style={[styles.bubble, styles.assistant, highlight && styles.highlight]} {...a11yReply}>
           {item.lane === 'side' ? <Text style={styles.meta}>⚡ Parallel answer (the main conversation was busy)</Text> : null}
           <Text style={styles.text} selectable>
             {item.text}
@@ -104,6 +121,30 @@ export const ItemView = memo(function ItemView({ item, onPress, tick, status, on
       );
   }
 });
+
+/** Who wrote a quoted message, as its label says. */
+export function quoteLabel(from: Quote['from']): string {
+  return from === 'edith' ? 'EDITH' : from === 'arpit' ? 'You' : 'Replying to';
+}
+
+/** The quote on a reply: who and what, two lines at most; tapping it shows the original. */
+function QuoteView({ quote, onPress }: { quote: Quote; onPress?: () => void }) {
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={!onPress}
+      style={styles.quote}
+      accessibilityRole="button"
+      accessibilityLabel={`Reply to ${quote.from === 'edith' ? 'EDITH' : quote.from === 'arpit' ? 'your message' : 'a message'}: ${quote.text}`}
+      accessibilityHint="Shows the original message"
+    >
+      <Text style={styles.quoteFrom}>{quoteLabel(quote.from)}</Text>
+      <Text style={styles.quoteText} numberOfLines={2}>
+        {quote.text}
+      </Text>
+    </Pressable>
+  );
+}
 
 const STATUS_ICON = { running: 'progress-clock', ok: 'check-circle-outline', error: 'alert-circle-outline' } as const;
 const STATUS_COLOR = { running: colors.warn, ok: colors.ok, error: colors.danger } as const;
@@ -181,6 +222,10 @@ const styles = StyleSheet.create({
   userWrap: { alignSelf: 'flex-end', alignItems: 'flex-end', maxWidth: '88%', marginVertical: space.xs },
   user: { backgroundColor: colors.userBubble, borderBottomRightRadius: radius.s, maxWidth: '100%', marginVertical: 0 },
   userFailed: { borderWidth: 1, borderColor: colors.danger },
+  highlight: { borderWidth: 1, borderColor: colors.accent },
+  quote: { backgroundColor: colors.code, borderLeftWidth: 3, borderLeftColor: colors.accent, borderRadius: radius.s, paddingHorizontal: space.s, paddingVertical: space.xs, marginBottom: space.xs },
+  quoteFrom: { color: colors.accent, fontSize: type.size.caption, fontWeight: '700' },
+  quoteText: { color: colors.textDim, fontSize: type.size.small },
   footer: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 3, marginTop: 2 },
   time: { color: colors.textDim, fontSize: type.size.caption },
   reaction: { marginTop: -10, marginRight: space.s, backgroundColor: colors.cardRaised, borderRadius: radius.pill, paddingHorizontal: 5, paddingVertical: 1, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.hairline },

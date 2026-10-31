@@ -65,8 +65,9 @@ describe('Shell', () => {
       await flush();
     });
     const t = texts(r);
-    expect(t).toContain('Live');
-    expect(t).toContain('Idle');
+    expect(t).toContain('E.D.I.T.H'); // the home screen's title (plans/ui-next.md §2)
+    // The status chip on the left: connection and EDITH's state, in its label.
+    expect(r.root.findAll((n) => n.props?.accessibilityLabel === 'Connected. EDITH: Idle. Show details' && typeof n.props.onPress === 'function')).not.toHaveLength(0);
     expect(t).toContain('from history');
     expect(t).not.toContain('Sessions'); // no tab bar: the other screens are in the menu
     expect(r.root.findAll((n) => n.props.accessibilityLabel === 'Menu' && typeof n.props.onPress === 'function')).not.toHaveLength(0);

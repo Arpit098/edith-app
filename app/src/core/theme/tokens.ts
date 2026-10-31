@@ -195,13 +195,17 @@ export interface RimStyle {
 
 export const rims: Record<Scheme, RimStyle> = {
   dark: {
-    lit: 'rgba(255, 255, 255, 0.78)',
-    mid: 'rgba(255, 255, 255, 0.20)',
+    // Arpit (31 Oct, from the 13R): as thin and about as bright as the old status pill's hairline
+    // border (thin glass edge, 0.22 white). It was 1 dp at 0.78 plus a 3 dp inner glow: a thick
+    // frame. Now under 2 px on the 13R, its corners a little brighter than the pill's edge (the
+    // gradient fades to nearly nothing between them), and the inner glow scaled down with it.
+    lit: 'rgba(255, 255, 255, 0.55)',
+    mid: 'rgba(255, 255, 255, 0.16)',
     dim: 'rgba(255, 255, 255, 0.03)',
     far: 0.75,
-    width: 1,
-    glow: 0.32,
-    glowWidth: 3,
+    width: 0.5,
+    glow: 0.25,
+    glowWidth: 1,
     shade: 'rgba(0, 0, 0, 0.28)',
   },
   // On light glass a white line alone vanishes: brighter corners, and a slightly darker shade
@@ -211,9 +215,9 @@ export const rims: Record<Scheme, RimStyle> = {
     mid: 'rgba(255, 255, 255, 0.45)',
     dim: 'rgba(255, 255, 255, 0.06)',
     far: 0.85,
-    width: 1.2,
-    glow: 0.55,
-    glowWidth: 3,
+    width: 1,
+    glow: 0.5,
+    glowWidth: 1,
     shade: 'rgba(15, 23, 42, 0.12)',
   },
 };
@@ -269,7 +273,36 @@ export const motion = {
   grow: { damping: 17, stiffness: 260, mass: 0.9 }, // a sheet growing out of its trigger
   pressScale: 0.95,
   blobMs: 2400, // one breath of the working blob
+  bubbleMs: 4200, // one cycle of the thinking bubble's wobble and swirl
+  swipe: { damping: 20, stiffness: 320, mass: 0.7 }, // a swiped message springing back
 } as const;
 
 /** The header the shell lays over the content (screens pad by it; see useChrome()). */
 export const chrome = { headerHeight: 52 } as const;
+
+/**
+ * The header title's glow (Arpit's ask): the logo's soft blue as a static text shadow with no
+ * offset. Soft enough that the white glyphs stay crisp; it costs nothing per frame.
+ */
+export const titleGlow = {
+  textShadowColor: 'rgba(124, 174, 220, 0.75)',
+  textShadowOffset: { width: 0, height: 0 },
+  textShadowRadius: 10,
+} as const;
+
+/**
+ * The thinking bubble (ui/ThinkingBubble): an orb like Arpit's reference, in the app icon's
+ * colours (app/assets/icon.png): silver-white bands, the rings' soft blue and a deeper rim blue,
+ * with a faint lavender sheen for the soap-bubble shimmer.
+ */
+export const bubble = {
+  core: 'rgba(16, 23, 29, 0.55)', // the icon's ink, see-through: the middle of the orb
+  body: 'rgba(124, 174, 220, 0.30)', // the soft blue the body fades to at the edge
+  rimLit: '#E8EEF6', // the silver catching light (top-left)
+  rimMid: brand.blue,
+  rimDeep: '#4F7FD0', // the icon's deeper blue on the rim's far side
+  sheen: 'rgba(176, 164, 236, 0.60)', // a lavender shimmer on the rim
+  bandSilver: 'rgba(232, 238, 246, 0.85)',
+  bandBlue: 'rgba(124, 174, 220, 0.85)',
+  bandDeep: 'rgba(96, 140, 222, 0.80)',
+} as const;

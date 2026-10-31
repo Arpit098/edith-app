@@ -292,7 +292,16 @@ show in the phone's "dynamic island".
     it, all from JS (OTA). A per-pixel luminance cap and a true centre-weighted blur in the AGSL
     shader would need a native release: a later follow-up;
   - new bubbles settle in on a spring;
-  - the "working" indicator is a morphing glass blob.
+  - the "working" indicator is a morphing glass blob;
+  - the header (asked for 2026-10-31, plans/ui-next.md): "E.D.I.T.H" in the centre with a soft
+    static glow in the logo's blue; on the left a status chip (connection dot, the thinking bubble,
+    the turn's elapsed time while working) that opens the status card; the hamburger on the right.
+    The old status pill is gone. The thinking bubble is an iridescent orb in the icon's colours
+    whose rim wobbles and whose inner bands swirl while EDITH works (a still frame when idle);
+  - swipe a message right to reply to it (2026-10-31): a quote bar above the composer, the quote
+    on the sent bubble (tap to jump to the original), and the quote in Claude's prompt. The light
+    haptic needs a native release (VIBRATE is blocked; `performHapticFeedback` would need no
+    permission): a later follow-up.
   - With Android's "Remove animations" setting on, everything jumps straight to its end state.
 - **Performance:** frame times are measured by the module (`FrameMetrics`: p50/p95/p99, janky
   frames) while scrolling and switching tabs, with the glass on and off. The target is 60–120 fps
