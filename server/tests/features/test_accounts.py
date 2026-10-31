@@ -236,6 +236,10 @@ class LoginTest(unittest.TestCase):
 IDLE_SCREEN = "● Done.\n\n──────\n❯ \n──────\n  ? for shortcuts\n"
 BUSY_SCREEN = "● Running tests…\n\n✻ Thinking… (esc to interrupt)\n❯ \n"
 APPROVAL_SCREEN = "Do you want to proceed?\n❯ 1. Yes\n  2. No\n"
+# The usage limit mid-task (the session file stays `busy`: the turn it cut off), and Claude's menu for it.
+LIMIT_SCREEN = "● Running the build…\n  ⎿  Usage limit reached · continuing shortly\n──────\n❯ \n──────\n"
+LIMIT_MENU_SCREEN = ("● Running the build…\n You've hit your limit · resets 3pm (Asia/Kolkata)\n\n"
+                     " What do you want to do?\n\n ❯ 1. Stop and wait for limit to reset\n   2. Upgrade your plan\n")
 
 
 class ClaudeJsonTest(unittest.TestCase):
@@ -266,10 +270,11 @@ class ClaudeJsonTest(unittest.TestCase):
 
 
 class FakeTmux:
-    """tmux on the default socket: panes -> (session, pane_pid, cwd, screen)."""
+    """tmux on the default socket: panes -> (session, pane_pid, cwd, screen); EDITH's (-L edith) is
+    pane %0, showing `edith_screen`."""
 
     def __init__(self, panes, edith_pid=900):
-        self.panes, self.edith_pid, self.calls = panes, edith_pid, []
+        self.panes, self.edith_pid, self.calls, self.edith_screen = panes, edith_pid, [], IDLE_SCREEN
 
     def __call__(self, cmd, **kw):
         self.calls.append(cmd)
@@ -279,7 +284,7 @@ class FakeTmux:
                     else [f"{s}\t{p}\t{pid}\t{cwd}" for p, (s, pid, cwd, _) in self.panes.items()])
             return SimpleNamespace(returncode=0, stdout="\n".join(rows) + "\n")
         if "capture-pane" in cmd:
-            return SimpleNamespace(returncode=0, stdout=self.panes[cmd[cmd.index("-t") + 1]][3])
+            return SimpleNamespace(returncode=0, stdout=self.edith_screen if edith else self.panes[cmd[cmd.index("-t") + 1]][3])
         return SimpleNamespace(returncode=1, stdout="")
 
 
@@ -323,8 +328,9 @@ class PanesTest(unittest.TestCase):
                          [("edith-app", "%2", 201, "201000", "/w/app", None, "busy"),
                           ("edith-dev", "%1", 101, "101000", "/w/dev", SID, "idle")])
         self.assertEqual(p.others({a["pid"] for a in agents_}), [{"pid": 555, "cwd": "/elsewhere"}])
-        self.assertEqual(p.edith(), [{"pid": 901, "status": "idle", "comm": "claude"}])
+        self.assertEqual(p.edith(), [{"pid": 901, "status": "idle", "comm": "claude", "state": "idle", "blocked": None}])
         self.assertFalse(any("send-keys" in c for c in tmux.calls))
+        self.assertIn(["tmux", "-L", "edith", "capture-pane", "-p", "-t", "%0"], tmux.calls)  # her screen: read only
 
     def test_busy_is_anything_but_idle_in_the_session_file(self):
         tmux = FakeTmux({"%1": ("edith-dev", 101, "/w/dev", IDLE_SCREEN), "%2": ("edith-app", 201, "/w/app", IDLE_SCREEN)})
@@ -332,10 +338,38 @@ class PanesTest(unittest.TestCase):
         session_file(self.h.claude_dir, 201, SID, "/w/app", status="thinking")  # a value we don't know
         session_file(self.h.claude_dir, 900, SID, "/home/x/edith", status="shell")
         p = Panes(self.h.claude_dir, run=tmux, children=lambda pid: [], stat=fake_stat())
-        self.assertEqual(p.blockers()[1], ["edith-app is busy", "edith-dev is busy", "EDITH's Claude is busy (background work)"])
+        self.assertEqual(p.blockers()[1], ["edith-app has background work running (not at the limit)",
+                                           "edith-dev has background work running (not at the limit)",
+                                           "EDITH's Claude has background work running (not at the limit)"])
         for pid, cwd in ((101, "/w/dev"), (201, "/w/app"), (900, "/home/x/edith")):
             session_file(self.h.claude_dir, pid, SID, cwd)
-        self.assertEqual(p.blockers()[1], [])
+        self.assertEqual(p.blockers()[1:], ([], []))
+
+    def test_a_claude_at_its_usage_limit_doesnt_block(self):
+        tmux = FakeTmux({"%1": ("edith-status", 101, "/w/status", LIMIT_SCREEN),
+                         "%2": ("edith-app", 201, "/w/app", LIMIT_MENU_SCREEN)})
+        session_file(self.h.claude_dir, 101, SID, "/w/status", status="busy")  # the turn the limit cut off
+        session_file(self.h.claude_dir, 201, SID, "/w/app")                    # at the limit, but between turns
+        session_file(self.h.claude_dir, 900, SID, "/home/x/edith", status="busy")
+        tmux.edith_screen = LIMIT_MENU_SCREEN  # EDITH: the rate-limit menu
+        p = Panes(self.h.claude_dir, run=tmux, children=lambda pid: [], stat=fake_stat())
+        agents_, why, at_limit = p.blockers()
+        self.assertEqual(why, [])
+        self.assertEqual(at_limit, [{"name": "edith-app", "interrupted": False}, {"name": "edith-status", "interrupted": True},
+                                    {"name": "EDITH", "interrupted": True}])
+        self.assertEqual([a["name"] for a in agents_], ["edith-app", "edith-status"])  # both restarted by the switch
+
+        # Real work or a permission prompt still blocks, and says it isn't the limit.
+        tmux.panes["%1"] = ("edith-status", 101, "/w/status", BUSY_SCREEN)
+        tmux.panes["%2"] = ("edith-app", 201, "/w/app", APPROVAL_SCREEN)
+        tmux.edith_screen = BUSY_SCREEN
+        agents_, why, at_limit = p.blockers()
+        self.assertEqual(why, ["edith-app is waiting for approval", "edith-status is working (not at the limit)",
+                               "EDITH's Claude is working (not at the limit)"])
+        self.assertEqual(at_limit, [])
+        tmux.edith_screen = IDLE_SCREEN  # EDITH not at the limit, her session file still busy
+        self.assertEqual(p.blockers()[1][-1], "EDITH's Claude has background work running (not at the limit)")
+        self.assertFalse(any("send-keys" in c for c in tmux.calls))
 
     def test_proc_stat_and_same_process(self):
         comm, start = proc_stat(os.getpid())
@@ -352,19 +386,19 @@ class PanesTest(unittest.TestCase):
         session_file(self.h.claude_dir, 900, SID, "/home/x/edith")
         session_file(self.h.claude_dir, 555, SID, "/elsewhere")
         p = Panes(self.h.claude_dir, run=tmux, children=lambda pid: [], stat=fake_stat(names={101: "node", 900: "node", 555: "node"}))
-        agents_, why = p.blockers()
+        agents_, why, _ = p.blockers()
         self.assertEqual([(a["name"], a["comm"]) for a in agents_], [("edith-dev", "node")])  # not skipped
         self.assertEqual(why, ["edith-dev's process isn't named claude (node), so it can't be checked",
-                               "EDITH's process isn't named claude, so it can't be checked",
+                               "EDITH's process isn't named claude (node), so it can't be checked",
                                "another Claude is running (pid 555, in /elsewhere)"])
 
 
 class FakePanes:
-    def __init__(self, agents, why=(), others=()):
-        self.agents, self.why, self.running = agents, list(why), list(others)
+    def __init__(self, agents, why=(), others=(), at_limit=()):
+        self.agents, self.why, self.running, self.at_limit = agents, list(why), list(others), list(at_limit)
 
     def blockers(self):
-        return [dict(a) for a in self.agents], list(self.why)
+        return [dict(a) for a in self.agents], list(self.why), [dict(c) for c in self.at_limit]
 
     def others(self, known):
         return list(self.running)
@@ -503,6 +537,19 @@ class SwitchTest(unittest.TestCase):
             self.assertFalse([c for c in system.calls if c[0] in ("open", "kill")])
             self.assertNotIn(("run", ("systemctl", "--user", "stop", "edith-claude")), system.calls)
             self.assertEqual(self.h.live()[1]["oauthAccount"]["accountUuid"], "uuid-1")
+
+    def test_a_switch_at_the_limit_says_who_was_resumed(self):
+        # The plan's list is from when the switch was asked for; the recheck right before stopping decides.
+        panes = FakePanes(self.AGENTS, at_limit=[{"name": "edith-dev", "interrupted": True},
+                                                 {"name": "EDITH", "interrupted": False}])
+        system = FakeSystem(self.h.home, self.email_now)
+        self.assertEqual(self.switch(system, panes), "done")
+        self.assertEqual(self.events()[-1]["detail"],
+                         "edith-dev was at the limit; it was resumed, but its interrupted task needs sending again; "
+                         "EDITH was at the limit; it was resumed")
+        self.assertFalse([c for c in system.calls if c[0] == "run" and "send-keys" in c[1]])  # nothing typed
+        self.assertEqual(self.switch(FakeSystem(self.h.home, self.email_now), target=self.first), "done")
+        self.assertIsNone(self.events()[-1]["detail"])  # nobody at the limit: no note
 
     def test_edith_refreshes_alone_and_the_refresh_is_saved(self):
         def on_run(cmd):  # EDITH's token had expired: she refreshes it (rotating the refresh token) as she starts
@@ -733,15 +780,15 @@ class RoutesTest(unittest.TestCase):
     def test_switch_refuses_unless_idle_and_says_why(self):
         target = self.second()
         self.tmux.panes["%1"] = ("edith-dev", 101, "/w/dev", BUSY_SCREEN)
-        self.assertIn("edith-dev is busy", self.refused(target))
+        self.assertIn("edith-dev is working (not at the limit)", self.refused(target))
         self.tmux.panes["%1"] = ("edith-dev", 101, "/w/dev", APPROVAL_SCREEN)
         self.assertIn("edith-dev is waiting for approval", self.refused(target))
         self.tmux.panes["%1"] = ("edith-dev", 101, "/w/dev", IDLE_SCREEN)
         session_file(self.h.claude_dir, 101, SID, "/w/dev", status="busy")  # a background subagent; the screen looks idle
-        self.assertIn("edith-dev is busy", self.refused(target))
+        self.assertIn("edith-dev has background work running (not at the limit)", self.refused(target))
         session_file(self.h.claude_dir, 101, SID, "/w/dev")
         session_file(self.h.claude_dir, 900, SID, "/home/x/edith", status="shell")  # EDITH's own Claude
-        self.assertIn("EDITH's Claude is busy (background work)", self.refused(target))
+        self.assertIn("EDITH's Claude has background work running (not at the limit)", self.refused(target))
         session_file(self.h.claude_dir, 900, SID, "/home/x/edith")
         self.agent.runs, self.agent.queued = [RunInfo("r1", "main", 1.0, None)], 2
         self.assertEqual(self.refused(target), "Can't switch while EDITH is working on a task; 2 messages queued")
@@ -756,6 +803,19 @@ class RoutesTest(unittest.TestCase):
         self.assertEqual(self.launched, [])
         self.assertEqual(self.agent.holds, ["hold", "release"] * 7)  # held before each check, released on refusal
         self.assertEqual(self.agent.order[:3], ["hold", "status", "release"])
+
+    def test_an_agent_and_edith_at_the_limit_dont_block_a_switch(self):
+        target = self.second()
+        self.tmux.panes["%1"] = ("edith-dev", 101, "/w/dev", LIMIT_SCREEN)
+        session_file(self.h.claude_dir, 101, SID, "/w/dev", status="busy")  # the turn the limit cut off
+        self.tmux.edith_screen = LIMIT_MENU_SCREEN
+        session_file(self.h.claude_dir, 900, SID, "/home/x/edith", status="busy")
+        answer = self.call("POST", "/v1/accounts/{id}/switch", {"id": target})
+        self.assertEqual(answer["status"], "switching")
+        with open(self.launched[0][-1]) as f:
+            plan = json.load(f)
+        self.assertEqual(plan["at_limit"], [{"name": "edith-dev", "interrupted": True}, {"name": "EDITH", "interrupted": True}])
+        self.assertEqual([a["name"] for a in plan["agents"]], ["edith-dev"])  # still restarted (and resumed)
 
     def test_switch_holds_the_agent_and_starts_a_transient_unit(self):
         target = self.second()
@@ -773,6 +833,7 @@ class RoutesTest(unittest.TestCase):
         self.assertNotIn("sk-ant", json.dumps(plan))
         self.assertEqual(os.path.dirname(plan["socket"]), os.path.dirname(plan_file))  # the private folder
         self.assertEqual((plan["target"], [(a["session_id"], a["proc_start"]) for a in plan["agents"]]), (target, [(SID, "101000")]))
+        self.assertEqual(plan["at_limit"], [])
         self.assertEqual(self.events[-1].data["step"], "starting")
         self.assertIn("a switch is already running", self.refused(target))
         with self.assertRaises(ApiError) as e:  # nor can an account be removed meanwhile

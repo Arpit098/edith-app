@@ -259,6 +259,18 @@ class ScreenTest(unittest.TestCase):
         self.assertEqual(read_screen(SCREEN_PERMISSION)["blocked"], "permission")
         self.assertEqual(read_screen(SCREEN_PERMISSION)["state"], "blocked")
         self.assertEqual(read_screen(SCREEN_LIMIT)["blocked"], "usage_limit")
+        self.assertEqual(read_screen("● Building…\n  ⎿  Usage limit reached · continuing shortly\n────\n❯ \n")["blocked"],
+                         "usage_limit")
+
+    def test_the_rate_limit_menu_is_the_usage_limit(self):
+        menu = ("● Building…\n You've hit your limit · resets 3pm\n\n What do you want to do?\n\n"
+                " ❯ 1. Stop and wait for limit to reset\n   2. Upgrade your plan\n")
+        self.assertEqual(read_screen(menu)["blocked"], "usage_limit")
+        self.assertEqual(read_screen(menu.replace(" You've hit your limit · resets 3pm\n", ""))["blocked"], "usage_limit")
+        self.assertEqual(read_screen(" What do you want to do?\n ❯ 1. Stop and wait for limit to reset\n  ✻ esc to interrupt\n")
+                         ["state"], "blocked")  # a dialog, whatever else the screen shows
+        # The same question with no limit on screen is some other menu.
+        self.assertIsNone(read_screen(" What do you want to do?\n ❯ 1. Keep going\n   2. Stop\n")["blocked"])
 
     def test_old_permission_text_far_up_is_ignored(self):
         screen = "Do you want to proceed?\n" + "\n".join(f"line {i}" for i in range(30)) + "\n● ok\n"

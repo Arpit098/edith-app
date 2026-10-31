@@ -205,8 +205,9 @@ def setup(ctx: Context) -> None:
 
     # ---- refusals ----
 
-    def blockers() -> tuple[list[dict], list[str]]:
-        """The agents, and why a switch can't start now (empty when it can)."""
+    def blockers() -> tuple[list[dict], list[str], list[dict]]:
+        """The agents, why a switch can't start now (empty when it can), and the Claudes at their
+        usage limit (which don't block: a switch is what gets them going again)."""
         why = []
         if agent:
             runs, queued = agent.status()
@@ -219,8 +220,8 @@ def setup(ctx: Context) -> None:
                 why.append(f"{queued} message{'s' if queued > 1 else ''} queued")
         if approvals:
             why.append("an approval is waiting")
-        agents, busy = panes.blockers()
-        return agents, why + busy
+        agents, busy, at_limit = panes.blockers()
+        return agents, why + busy, at_limit
 
     # ---- routes ----
 
@@ -250,7 +251,7 @@ def setup(ctx: Context) -> None:
             hold(run)  # before the checks, so nothing can start between checking and the switch
             first, listening = None, False
             try:
-                agents, why = blockers()
+                agents, why, at_limit = blockers()
                 if why:
                     raise ApiError(409, "Can't switch while " + "; ".join(why))
                 plan = {"run": run, "unit": unit, "target": target, "root": root, "claude_dir": claude_dir,
@@ -259,7 +260,7 @@ def setup(ctx: Context) -> None:
                         "agents_socket": cfg.get("agents_socket"), "edith_socket": cfg.get("edith_socket", "edith"),
                         "edith_target": cfg.get("edith_target", "edith"), "service": cfg.get("service", "edith-claude"),
                         "ready_timeout": float(cfg.get("ready_timeout", 90)), "status_file": status_file,
-                        "socket": sock_path(run)}
+                        "socket": sock_path(run), "at_limit": at_limit}
                 plan_file = os.path.join(private_dir(), f"plan-{run}.json")
                 write_private(plan_file, json.dumps(plan).encode())
                 first = {"run": run, "unit": unit, "target": target, "previous": profiles.active(), "state": "running",

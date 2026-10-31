@@ -9,6 +9,10 @@ BOTTOM = 15  # lines at the end of the screen that hold Claude Code's prompt, fo
 PERMISSION = re.compile(r"Do you want to (?:proceed|make this edit|create|allow|run)|Would you like to proceed"
                         r"|❯\s*1\.\s*Yes", re.I)
 USAGE_LIMIT = re.compile(r"usage limit reached|hit your limit|limit reached|limit will reset", re.I)
+# The menu Claude shows at a rate limit ("What do you want to do?" … "Stop and wait for limit to
+# reset"): a dialog, so it is read before the permission prompt it looks like.
+LIMIT_MENU = re.compile(r"stop and wait for (?:the )?limit to reset", re.I)
+MENU_QUESTION = re.compile(r"what do you want to do\?", re.I)
 LAST_LINE = 100  # characters
 
 
@@ -22,7 +26,9 @@ def read_screen(screen: str) -> dict:
     lines = [ln for ln in map(clean, screen.splitlines()) if ln]
     bottom = "\n".join(lines[-BOTTOM:])
     busy = "esc to interrupt" in bottom.lower()
-    blocked = ("permission" if PERMISSION.search(bottom)
+    menu = LIMIT_MENU.search(bottom) or (MENU_QUESTION.search(bottom) and USAGE_LIMIT.search(bottom))
+    blocked = ("usage_limit" if menu
+               else "permission" if PERMISSION.search(bottom)
                else "usage_limit" if not busy and USAGE_LIMIT.search(bottom) else None)
     last = next((ln[1:].strip() for ln in reversed(lines) if ln.startswith("●")), None)
     if last and len(last) > LAST_LINE:
