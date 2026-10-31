@@ -37,11 +37,12 @@ function violations(extra: { file: string; text: string }[] = []): string[] {
       const rel = path.relative(SRC, file);
       if (!spec.startsWith('.')) {
         // Libraries: features, core, common and ui reach the device only through ports and ui.
-        // ui/ may also use view-only drawing libraries: the glass and the tick strokes (no device access).
+        // ui/ may also use view-only drawing libraries: the glass, the tick strokes and the rim, and the
+        // UI-thread motion (Reanimated, with its worklets runtime for a spring's end) (no device access).
         const allowed =
           layer === 'adapters' ||
           ['react', 'react-native', '@expo/vector-icons/MaterialCommunityIcons', 'react-native-safe-area-context'].includes(spec) ||
-          (layer === 'ui' && ['expo-linear-gradient', 'react-native-svg', 'react-native-reanimated'].includes(spec));
+          (layer === 'ui' && ['expo-linear-gradient', 'react-native-svg', 'react-native-reanimated', 'react-native-worklets'].includes(spec));
         const coreOk = layer === 'core' || layer === 'common' ? spec === 'react' : true;
         if (!allowed || !coreOk) out.push(`${rel}: imports library ${spec}`);
         continue;

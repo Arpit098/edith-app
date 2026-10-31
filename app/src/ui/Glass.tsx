@@ -3,12 +3,17 @@
 // shell allows it, it's real glass: the native view (edith-glass) bends and blurs what's behind
 // it ('shader', Android 13+) or blurs it ('blur', Android 12). Everywhere else, and on surfaces
 // without a backdrop (cards in lists), it's the flat fallback: same look, no cost.
+// Popup levels (`legibility`, the panel) add a harder blur and a scrim over the content area, so
+// text reads at WCAG 4.5:1 over anything while the rim still bends the backdrop like Liquid Glass.
+// With `rim`, the hairline edge gives way to the specular rim (ui/Rim.tsx): a gradient stroke bright
+// at the top-left and bottom-right, an inner highlight and a faint inner shadow.
 
 import { LinearGradient } from 'expo-linear-gradient';
 import { memo, useCallback, useState, type ReactNode } from 'react';
-import { findNodeHandle, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
+import { findNodeHandle, StyleSheet, View, type LayoutChangeEvent, type StyleProp, type ViewStyle } from 'react-native';
 
 import { glass, glassBase, glassTint, radius as radii, useGlass, type GlassLevel } from '../core/theme';
+import { Rim } from './Rim';
 
 export interface GlassProps {
   level?: GlassLevel;
@@ -17,11 +22,17 @@ export interface GlassProps {
   radius?: number;
   /** Which sides draw the light edge (a bar flush with the screen edge skips that side). */
   edges?: { top?: boolean; bottom?: boolean; left?: boolean; right?: boolean };
+  /**
+   * The specular rim instead of the hairline edge (`edges` is then ignored): light catching the
+   * glass, bright at the top-left and bottom-right, in the scheme's colours (GlassSettings.scheme).
+   */
+  rim?: boolean;
   style?: StyleProp<ViewStyle>;
   children?: ReactNode;
 }
 
 const ALL = { top: true, bottom: true, left: true, right: true };
+const NONE: NonNullable<GlassProps['edges']> = {};
 
 /** A view to put glass over: attach `ref` to it (it must not contain that glass). */
 export function useBackdrop(): { ref: (v: View | null) => void; tag: number | null } {
@@ -30,22 +41,35 @@ export function useBackdrop(): { ref: (v: View | null) => void; tag: number | nu
   return { ref, tag };
 }
 
-export const Glass = memo(function Glass({ level = 'regular', backdrop, radius = radii.l, edges = ALL, style, children }: GlassProps) {
+interface Size {
+  width: number;
+  height: number;
+}
+
+export const Glass = memo(function Glass({ level = 'regular', backdrop, radius = radii.l, edges = ALL, rim = false, style, children }: GlassProps) {
   const g = glass[level];
-  const { mode, View: Native } = useGlass();
+  const { mode, View: Native, scheme } = useGlass();
   const real = mode !== 'flat' && Native !== null && backdrop != null;
   const [lit, dim] = g.edge;
+  const line = rim ? NONE : edges;
+  // The rim needs the surface's size; a move (the keyboard opening) keeps the same object, so no re-render.
+  const [size, setSize] = useState<Size | null>(null);
+  const onLayout = useCallback((e: LayoutChangeEvent) => {
+    const { width, height } = e.nativeEvent.layout;
+    setSize((s) => (s && s.width === width && s.height === height ? s : { width, height }));
+  }, []);
   return (
     <View
+      onLayout={rim ? onLayout : undefined}
       style={[
         styles.base,
         {
           borderRadius: radius,
           backgroundColor: real ? 'transparent' : g.flat, // real glass draws its own tint
-          borderTopWidth: edges.top ? StyleSheet.hairlineWidth : 0,
-          borderLeftWidth: edges.left ? StyleSheet.hairlineWidth : 0,
-          borderRightWidth: edges.right ? StyleSheet.hairlineWidth : 0,
-          borderBottomWidth: edges.bottom ? StyleSheet.hairlineWidth : 0,
+          borderTopWidth: line.top ? StyleSheet.hairlineWidth : 0,
+          borderLeftWidth: line.left ? StyleSheet.hairlineWidth : 0,
+          borderRightWidth: line.right ? StyleSheet.hairlineWidth : 0,
+          borderBottomWidth: line.bottom ? StyleSheet.hairlineWidth : 0,
           borderTopColor: lit,
           borderLeftColor: lit,
           borderRightColor: dim,
@@ -65,7 +89,7 @@ export const Glass = memo(function Glass({ level = 'regular', backdrop, radius =
           dispersion={g.dispersion}
           saturation={g.saturation}
           lift={g.lift}
-          specular={g.specular}
+          specular={rim ? 0 : g.specular} // the rim is the edge's light: no second line from the lens
           rimWidth={g.rimWidth}
           tint={glassTint[level]}
           base={glassBase}
@@ -73,8 +97,45 @@ export const Glass = memo(function Glass({ level = 'regular', backdrop, radius =
           pointerEvents="none"
         />
       ) : null}
+      {real && g.legibility ? (
+        // The content area, blurred harder than the rim (a second view over the same backdrop: no lens).
+        <Native
+          backdrop={backdrop}
+          mode={mode}
+          cornerRadius={Math.max(0, radius - g.legibility.inset)}
+          blur={g.legibility.centreBlur}
+          refraction={0}
+          bezel={g.bezel}
+          dispersion={0}
+          saturation={g.saturation}
+          lift={g.lift}
+          specular={0}
+          rimWidth={g.rimWidth}
+          tint={glassTint[level]}
+          base={glassBase}
+          style={[styles.content, { margin: g.legibility.inset }]}
+          pointerEvents="none"
+        />
+      ) : null}
       <LinearGradient colors={[g.highlight, 'transparent']} style={styles.highlight} pointerEvents="none" />
+      {g.legibility ? (
+        <View
+          testID="glass-scrim"
+          pointerEvents="none"
+          style={[
+            styles.content,
+            {
+              margin: g.legibility.inset,
+              borderRadius: Math.max(0, radius - g.legibility.inset),
+              backgroundColor: g.legibility.scrim,
+              // Feathered: the scrim fades out towards the rim instead of ending on a hard line.
+              boxShadow: [{ offsetX: 0, offsetY: 0, blurRadius: g.legibility.feather, spreadDistance: 0, color: g.legibility.scrim }],
+            },
+          ]}
+        />
+      ) : null}
       {children}
+      {rim && size ? <Rim width={size.width} height={size.height} radius={radius} scheme={scheme} /> : null}
     </View>
   );
 });
@@ -82,4 +143,5 @@ export const Glass = memo(function Glass({ level = 'regular', backdrop, radius =
 const styles = StyleSheet.create({
   base: { overflow: 'hidden' },
   highlight: { position: 'absolute', top: 0, left: 0, right: 0, height: 28 },
+  content: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
 });

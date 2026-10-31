@@ -100,15 +100,15 @@ function Card({ fetched, error, backdrop }: { fetched: Fetched; error: string | 
   const d = fetched?.details;
   if (!d) {
     return (
-      <Glass level="panel" backdrop={backdrop} radius={radius.l} style={styles.card}>
-        <Text style={error ? styles.error : styles.dim}>{error ? `Couldn't load the details: ${error}` : 'Loading…'}</Text>
+      <Glass level="panel" backdrop={backdrop} radius={radius.l} rim style={styles.card}>
+        <Text style={error ? styles.error : styles.cardDim}>{error ? `Couldn't load the details: ${error}` : 'Loading…'}</Text>
       </Glass>
     );
   }
   const ago = (t: number | null) => (t == null ? null : formatElapsed(d.ts - t));
   const e = d.edith;
   return (
-    <Glass level="panel" backdrop={backdrop} radius={radius.l} style={styles.card}>
+    <Glass level="panel" backdrop={backdrop} radius={radius.l} rim style={styles.card}>
       <ScrollView style={styles.scroll} nestedScrollEnabled>
         {error ? <Text style={styles.error}>{`Couldn't refresh: ${error}`}</Text> : null}
         <Section title="EDITH">
@@ -135,11 +135,11 @@ function Card({ fetched, error, backdrop }: { fetched: Fetched; error: string | 
               {d.session.context_tokens != null ? <Row label="Context" value={`${formatTokens(d.session.context_tokens)} tokens`} /> : null}
             </>
           ) : (
-            <Text style={styles.dim}>No conversation yet</Text>
+            <Text style={styles.cardDim}>No conversation yet</Text>
           )}
         </Section>
         <Section title="Agents">
-          {d.agents.length ? d.agents.map((a) => <AgentRow key={a.name} agent={a} />) : <Text style={styles.dim}>No coding agents running</Text>}
+          {d.agents.length ? d.agents.map((a) => <AgentRow key={a.name} agent={a} />) : <Text style={styles.cardDim}>No coding agents running</Text>}
         </Section>
         <Text style={styles.footer}>
           {[d.server.tag ? `Live ${d.server.tag}` : null, `up ${formatUptime(d.server.uptime)}`, `updated ${clockIST(fetched.at)} IST`].filter(Boolean).join(' · ')}
@@ -198,13 +198,14 @@ const styles = StyleSheet.create({
   barText: { color: colors.text, fontSize: type.size.small, flex: 1 },
   barDetail: { color: colors.textDim, fontSize: type.size.caption, maxWidth: '40%' },
   dim: { color: colors.textDim },
+  cardDim: { color: colors.textSecondary }, // on the popup glass: 4.5:1 over any backdrop
   card: { marginTop: space.s, padding: space.m },
   scroll: { maxHeight: 420 },
   error: { color: colors.danger, fontSize: type.size.small, marginBottom: space.s },
   section: { marginBottom: space.m },
-  sectionTitle: { color: colors.textDim, fontSize: type.size.caption, fontWeight: '600', letterSpacing: 0.8, textTransform: 'uppercase', marginBottom: space.xs },
+  sectionTitle: { color: colors.textSecondary, fontSize: type.size.caption, fontWeight: '600', letterSpacing: 0.8, textTransform: 'uppercase', marginBottom: space.xs },
   row: { flexDirection: 'row', gap: space.s, paddingVertical: 2 },
-  label: { color: colors.textDim, fontSize: type.size.small, width: 84 },
+  label: { color: colors.textSecondary, fontSize: type.size.small, width: 84 },
   value: { color: colors.text, fontSize: type.size.small, flex: 1 },
   mono: { fontFamily: type.mono },
   warn: { color: colors.warn },
@@ -212,8 +213,8 @@ const styles = StyleSheet.create({
   agentHead: { flexDirection: 'row', alignItems: 'center', gap: space.s },
   smallDot: { width: 8, height: 8, borderRadius: 4 },
   agentName: { color: colors.text, fontSize: type.size.small, fontWeight: '600', flexShrink: 1 },
-  agentBranch: { color: colors.textDim, fontSize: type.size.caption, flex: 1 },
-  agentState: { color: colors.textDim, fontSize: type.size.caption },
-  agentLast: { color: colors.textDim, fontSize: type.size.caption, marginLeft: 16, marginTop: 2 },
-  footer: { color: colors.textDim, fontSize: type.size.caption, textAlign: 'center' },
+  agentBranch: { color: colors.textSecondary, fontSize: type.size.caption, flex: 1 },
+  agentState: { color: colors.textSecondary, fontSize: type.size.caption },
+  agentLast: { color: colors.textSecondary, fontSize: type.size.caption, marginLeft: 16, marginTop: 2 },
+  footer: { color: colors.textSecondary, fontSize: type.size.caption, textAlign: 'center' },
 });

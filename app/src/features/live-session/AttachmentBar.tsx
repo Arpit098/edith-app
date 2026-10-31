@@ -1,36 +1,19 @@
 // The composer's attachments: a strip of thumbnails (images) and chips (audio), each with its upload
-// progress, a remove button, and tap-to-retry when its upload failed. Plus the menu to add one.
+// progress, a remove button, and tap-to-retry when its upload failed. They're added from the
+// composer's menu (ComposerMenu).
 
 import { memo } from 'react';
 import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { formatBytes } from '../../common/format';
 import { useStore } from '../../core/store';
-import { Button } from '../../ui/Button';
 import { Icon } from '../../ui/Icon';
-import { GrowIn } from '../../ui/motion';
 import { colors, radius, space } from '../../core/theme';
 import type { AttachmentsModel, Draft, DraftsState } from './attachments';
 
 const selectDrafts = (s: DraftsState) => s.drafts;
 const selectError = (s: DraftsState) => s.error;
 const selectPicking = (s: DraftsState) => s.picking;
-
-export const AttachMenu = memo(function AttachMenu({ attach, onDone }: { attach: AttachmentsModel; onDone: () => void }) {
-  const picking = useStore(attach.store, selectPicking);
-  const add = (source: 'camera' | 'library' | 'audio') => {
-    onDone();
-    void attach.add(source);
-  };
-  return (
-    // Grows out of the paperclip (bottom left), like a sheet from its trigger.
-    <GrowIn origin="left bottom" style={styles.menu}>
-      <Button small icon="camera-outline" label="Camera" onPress={() => add('camera')} disabled={picking} />
-      <Button small icon="image-outline" label="Photos" onPress={() => add('library')} disabled={picking} />
-      <Button small icon="music-note-outline" label="Audio file" onPress={() => add('audio')} disabled={picking} />
-    </GrowIn>
-  );
-});
 
 export const AttachmentBar = memo(function AttachmentBar({ attach }: { attach: AttachmentsModel }) {
   const drafts = useStore(attach.store, selectDrafts);
@@ -95,8 +78,6 @@ const DraftChip = memo(function DraftChip({ draft: d, attach }: { draft: Draft; 
 });
 
 const styles = StyleSheet.create({
-  // A dark panel inside the composer's glass: its labels sit on calm colour, never on the frost's glow.
-  menu: { flexDirection: 'row', gap: space.s, padding: space.s, marginHorizontal: space.s, marginTop: space.s, flexWrap: 'wrap', backgroundColor: colors.panelDark, borderRadius: radius.m },
   strip: { gap: space.s, paddingHorizontal: space.s, paddingTop: space.s, alignItems: 'center' },
   picking: { marginHorizontal: space.s },
   error: { color: colors.danger, fontSize: 13, paddingHorizontal: space.m, paddingTop: space.s },

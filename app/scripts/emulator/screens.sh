@@ -5,7 +5,7 @@
 #   - frame times (dumpsys gfxinfo) for the same scripted scrolling and tab switching, glass on and
 #     off. An emulator renders with SwiftShader (the CPU), so these numbers are only comparable with
 #     each other: phone numbers come from Settings → Performance on the 13R;
-#   - a short screen recording: tab switches (the droplet), scrolling under the glass, the attach menu.
+#   - a short screen recording: tab switches (the droplet), scrolling under the glass, the composer menu.
 #
 # Usage: screens.sh <apk> <out dir>
 #
@@ -205,13 +205,27 @@ go_to Settings || return 1
 scroll_to "Measure frames" || return 1
 shot 05-settings
 go_to Live || return 1
-tap "Attach a photo or audio file" || return 1
-wait_until "the attach menu" on_screen "Camera" || return 1
-shot 06-attach-menu
-tap "Close the attach menu" || return 1
+# The composer (Arpit's reference): three glass pieces with the rim, then typing (the keyboard up).
+shot 06-composer
+tap Message || return 1
+wait_until "the keyboard" keyboard_shown || return 1
+adb shell input text "Hello%sEDITH"
+shot 06a-composer-typing
+for _ in $(seq 11); do adb shell input keyevent KEYCODE_DEL; done
+adb shell input keyevent KEYCODE_BACK # the keyboard down
+# Its menu, above the left button: the first page, then the server's commands.
+tap "Composer menu" || return 1
+wait_until "the composer menu" on_screen "Camera" || return 1
+shot 06b-composer-menu-open
+tap Commands || return 1
+wait_until "the commands" on_screen "/compact" || return 1
+shot 06c-composer-menu-commands
+adb shell input keyevent KEYCODE_BACK # back to the first page
+wait_until "the menu's first page" on_screen "Camera" || return 1
+tap "Close the composer menu" || return 1
 tap Menu || return 1
 wait_until "the menu" on_screen "Close the menu" || return 1
-shot 06b-navigation-menu-open
+shot 06d-navigation-menu-open
 tap "Close the menu" || return 1
 battery_saver on
 go_to Settings || return 1
@@ -248,9 +262,9 @@ scroll_down 700
 sleep 1
 scroll_down 700
 sleep 1
-tap "Attach a photo or audio file" || return 1
+tap "Composer menu" || return 1
 sleep 1.5
-tap "Close the attach menu" || return 1
+tap "Close the composer menu" || return 1
 sleep 1
 go_to Sessions || return 1
 sleep 1.2

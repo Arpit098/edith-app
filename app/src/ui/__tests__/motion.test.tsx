@@ -2,10 +2,11 @@
 
 import { act, create } from 'react-test-renderer';
 import { AppState, Text, type AppStateStatus } from 'react-native';
+import * as Reanimated from 'react-native-reanimated';
 import Animated from 'react-native-reanimated';
 
 import { GlassContext, type GlassSettings } from '../../core/theme';
-import { SettleIn, Squish } from '../motion';
+import { GrowSheet, SettleIn, Squish } from '../motion';
 import { WorkingBlob } from '../WorkingBlob';
 
 const settings = (reduceMotion: boolean): GlassSettings => ({ mode: 'flat', View: null, reduceMotion });
@@ -115,5 +116,55 @@ describe('WorkingBlob', () => {
     const r = render(<WorkingBlob />);
     expect(r.root.findAllByType(Animated.View)).toHaveLength(1);
     act(() => r.unmount());
+  });
+});
+
+describe('GrowSheet', () => {
+  const sheet = (open: boolean) => (
+    <GrowSheet open={open} origin="left bottom">
+      <Text>menu</Text>
+    </GrowSheet>
+  );
+
+  it('mounts nothing while closed', () => {
+    expect(render(sheet(false)).root.findAllByType(Text)).toHaveLength(0);
+  });
+
+  it('with "Remove animations": appears and goes at once', () => {
+    const r = render(sheet(true), true);
+    expect(r.root.findAllByType(Text)).toHaveLength(1);
+    act(() => r.update(<GlassContext.Provider value={settings(true)}>{sheet(false)}</GlassContext.Provider>));
+    expect(r.root.findAllByType(Text)).toHaveLength(0);
+  });
+
+  it('grows from its trigger, and takes no touches while it shrinks', () => {
+    const r = render(sheet(true));
+    const view = r.root.findByType(Animated.View);
+    expect(view.props.pointerEvents).toBe('auto');
+    expect(JSON.stringify(view.props.style)).toContain('left bottom');
+    act(() => r.update(<GlassContext.Provider value={settings(false)}>{sheet(false)}</GlassContext.Provider>));
+    const closing = r.root.findAllByType(Animated.View);
+    // Shrinking (still mounted, untouchable) or already gone once the spring settled.
+    expect(closing.every((v) => v.props.pointerEvents === 'none')).toBe(true);
+  });
+
+  it('opened again while shrinking, it stays (the closing spring ending late unmounts nothing)', async () => {
+    // Hold the closing spring's end until we say so.
+    let finish: ((done: boolean) => void) | undefined;
+    const spring = jest.spyOn(Reanimated, 'withSpring').mockImplementation(((to: number, _c: unknown, cb?: (done: boolean) => void) => {
+      if (to === 0) finish = cb;
+      return to;
+    }) as unknown as typeof Reanimated.withSpring);
+    const r = render(sheet(true));
+    act(() => r.update(<GlassContext.Provider value={settings(false)}>{sheet(false)}</GlassContext.Provider>)); // closing...
+    act(() => r.update(<GlassContext.Provider value={settings(false)}>{sheet(true)}</GlassContext.Provider>)); // ...and open again
+    await act(async () => finish?.(true)); // its end reaches JS in a microtask // the old spring ends now
+    expect(r.root.findAllByType(Text)).toHaveLength(1);
+    // Closed for real: it unmounts when its spring ends.
+    finish = undefined;
+    act(() => r.update(<GlassContext.Provider value={settings(false)}>{sheet(false)}</GlassContext.Provider>));
+    await act(async () => finish?.(true)); // its end reaches JS in a microtask
+    expect(r.root.findAllByType(Text)).toHaveLength(0);
+    spring.mockRestore();
   });
 });

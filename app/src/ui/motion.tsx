@@ -1,9 +1,10 @@
 // Liquid motion (PLAN.md §4.11): springs on the UI thread (Reanimated worklets: no JS per frame).
 // With Android's "Remove animations" on (GlassSettings.reduceMotion) everything is at its end state.
 
-import { memo, useEffect, useState, type ReactNode } from 'react';
-import { AppState, Pressable, type PressableProps, type StyleProp, type ViewStyle } from 'react-native';
+import { memo, useCallback, useEffect, useRef, useState, type ReactNode, type Ref } from 'react';
+import { AppState, Pressable, type PressableProps, type StyleProp, type View, type ViewStyle } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
+import { scheduleOnRN } from 'react-native-worklets';
 
 import { motion, useGlass } from '../core/theme';
 
@@ -19,7 +20,7 @@ export const Squish = memo(function Squish({
   onPressIn,
   onPressOut,
   ...rest
-}: Omit<PressableProps, 'style' | 'children'> & { style?: StyleProp<ViewStyle>; outerStyle?: StyleProp<ViewStyle>; children?: ReactNode }) {
+}: Omit<PressableProps, 'style' | 'children'> & { style?: StyleProp<ViewStyle>; outerStyle?: StyleProp<ViewStyle>; children?: ReactNode; ref?: Ref<View> }) {
   const reduce = useReduceMotion();
   const scale = useSharedValue(1);
   const animated = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
@@ -54,6 +55,52 @@ export const GrowIn = memo(function GrowIn({ origin = 'left bottom', style, chil
   }));
   return <Animated.View style={[style, { transformOrigin: origin }, animated]}>{children}</Animated.View>;
 });
+
+/**
+ * A sheet that grows out of `origin` (where its trigger is) while `open`, and shrinks back into it
+ * when closed. It stays mounted until the closing spring settles, then unmounts, so a closed sheet
+ * costs nothing. With "Remove animations" on it appears and goes at once.
+ */
+export function GrowSheet({ open, origin, style, children }: { open: boolean; origin: string; style?: StyleProp<ViewStyle>; children?: ReactNode }) {
+  const reduce = useReduceMotion();
+  const [mounted, setMounted] = useState(open);
+  const p = useSharedValue(0);
+  // Read when the closing spring ends: if it was opened again meanwhile, it stays mounted.
+  const openNow = useRef(open);
+  openNow.current = open;
+  const unmountIfClosed = useCallback(() => {
+    if (!openNow.current) setMounted(false);
+  }, []);
+
+  useEffect(() => {
+    if (open) setMounted(true);
+  }, [open]);
+
+  useEffect(() => {
+    if (!mounted) return;
+    if (open) {
+      p.value = reduce ? 1 : withSpring(1, motion.grow);
+    } else if (reduce) {
+      p.value = 0;
+      setMounted(false);
+    } else {
+      p.value = withSpring(0, motion.press, (finished) => {
+        if (finished) scheduleOnRN(unmountIfClosed);
+      });
+    }
+  }, [open, mounted, reduce, p, unmountIfClosed]);
+
+  const animated = useAnimatedStyle(() => ({
+    opacity: Math.min(1, p.value * 1.5),
+    transform: [{ scale: 0.55 + 0.45 * p.value }],
+  }));
+  if (!mounted) return null;
+  return (
+    <Animated.View style={[style, { transformOrigin: origin }, animated]} pointerEvents={open ? 'auto' : 'none'}>
+      {children}
+    </Animated.View>
+  );
+}
 
 /**
  * Settles into place from a little below on mount, when `animate` (a new message, not history or a
