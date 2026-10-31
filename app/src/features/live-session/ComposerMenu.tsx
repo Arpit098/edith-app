@@ -9,7 +9,7 @@ import { AccessibilityInfo, ActivityIndicator, BackHandler, Pressable, ScrollVie
 
 import type { Command } from '../../core/api';
 import { useStore, type Store } from '../../core/store';
-import { colors, legibleText, radius, space, type } from '../../core/theme';
+import { colors, legibleText, radius, space, type, useTheme } from '../../core/theme';
 import { Glass } from '../../ui/Glass';
 import { Icon } from '../../ui/Icon';
 import { GrowSheet, Squish } from '../../ui/motion';
@@ -131,6 +131,7 @@ function CommandsPage({ load, onBack, onPick }: { load: () => Promise<Command[]>
     };
   }, [load, attempt]);
   const first = useFocusOnMount();
+  const { accent } = useTheme();
   return (
     <View style={styles.list}>
       <Row ref={first} icon="chevron-left" label="Commands" a11yLabel="Back to the menu" onPress={onBack} header />
@@ -148,7 +149,7 @@ function CommandsPage({ load, onBack, onPick }: { load: () => Promise<Command[]>
           <Row icon="refresh" label="Try again" onPress={() => setAttempt((a) => a + 1)} />
         </View>
       ) : (
-        <ActivityIndicator style={styles.center} color={colors.accent} accessibilityLabel="Loading the commands" />
+        <ActivityIndicator style={styles.center} color={accent} accessibilityLabel="Loading the commands" />
       )}
     </View>
   );

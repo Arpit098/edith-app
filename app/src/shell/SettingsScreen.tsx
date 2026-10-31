@@ -10,7 +10,7 @@ import type { SettingsSection } from '../core/feature';
 import { str } from '../core/guards';
 import type { FrameMeter, FrameReport } from '../core/ports';
 import { createStore, useStore, type Store } from '../core/store';
-import { colors, space, type, useChrome, useGlass } from '../core/theme';
+import { colors, space, type, useChrome, useGlass, useTheme } from '../core/theme';
 import { Button } from '../ui/Button';
 import { Glass } from '../ui/Glass';
 import { Icon } from '../ui/Icon';
@@ -132,6 +132,7 @@ function SettingsList({ groups, onOpen }: { groups: SettingsGroupView[]; onOpen:
 function SettingsRow({ section, first, onPress }: { section: SettingsSection; first: boolean; onPress: () => void }) {
   const useSummary = section.summary ?? noSummary; // one section per row (keyed by title): the same hook every render
   const summary = useSummary();
+  const { accent } = useTheme();
   return (
     <Pressable
       onPress={onPress}
@@ -141,7 +142,7 @@ function SettingsRow({ section, first, onPress }: { section: SettingsSection; fi
       accessibilityHint={`Opens ${section.title}`}
       style={[styles.row, !first && styles.divider]}
     >
-      <Icon name={section.icon ?? DEFAULT_ICON} size={22} color={colors.accent} />
+      <Icon name={section.icon ?? DEFAULT_ICON} size={22} color={accent} />
       <View style={styles.flex}>
         <Text style={styles.title} numberOfLines={1}>
           {section.title}

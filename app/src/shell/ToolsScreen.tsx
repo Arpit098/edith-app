@@ -4,7 +4,7 @@ import { memo } from 'react';
 import { FlatList, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import type { Tool } from '../core/feature';
-import { colors, radius, space, type, useChrome } from '../core/theme';
+import { colors, radius, space, type, useChrome, useTheme } from '../core/theme';
 import { Empty } from '../ui/Empty';
 import { Glass } from '../ui/Glass';
 import { Icon } from '../ui/Icon';
@@ -38,11 +38,12 @@ export function ToolsScreen({ tools, open }: { tools: Tool[]; open: (screen: str
 
 /** A glass tile (flat: tiles sit in a list, so they don't blur). */
 const Tile = memo(function Tile({ tool, open }: { tool: Tool; open: (screen: string) => void }) {
+  const theme = useTheme();
   return (
     <Glass level="thin" radius={radius.l} style={styles.tile}>
       <Pressable style={styles.press} onPress={() => open(tool.screen)} android_ripple={{ color: colors.ripple }} accessibilityRole="button" accessibilityLabel={tool.title}>
-        <View style={styles.iconWell}>
-          <Icon name={tool.icon} size={28} color={colors.accent} />
+        <View style={[styles.iconWell, { backgroundColor: theme.accentSoft }]}>
+          <Icon name={tool.icon} size={28} color={theme.accent} />
         </View>
         <Text style={styles.label} numberOfLines={2}>
           {tool.title}
@@ -58,6 +59,6 @@ const styles = StyleSheet.create({
   row: { gap: space.m },
   tile: { flex: 1, aspectRatio: 1, maxWidth: 160 },
   press: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: space.s, padding: space.s },
-  iconWell: { width: 52, height: 52, borderRadius: 26, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.accentSoft },
+  iconWell: { width: 52, height: 52, borderRadius: 26, alignItems: 'center', justifyContent: 'center' },
   label: { color: colors.text, fontSize: type.size.small, fontWeight: '600', textAlign: 'center' },
 });

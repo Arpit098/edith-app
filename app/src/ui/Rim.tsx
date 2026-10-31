@@ -51,10 +51,12 @@ export interface RimProps {
   height: number;
   radius: number;
   scheme?: Scheme;
+  /** How bright the rim is, 0..1 (the glass amount, theme `rim`); its width never changes. */
+  strength?: number;
 }
 
-export const Rim = memo(function Rim({ width, height, radius, scheme = 'dark' }: RimProps) {
-  if (width <= 0 || height <= 0) return null;
+export const Rim = memo(function Rim({ width, height, radius, scheme = 'dark', strength = 1 }: RimProps) {
+  if (width <= 0 || height <= 0 || strength <= 0) return null;
   const style = rims[scheme];
   const stops = STOPS[scheme];
   const corner = Math.min(radius, width / 2, height / 2);
@@ -74,7 +76,7 @@ export const Rim = memo(function Rim({ width, height, radius, scheme = 'dark' }:
     />
   );
   return (
-    <Svg width={width} height={height} style={StyleSheet.absoluteFill} pointerEvents="none" accessible={false} testID="glass-rim">
+    <Svg width={width} height={height} style={StyleSheet.absoluteFill} opacity={strength} pointerEvents="none" accessible={false} testID="glass-rim">
       <Defs>
         <LinearGradient id="rim" x1="0%" y1="0%" x2="100%" y2="100%">
           {stops.rim.map((s) => (

@@ -7,7 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Connection } from '../core/connection';
 import { Button } from '../ui/Button';
 import { Icon } from '../ui/Icon';
-import { colors, type, radius, space } from '../core/theme';
+import { colors, type, radius, space, useTheme } from '../core/theme';
 
 export function ConnectScreen({ connection }: { connection: Connection }) {
   const insets = useSafeAreaInsets();
@@ -26,11 +26,12 @@ export function ConnectScreen({ connection }: { connection: Connection }) {
     }); // on success the shell swaps this screen out
   };
 
+  const theme = useTheme();
   return (
-    <KeyboardAvoidingView style={styles.flex} behavior="padding">
+    <KeyboardAvoidingView style={[styles.flex, { backgroundColor: theme.bg }]} behavior="padding">
       <ScrollView contentContainerStyle={[styles.body, { paddingTop: insets.top + space.xl, paddingBottom: insets.bottom + space.xl }]} keyboardShouldPersistTaps="handled">
         <View style={styles.logo}>
-          <Icon name="robot-happy-outline" size={56} color={colors.accent} />
+          <Icon name="robot-happy-outline" size={56} color={theme.accent} />
           <Text style={styles.title}>Connect to EDITH</Text>
           <Text style={styles.sub}>Over Tailscale. The token stays on this phone, encrypted with the Android Keystore.</Text>
         </View>
@@ -74,7 +75,7 @@ export function ConnectScreen({ connection }: { connection: Connection }) {
 }
 
 const styles = StyleSheet.create({
-  flex: { flex: 1, backgroundColor: colors.bg },
+  flex: { flex: 1 },
   body: { paddingHorizontal: space.xl, gap: space.s },
   logo: { alignItems: 'center', gap: space.s, marginBottom: space.xl },
   title: { color: colors.text, fontSize: 24, fontWeight: '700' },

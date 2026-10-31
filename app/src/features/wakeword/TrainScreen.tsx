@@ -8,7 +8,7 @@ import { formatIST } from '../../common/format';
 import { shallowEqual, useStore } from '../../core/store';
 import { Button } from '../../ui/Button';
 import { Icon } from '../../ui/Icon';
-import { colors, radius, space, useChrome } from '../../core/theme';
+import { colors, radius, space, useChrome, useTheme } from '../../core/theme';
 import type { TrainClip, WakewordModel, WakewordState } from './model';
 import { STEPS, stepOf, type ClipKind, type Step } from './plan';
 
@@ -127,8 +127,9 @@ function DeleteAll({ model }: { model: WakewordModel }) {
 
 function StepCard({ step, count, expanded, onOpen, children }: { step: Step; count: number; expanded: boolean; onOpen: () => void; children?: React.ReactNode }) {
   const complete = count >= step.target;
+  const { accent } = useTheme();
   return (
-    <View style={[styles.card, expanded && styles.cardOpen]}>
+    <View style={[styles.card, expanded && [styles.cardOpen, { borderColor: accent }]]}>
       <View style={styles.row}>
         <Icon name={complete ? 'check-circle' : 'circle-outline'} size={20} color={complete ? colors.ok : colors.textDim} />
         <Text style={[styles.title, styles.flex]} onPress={onOpen} accessibilityRole="button">
@@ -187,18 +188,20 @@ function Countdown({ until }: { until: number }) {
     const t = setTimeout(() => setSeconds(secondsLeft(until)), until - Date.now() - (seconds - 1) * 1000);
     return () => clearTimeout(t);
   }, [seconds, until]);
+  const { accent } = useTheme();
   return (
     <View style={[styles.row, styles.flex]} accessibilityLiveRegion="polite">
-      <Text style={styles.count}>{seconds || '•'}</Text>
+      <Text style={[styles.count, { color: accent }]}>{seconds || '•'}</Text>
       <Text style={[styles.dim, styles.flex]}>{seconds ? 'Get in place: recording starts soon.' : 'Starting…'}</Text>
     </View>
   );
 }
 
 function Bar({ value, tone = 'ok' }: { value: number; tone?: 'ok' | 'accent' }) {
+  const { accent } = useTheme();
   return (
     <View style={styles.track}>
-      <View style={[styles.fill, { width: `${Math.round(Math.max(0, Math.min(1, value)) * 100)}%`, backgroundColor: tone === 'ok' ? colors.ok : colors.accent }]} />
+      <View style={[styles.fill, { width: `${Math.round(Math.max(0, Math.min(1, value)) * 100)}%`, backgroundColor: tone === 'ok' ? colors.ok : accent }]} />
     </View>
   );
 }
@@ -206,7 +209,7 @@ function Bar({ value, tone = 'ok' }: { value: number; tone?: 'ok' | 'accent' }) 
 const styles = StyleSheet.create({
   body: { paddingHorizontal: space.m, gap: space.m },
   card: { backgroundColor: colors.card, borderRadius: radius.m, padding: space.m, gap: space.s },
-  cardOpen: { borderWidth: 1, borderColor: colors.accent },
+  cardOpen: { borderWidth: 1 },
   row: { flexDirection: 'row', alignItems: 'center', gap: space.s },
   flex: { flex: 1 },
   gap: { gap: space.s },
@@ -215,7 +218,7 @@ const styles = StyleSheet.create({
   text: { color: colors.text, fontSize: 15 },
   dim: { color: colors.textDim, fontSize: 13 },
   warn: { color: colors.warn },
-  count: { color: colors.accent, fontSize: 28, fontWeight: '700', minWidth: 28, textAlign: 'center' },
+  count: { fontSize: 28, fontWeight: '700', minWidth: 28, textAlign: 'center' },
   error: { color: colors.danger, fontSize: 14 },
   model: { gap: space.xs, marginTop: space.xs },
   recorder: { gap: space.m, marginTop: space.xs },

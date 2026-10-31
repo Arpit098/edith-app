@@ -1,11 +1,53 @@
-// The app's theme: tokens plus the glass setting the shell decides at runtime.
+// The app's theme: tokens, the active theme (Settings → Appearance) and the glass setting the shell
+// decides at runtime.
+//
+// Neutral tokens (text, danger, spacing…) are the same in every theme and stay module constants
+// (`colors`, `space`…). What a theme changes (background, accent, bubbles, glass) comes from the
+// active Theme: `useTheme()` in a component, or `themedStyles(t => StyleSheet.create(…))` for a
+// sheet built once per theme. `colors.accent`/`colors.bg` remain Midnight's, for code outside React.
 
 import { createContext, useContext, type ComponentType } from 'react';
 
+import { DEFAULT_APPEARANCE, resolveTheme, type Appearance, type Theme } from './themes';
 import type { Scheme } from './tokens';
 
 export * from './contrast';
+export * from './themes';
 export * from './tokens';
+
+/** The active theme; Midnight with the defaults when nothing provides one (tests, previews). */
+export const ThemeContext = createContext<Theme>(resolveTheme(DEFAULT_APPEARANCE));
+
+export function useTheme(): Theme {
+  return useContext(ThemeContext);
+}
+
+/**
+ * A style sheet that depends on the theme: built on first use for each theme and kept, so a
+ * re-render costs a lookup. `const useStyles = themedStyles((t) => StyleSheet.create({...}))`, then
+ * `const ts = useStyles()` in the component.
+ */
+export function themedStyles<T>(make: (t: Theme) => T): () => T {
+  const built = new WeakMap<Theme, T>();
+  return function useThemedStyles() {
+    const t = useTheme();
+    let s = built.get(t);
+    if (!s) built.set(t, (s = make(t)));
+    return s;
+  };
+}
+
+/** The chosen appearance and how to change it (Settings → Appearance); stored on the phone. */
+export interface AppearanceControl {
+  appearance: Appearance;
+  set(change: Partial<Appearance>): void;
+}
+
+export const AppearanceContext = createContext<AppearanceControl>({ appearance: DEFAULT_APPEARANCE, set: () => {} });
+
+export function useAppearance(): AppearanceControl {
+  return useContext(AppearanceContext);
+}
 
 /**
  * How glass draws, chosen once by the composition root and again when battery saver changes:

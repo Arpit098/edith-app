@@ -7,7 +7,7 @@ import { timeAgo } from '../../common/format';
 import { Button } from '../../ui/Button';
 import { Empty } from '../../ui/Empty';
 import { Icon } from '../../ui/Icon';
-import { colors, radius, space, type, useChrome } from '../../core/theme';
+import { colors, radius, space, themedStyles, type, useChrome, useTheme } from '../../core/theme';
 import { toast } from '../../ui/toast';
 import type { SessionsModel, SessionsState } from './model';
 
@@ -25,6 +25,7 @@ export function SessionsScreen({ model }: { model: SessionsModel }) {
   const switchingId = useStore(model.store, selectSwitchingId);
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
+  const theme = useTheme();
 
   const refresh = useCallback(() => void model.refresh(), [model]);
   const startNew = () => {
@@ -45,7 +46,7 @@ export function SessionsScreen({ model }: { model: SessionsModel }) {
         keyExtractor={keyOf}
         renderItem={renderItem}
         refreshControl={
-          <RefreshControl refreshing={loading} onRefresh={refresh} colors={[colors.accent]} progressBackgroundColor={colors.bg} progressViewOffset={chromeInsets.top} />
+          <RefreshControl refreshing={loading} onRefresh={refresh} colors={[theme.accent]} progressBackgroundColor={theme.bg} progressViewOffset={chromeInsets.top} />
         }
         contentContainerStyle={[styles.list, { paddingTop: chromeInsets.top + space.m, paddingBottom: chromeInsets.bottom + space.l }]}
         keyboardShouldPersistTaps="handled"
@@ -73,6 +74,7 @@ interface RowProps {
 const Row = memo(function Row({ s, model, switching, anySwitching, editing, setEditing }: RowProps) {
   const [title, setTitle] = useState(s.title ?? '');
   const [saving, setSaving] = useState(false);
+  const ts = useStyles();
   const name = s.title || `Untitled · ${s.session_id.slice(0, 8)}`;
 
   if (editing) {
@@ -108,7 +110,7 @@ const Row = memo(function Row({ s, model, switching, anySwitching, editing, setE
     void model.resume(s.session_id).then(toast);
   };
   return (
-    <Pressable style={[styles.row, s.current && styles.current]} onPress={resume} android_ripple={{ color: colors.ripple }} accessibilityRole="button" accessibilityHint={s.current ? undefined : 'Switch to this conversation'}>
+    <Pressable style={[styles.row, s.current && ts.current]} onPress={resume} android_ripple={{ color: colors.ripple }} accessibilityRole="button" accessibilityHint={s.current ? undefined : 'Switch to this conversation'}>
       <View style={styles.body}>
         <Text style={styles.title} numberOfLines={1}>
           {name}
@@ -118,7 +120,7 @@ const Row = memo(function Row({ s, model, switching, anySwitching, editing, setE
           {s.current ? ' · current' : ''}
         </Text>
       </View>
-      {switching ? <ActivityIndicator color={colors.accent} /> : null}
+      {switching ? <ActivityIndicator color={ts.current.borderColor} /> : null}
       <Pressable
         onPress={() => {
           setTitle(s.title ?? '');
@@ -150,10 +152,11 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.hairline,
   },
-  current: { borderColor: colors.accent, backgroundColor: colors.accentSoft },
   editRow: { gap: space.s },
   body: { flex: 1 },
   title: { color: colors.text, fontSize: type.size.title, fontWeight: '600' },
   meta: { color: colors.textDim, fontSize: type.size.small, marginTop: 2 },
   input: { flex: 1, color: colors.text, backgroundColor: colors.input, borderRadius: radius.s, paddingHorizontal: space.s, paddingVertical: space.xs, fontSize: type.size.body },
 });
+
+const useStyles = themedStyles((t) => StyleSheet.create({ current: { borderColor: t.accent, backgroundColor: t.accentSoft } }));

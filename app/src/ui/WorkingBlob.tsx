@@ -5,7 +5,7 @@ import { memo, useEffect } from 'react';
 import { StyleSheet } from 'react-native';
 import Animated, { cancelAnimation, Easing, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated';
 
-import { colors, glass, motion } from '../core/theme';
+import { glass, motion, themedStyles } from '../core/theme';
 import { useReduceMotion } from './motion';
 
 const TAU = Math.PI * 2;
@@ -29,19 +29,22 @@ export const WorkingBlob = memo(function WorkingBlob() {
       transform: [{ scaleX: 1 + 0.14 * Math.sin(a) }, { scaleY: 1 - 0.12 * Math.sin(a + 0.9) }, { rotate: `${10 * Math.sin(a / 2)}deg` }],
     };
   });
+  const styles = useStyles();
   return <Animated.View style={[styles.blob, shape]} />;
 });
 
-const styles = StyleSheet.create({
-  blob: {
-    width: 20,
-    height: 16,
-    borderRadius: 9,
-    backgroundColor: colors.accentSoft,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderTopColor: glass.thin.edge[0],
-    borderLeftColor: glass.thin.edge[0],
-    borderRightColor: colors.accent,
-    borderBottomColor: colors.accent,
-  },
-});
+const useStyles = themedStyles((t) =>
+  StyleSheet.create({
+    blob: {
+      width: 20,
+      height: 16,
+      borderRadius: 9,
+      backgroundColor: t.accentSoft,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderTopColor: glass.thin.edge[0],
+      borderLeftColor: glass.thin.edge[0],
+      borderRightColor: t.accent,
+      borderBottomColor: t.accent,
+    },
+  }),
+);

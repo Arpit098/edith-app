@@ -12,7 +12,7 @@ import { memo, useMemo, useRef, type ReactNode } from 'react';
 import { PanResponder, StyleSheet, View } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
 
-import { colors, motion, space } from '../core/theme';
+import { colors, motion, space, useTheme } from '../core/theme';
 import { Icon } from './Icon';
 import { useReduceMotion } from './motion';
 import { caught, swipeOffset, SWIPE, wantsSwipe } from './swipe';
@@ -49,13 +49,14 @@ export const SwipeToReply = memo(function SwipeToReply({ onReply, children }: { 
     return { opacity: p, transform: [{ scale: on ? 1.15 : 0.6 + 0.3 * p }] };
   });
   const hintOn = useAnimatedStyle(() => ({ opacity: x.value >= SWIPE.catch ? 1 : 0 }));
+  const { accent } = useTheme();
 
   return (
     <View {...responder.panHandlers}>
       <Animated.View style={[styles.hint, hint]} pointerEvents="none" importantForAccessibility="no-hide-descendants">
         <Icon name="reply" size={20} color={colors.textDim} />
         <Animated.View style={[StyleSheet.absoluteFill, styles.center, hintOn]}>
-          <Icon name="reply" size={20} color={colors.accent} />
+          <Icon name="reply" size={20} color={accent} />
         </Animated.View>
       </Animated.View>
       <Animated.View style={row}>{children}</Animated.View>

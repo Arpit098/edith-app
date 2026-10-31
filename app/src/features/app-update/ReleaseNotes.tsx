@@ -5,12 +5,13 @@ import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import type { AppRelease } from '../../core/api';
-import { colors, space } from '../../core/theme';
+import { colors, space, useTheme } from '../../core/theme';
 import { noteSections } from './model';
 
 export function ReleaseNotes({ release }: { release: AppRelease }) {
   const { sections, details } = noteSections(release);
   const [open, setOpen] = useState(false);
+  const { accent } = useTheme();
   if (!sections.length && !details.length) return null;
   return (
     <View style={styles.box}>
@@ -28,7 +29,7 @@ export function ReleaseNotes({ release }: { release: AppRelease }) {
       {details.length ? (
         <View style={styles.section}>
           <Pressable accessibilityRole="button" accessibilityState={{ expanded: open }} onPress={() => setOpen((o) => !o)} hitSlop={8}>
-            <Text style={styles.toggle}>{open ? '▾' : '▸'} Technical details</Text>
+            <Text style={[styles.toggle, { color: accent }]}>{open ? '▾' : '▸'} Technical details</Text>
           </Pressable>
           {open ? details.map((d, i) => <Text key={i} style={styles.detail}>{d}</Text>) : null}
         </View>
@@ -44,6 +45,6 @@ const styles = StyleSheet.create({
   item: { flexDirection: 'row', gap: space.s, paddingLeft: space.xs },
   bullet: { color: colors.textDim, fontSize: 14 },
   text: { color: colors.text, fontSize: 14, flexShrink: 1 },
-  toggle: { color: colors.accent, fontSize: 13 },
+  toggle: { fontSize: 13 },
   detail: { color: colors.textDim, fontSize: 12, paddingLeft: space.m },
 });

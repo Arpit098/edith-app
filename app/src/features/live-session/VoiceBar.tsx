@@ -6,7 +6,7 @@ import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 
 import { useStore } from '../../core/store';
 import { Button } from '../../ui/Button';
-import { colors, space } from '../../core/theme';
+import { colors, space, useTheme } from '../../core/theme';
 import { MAX_RECORDING_MS, type VoiceModel, type VoiceState } from './voice';
 
 const selectPhase = (s: VoiceState) => s.phase;
@@ -20,10 +20,11 @@ export const VoiceBar = memo(function VoiceBar({ voice, onStop }: { voice: Voice
   const phase = useStore(voice.store, selectPhase);
   const seconds = useStore(voice.store, selectElapsed);
   const level = useStore(voice.store, selectLevel);
+  const { accent } = useTheme();
   if (phase === 'transcribing') {
     return (
       <View style={styles.bar}>
-        <ActivityIndicator color={colors.accent} />
+        <ActivityIndicator color={accent} />
         <Text style={styles.label}>Transcribing on edith…</Text>
       </View>
     );
@@ -36,7 +37,7 @@ export const VoiceBar = memo(function VoiceBar({ voice, onStop }: { voice: Voice
         {clock(seconds)}
       </Text>
       <View style={styles.meter}>
-        <View style={[styles.meterFill, { width: `${Math.max(4, level * 100)}%` }]} />
+        <View style={[styles.meterFill, { backgroundColor: accent, width: `${Math.max(4, level * 100)}%` }]} />
       </View>
       {left <= 10 ? <Text style={styles.warn}>{left}s left</Text> : null}
       <Button small icon="close" variant="ghost" onPress={() => void voice.cancel()} accessibilityLabel="Cancel recording" />
@@ -52,7 +53,7 @@ const styles = StyleSheet.create({
   dotDim: { opacity: 0.35 },
   time: { color: colors.text, fontVariant: ['tabular-nums'], fontSize: 15, minWidth: 40 },
   meter: { flex: 1, height: 6, borderRadius: 3, backgroundColor: colors.hairline, overflow: 'hidden' },
-  meterFill: { height: 6, borderRadius: 3, backgroundColor: colors.accent },
+  meterFill: { height: 6, borderRadius: 3 },
   warn: { color: colors.warn, fontSize: 12 },
   label: { color: colors.textDim, fontSize: 14 },
 });

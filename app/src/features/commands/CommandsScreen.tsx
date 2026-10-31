@@ -5,7 +5,7 @@ import type { Command } from '../../core/api';
 import { useStore } from '../../core/store';
 import { Button } from '../../ui/Button';
 import { ReplyButtons } from '../../ui/ReplyButtons';
-import { colors, radius, space, type, useChrome } from '../../core/theme';
+import { colors, radius, space, themedStyles, type, useChrome } from '../../core/theme';
 import { toast } from '../../ui/toast';
 import type { CommandsModel, CommandsState, OutputEntry } from './model';
 
@@ -40,6 +40,7 @@ const Picker = memo(function Picker({ model }: { model: CommandsModel }) {
   const running = useStore(model.store, selectRunning);
   const [picked, setPicked] = useState<Command | null>(null);
   const [args, setArgs] = useState('');
+  const ts = useStyles();
 
   const run = (c: Command, a = '') => void model.run(c.name, a).then((err) => (err ? toast(err) : (setPicked(null), setArgs(''))));
   const tap = (c: Command) => (c.usage ? setPicked(picked?.name === c.name ? null : c) : run(c));
@@ -47,7 +48,7 @@ const Picker = memo(function Picker({ model }: { model: CommandsModel }) {
   if (!commands) {
     return (
       <View style={styles.center}>
-        {loading ? <ActivityIndicator color={colors.accent} /> : null}
+        {loading ? <ActivityIndicator color={ts.accent.color} /> : null}
         {error ? (
           <>
             <Text style={styles.error}>Couldn't load the commands: {error}</Text>
@@ -65,11 +66,11 @@ const Picker = memo(function Picker({ model }: { model: CommandsModel }) {
             key={c.name}
             onPress={() => tap(c)}
             disabled={!!running}
-            style={[styles.chip, picked?.name === c.name && styles.chipOn]}
+            style={[styles.chip, picked?.name === c.name && ts.chipOn]}
             accessibilityRole="button"
             accessibilityHint={c.description}
           >
-            {running === c.name ? <ActivityIndicator size="small" color={colors.accent} /> : null}
+            {running === c.name ? <ActivityIndicator size="small" color={ts.accent.color} /> : null}
             <Text style={styles.chipText}>/{c.name}</Text>
           </Pressable>
         ))}
@@ -99,9 +100,10 @@ const Picker = memo(function Picker({ model }: { model: CommandsModel }) {
 });
 
 const OutputCard = memo(function OutputCard({ entry, model }: { entry: OutputEntry; model: CommandsModel }) {
+  const ts = useStyles();
   return (
     <View style={styles.card}>
-      {entry.command ? <Text style={styles.cmd}>/{entry.command}</Text> : null}
+      {entry.command ? <Text style={[styles.cmd, ts.accent]}>/{entry.command}</Text> : null}
       <Text style={styles.text} selectable>
         {entry.text}
       </Text>
@@ -118,14 +120,20 @@ const styles = StyleSheet.create({
   picker: { gap: space.m, marginBottom: space.s },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: space.s },
   chip: { flexDirection: 'row', alignItems: 'center', gap: space.xs, backgroundColor: colors.card, borderRadius: radius.pill, paddingHorizontal: space.m, paddingVertical: space.s, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.hairline },
-  chipOn: { backgroundColor: colors.accentSoft, borderColor: colors.accent },
   chipText: { color: colors.text, fontSize: type.size.small },
   argsBox: { gap: space.s },
   help: { color: colors.textDim, fontSize: 13 },
   argsRow: { flexDirection: 'row', gap: space.s, alignItems: 'center' },
   input: { flex: 1, color: colors.text, backgroundColor: colors.input, borderRadius: radius.m, paddingHorizontal: space.m, paddingVertical: space.s, fontSize: type.size.body, minHeight: 44 },
   card: { backgroundColor: colors.card, borderRadius: radius.m, padding: space.m, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.hairline },
-  cmd: { color: colors.accent, fontSize: 12, marginBottom: space.xs },
+  cmd: { fontSize: 12, marginBottom: space.xs },
   text: { color: colors.text, fontSize: 15, lineHeight: 21 },
   note: { color: colors.textDim, fontSize: 13, marginTop: space.xs },
 });
+
+const useStyles = themedStyles((t) =>
+  StyleSheet.create({
+    accent: { color: t.accent },
+    chipOn: { backgroundColor: t.accentSoft, borderColor: t.accent },
+  }),
+);
