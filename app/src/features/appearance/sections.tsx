@@ -3,7 +3,7 @@
 // it's stored only on Save.
 
 import { memo, useMemo, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Alert, StyleSheet, Text, View } from 'react-native';
 
 import {
   ACCENTS,
@@ -102,9 +102,20 @@ export function BackgroundSection({ appearance, set, onDraft }: SectionProps & {
   };
   const remove = () => {
     if (!editing?.id) return;
-    const list = customs.filter((c) => c.id !== editing.id);
-    set({ customGradients: list, ...(appearance.background === editing.id ? { background: DEFAULT_APPEARANCE.background } : {}) });
-    edit(null);
+    const id = editing.id;
+    const name = own.find((o) => o.id === id)?.name ?? 'this gradient';
+    // Deleting can't be undone: ask first.
+    Alert.alert(`Delete ${name}?`, 'It goes from your gradients. This can’t be undone.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: () => {
+          set({ customGradients: customs.filter((c) => c.id !== id), ...(appearance.background === id ? { background: DEFAULT_APPEARANCE.background } : {}) });
+          edit(null);
+        },
+      },
+    ]);
   };
 
   if (editing) {
@@ -159,7 +170,7 @@ export function BackgroundSection({ appearance, set, onDraft }: SectionProps & {
         {chosen ? <LinkButton label={`Edit ${own.find((o) => o.id === chosen.id)?.name ?? ''}`} onPress={() => edit({ id: chosen.id, spec: chosen })} /> : null}
       </View>
       {customs.length >= MAX_CUSTOM ? <Hint>{`You have ${MAX_CUSTOM}, the most kept: edit or delete one to make another.`}</Hint> : null}
-      <Hint>The drifting ones move slowly; with “Remove animations” on they stay still.</Hint>
+      <Hint>The drifting ones move slowly. Drift pauses while glass is on (it would make every glass pane redraw), and with “Remove animations”.</Hint>
     </>
   );
 }

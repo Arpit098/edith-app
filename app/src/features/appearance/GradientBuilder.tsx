@@ -26,14 +26,31 @@ export interface GradientBuilderProps {
   title: string;
 }
 
+type Hsv = ReturnType<typeof hexToHsv>;
+
 export function GradientBuilder({ mode, value: spec, onChange, onSave, onCancel, onDelete, title }: GradientBuilderProps) {
   const [picked, setPicked] = useState(0); // the stop being coloured
+  // Each stop's hue, saturation and brightness as last set here: a colour alone loses its hue at
+  // brightness 0 (black has none), so dragging brightness down and back up would turn it red.
+  const [tones, setTones] = useState<(Hsv | undefined)[]>([]);
   const at = Math.min(picked, spec.stops.length - 1);
   const stop = spec.stops[at]!;
-  const hsv = hexToHsv(stop);
+  const toneOf = (i: number) => {
+    const kept = tones[i];
+    return kept && hsvToHex(kept.h, kept.s, kept.v) === spec.stops[i] ? kept : hexToHsv(spec.stops[i]!);
+  };
+  const hsv = toneOf(at);
   const most = mode === 'bubble' ? 2 : MAX_STOPS;
   const change = (c: Partial<GradientSpec>) => onChange({ ...spec, ...c });
-  const colour = (hex: string) => change({ stops: spec.stops.map((s, i) => (i === at ? hex : s)) });
+  const tone = (t: Hsv) => {
+    setTones((list) => Object.assign([...list], { [at]: t }));
+    change({ stops: spec.stops.map((s, i) => (i === at ? hsvToHex(t.h, t.s, t.v) : s)) });
+  };
+  // Sliders follow the drag (onMove) as well as the release, so the strip and the preview move with them.
+  const hue = (v: number) => tone({ h: Math.round(v * 360), s: Math.max(hsv.s, 0.6), v: Math.max(hsv.v, 0.3) });
+  const brightness = (v: number) => tone({ ...hsv, v });
+  const angle = (v: number) => change({ angle: Math.round(v * 359) });
+  const intensity = (v: number) => change({ intensity: Math.round(v * 100) });
 
   return (
     <View style={styles.box} testID={`builder-${mode}`}>
@@ -50,8 +67,10 @@ export function GradientBuilder({ mode, value: spec, onChange, onSave, onCancel,
         {spec.stops.length < most ? (
           <Pressable
             onPress={() => {
-              change({ stops: [...spec.stops, spec.stops[spec.stops.length - 1]!] });
-              setPicked(spec.stops.length);
+              const last = spec.stops.length - 1;
+              setTones((list) => Object.assign([...list], { [last + 1]: toneOf(last) }));
+              change({ stops: [...spec.stops, spec.stops[last]!] });
+              setPicked(last + 1);
             }}
             style={styles.round}
             accessibilityRole="button"
@@ -64,6 +83,7 @@ export function GradientBuilder({ mode, value: spec, onChange, onSave, onCancel,
         {spec.stops.length > 2 ? (
           <Pressable
             onPress={() => {
+              setTones((list) => list.filter((_, i) => i !== at));
               change({ stops: spec.stops.filter((_, i) => i !== at) });
               setPicked(Math.max(0, at - 1));
             }}
@@ -78,14 +98,14 @@ export function GradientBuilder({ mode, value: spec, onChange, onSave, onCancel,
       </View>
       <View style={shared.row}>
         {STOP_PALETTE.map((p) => (
-          <Swatch key={p.color} colors={[p.color]} on={p.color === stop} onPress={() => colour(p.color)} label={`${p.name} for stop ${at + 1}`} />
+          <Swatch key={p.color} colors={[p.color]} on={p.color === stop} onPress={() => change({ stops: spec.stops.map((s, i) => (i === at ? p.color : s)) })} label={`${p.name} for stop ${at + 1}`} />
         ))}
       </View>
-      <Labelled icon="palette-outline" label={`Hue, stop ${at + 1}`} value={`${hsv.h}°`}>
-        <Slider value={hsv.h / 360} step={1 / 36} label={`Hue, stop ${at + 1}`} valueText={(v) => `${Math.round(v * 360)} degrees`} onChange={(v) => colour(hsvToHex(v * 360, Math.max(hsv.s, 0.6), Math.max(hsv.v, 0.3)))} />
+      <Labelled icon="palette-outline" value={`${hsv.h}°`}>
+        <Slider value={hsv.h / 360} step={1 / 36} label={`Hue, stop ${at + 1}`} valueText={(v) => `${Math.round(v * 360)} degrees`} onMove={hue} onChange={hue} />
       </Labelled>
-      <Labelled icon="brightness-6" label={`Brightness, stop ${at + 1}`} value={`${Math.round(hsv.v * 100)}%`}>
-        <Slider value={hsv.v} step={0.05} label={`Brightness, stop ${at + 1}`} onChange={(v) => colour(hsvToHex(hsv.h, hsv.s, v))} />
+      <Labelled icon="brightness-6" value={`${Math.round(hsv.v * 100)}%`}>
+        <Slider value={hsv.v} step={0.05} label={`Brightness, stop ${at + 1}`} onMove={brightness} onChange={brightness} />
       </Labelled>
 
       <Heading>Direction</Heading>
@@ -99,8 +119,8 @@ export function GradientBuilder({ mode, value: spec, onChange, onSave, onCancel,
           );
         })}
       </View>
-      <Labelled icon="angle-acute" label="Angle" value={`${spec.angle}°`}>
-        <Slider value={spec.angle / 359} step={5 / 359} label="Angle" valueText={(v) => `${Math.round(v * 359)} degrees`} onChange={(v) => change({ angle: Math.round(v * 359) })} />
+      <Labelled icon="angle-acute" value={`${spec.angle}°`}>
+        <Slider value={spec.angle / 359} step={5 / 359} label="Angle" valueText={(v) => `${Math.round(v * 359)} degrees`} onMove={angle} onChange={angle} />
       </Labelled>
 
       {mode === 'background' ? (
@@ -112,8 +132,8 @@ export function GradientBuilder({ mode, value: spec, onChange, onSave, onCancel,
             ))}
           </View>
           <Heading>Intensity</Heading>
-          <Labelled icon="weather-night" label="Intensity" value={`${spec.intensity}%`}>
-            <Slider value={spec.intensity / 100} step={0.05} label="Intensity" onChange={(v) => change({ intensity: Math.round(v * 100) })} />
+          <Labelled icon="weather-night" value={`${spec.intensity}%`}>
+            <Slider value={spec.intensity / 100} step={0.05} label="Intensity" onMove={intensity} onChange={intensity} />
           </Labelled>
           <Hint>Lower is darker. Bright colours are always dimmed enough for text to stay easy to read.</Hint>
         </>
@@ -130,13 +150,12 @@ export function GradientBuilder({ mode, value: spec, onChange, onSave, onCancel,
   );
 }
 
-function Labelled({ icon, label, value, children }: { icon: string; label: string; value: string; children: React.ReactNode }) {
+/** A slider row: an icon, the slider (it names itself to TalkBack), and its value for sighted users. */
+function Labelled({ icon, value, children }: { icon: string; value: string; children: React.ReactNode }) {
   return (
     <View style={styles.labelled}>
       <Icon name={icon} size={18} color={colors.textDim} />
-      <View style={shared.flex} accessibilityLabel={label}>
-        {children}
-      </View>
+      <View style={shared.flex}>{children}</View>
       <Text style={styles.value} accessibilityElementsHidden importantForAccessibility="no">
         {value}
       </Text>

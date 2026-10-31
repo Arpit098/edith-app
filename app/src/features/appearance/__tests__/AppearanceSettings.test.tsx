@@ -4,37 +4,37 @@
 // the glass slider previews live while dragged and applies on release.
 
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
-import { StyleSheet, Text } from 'react-native';
+import { Alert, StyleSheet, Text } from 'react-native';
 import { useMemo } from 'react';
 
 import { createAppearanceStore, type AppearanceStore } from '../../../core/appearance';
 import { useStore } from '../../../core/store';
-import { ACCENTS, AppearanceContext, GlassContext, MAX_CUSTOM, resolveTheme, rgbaOf, SWATCHES, ThemeContext } from '../../../core/theme';
+import { ACCENTS, AppearanceContext, GlassContext, hexToHsv, MAX_CUSTOM, NEW_BACKGROUND_GRADIENT, resolveTheme, rgbaOf, SWATCHES, ThemeContext, type GlassMode } from '../../../core/theme';
 import { AppearanceSettings } from '../AppearanceSettings';
 import { appearanceSummary } from '../summary';
 
 jest.setTimeout(30_000); // the first run transforms all of React Native: slow on a cold cache
 
 /** The composition root's part: the stored appearance → the theme → the app. */
-function Root({ appearance, reduceMotion, children }: { appearance: AppearanceStore; reduceMotion: boolean; children: React.ReactNode }) {
+function Root({ appearance, reduceMotion, mode, children }: { appearance: AppearanceStore; reduceMotion: boolean; mode: GlassMode; children: React.ReactNode }) {
   const chosen = useStore(appearance.store, (a) => a);
   const theme = useMemo(() => resolveTheme(chosen), [chosen]);
   const control = useMemo(() => ({ appearance: chosen, set: appearance.set }), [chosen, appearance]);
   return (
     <AppearanceContext.Provider value={control}>
       <ThemeContext.Provider value={theme}>
-        <GlassContext.Provider value={{ mode: 'flat', View: null, reduceMotion }}>{children}</GlassContext.Provider>
+        <GlassContext.Provider value={{ mode, View: null, reduceMotion }}>{children}</GlassContext.Provider>
       </ThemeContext.Provider>
     </AppearanceContext.Provider>
   );
 }
 
-function mount(appearance: AppearanceStore, reduceMotion = true): ReactTestRenderer {
+function mount(appearance: AppearanceStore, reduceMotion = true, mode: GlassMode = 'flat'): ReactTestRenderer {
   jest.spyOn(console, 'error').mockImplementation(() => {}); // react-test-renderer is deprecated in React 19
   let r!: ReactTestRenderer;
   act(() => {
     r = create(
-      <Root appearance={appearance} reduceMotion={reduceMotion}>
+      <Root appearance={appearance} reduceMotion={reduceMotion} mode={mode}>
         <AppearanceSettings />
       </Root>,
     );
@@ -178,6 +178,19 @@ describe('Appearance', () => {
     act(() => moving.unmount()); // stops the loop
   });
 
+  it('drift pauses while real glass is drawn (every pane would re-blur each frame), and resumes at 0% glass', () => {
+    const a = createAppearanceStore(undefined);
+    a.set({ background: 'aurora-drift' });
+    const glassy = mount(a, false, 'shader');
+    expect(has(glassy, 'ambient-drift')).toBe(false); // still frame
+    expect(has(glassy, 'ambient-aurora-drift')).toBe(true);
+    act(() => glassy.unmount());
+    a.set({ glass: 0 });
+    const flat = mount(a, false, 'shader');
+    expect(has(flat, 'ambient-drift')).toBe(true);
+    act(() => flat.unmount());
+  });
+
   it('"Custom…" builds a background: stops, type, intensity, live in the preview, kept on Save, then edited and deleted', () => {
     const a = createAppearanceStore(undefined);
     const r = mount(a);
@@ -202,9 +215,42 @@ describe('Appearance', () => {
     tap(r, 'Remove stop 3');
     tap(r, 'Save edit gradient');
     expect(a.store.get().customGradients[0]!.stops).toEqual(['#9B7CF0', '#2E8BC0']);
+    // Delete asks first: cancelling keeps it, confirming removes it (and the background falls back).
+    const ask = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
     tap(r, 'Edit Custom 1');
     tap(r, 'Delete edit gradient');
+    expect(ask).toHaveBeenCalledTimes(1);
+    expect(ask.mock.calls[0]![0]).toBe('Delete Custom 1?');
+    const buttons = ask.mock.calls[0]![2]!;
+    act(() => buttons.find((b) => b.style === 'cancel')!.onPress?.());
+    expect(a.store.get().customGradients).toHaveLength(1);
+    act(() => buttons.find((b) => b.style === 'destructive')!.onPress!());
     expect(a.store.get()).toMatchObject({ customGradients: [], background: 'glow' });
+    expect(has(r, 'builder-background')).toBe(false);
+  });
+
+  it('the builder’s sliders move the strip and the preview while dragged, and a stop keeps its hue through brightness 0', () => {
+    const a = createAppearanceStore(undefined);
+    const r = mount(a);
+    open(r, 'Background');
+    tap(r, 'New custom gradient');
+    const strip = () => r.root.find((n) => n.props.testID === 'builder-background').findAll((n) => Array.isArray(n.props.colors) && n.props.start)[0]!.props;
+    act(() => slider(r, 'Angle').props.onMove(90 / 359)); // dragging, not released
+    expect(strip().start).toEqual({ x: 0, y: 0.5 });
+    const previewLayer = () => r.root.find((n) => n.props.testID === 'appearance-preview').findAll((n) => Array.isArray(n.props.colors) && n.props.start)[0]!.props;
+    expect(previewLayer().start).toEqual({ x: 0, y: 0.5 });
+    act(() => slider(r, 'Intensity').props.onMove(0.2));
+    expect(previewLayer().colors).not.toEqual(resolveTheme({ ...a.store.get(), customGradients: [{ id: 'x', ...NEW_BACKGROUND_GRADIENT }], background: 'x' }).background.layers[0]!.colors);
+    // Hue: pick 200°, brightness down to 0 (black) and back up: still 200°.
+    act(() => slider(r, 'Hue, stop 1').props.onMove(200 / 360));
+    act(() => slider(r, 'Brightness, stop 1').props.onChange(0));
+    expect(strip().colors[0]).toBe('#000000');
+    act(() => slider(r, 'Brightness, stop 1').props.onChange(1));
+    expect(hexToHsv(strip().colors[0]).h).toBe(200);
+    expect(a.store.get().customGradients).toEqual([]); // all still a draft
+    // TalkBack hears each slider once: only the slider itself carries its name.
+    const named = r.root.findAll((n) => n.props.accessibilityLabel === 'Intensity' && typeof n.type === 'string');
+    expect(named.map((n) => n.props.accessibilityRole)).toEqual(['adjustable']);
   });
 
   it(`keeps at most ${MAX_CUSTOM} custom backgrounds`, () => {
