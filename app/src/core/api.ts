@@ -85,6 +85,13 @@ export interface HistoryPage {
   reset: boolean; // the cursor given was another conversation's: this is the newest page instead
 }
 
+/** GET /v1/push/config (contracts/push.md): what the phone subscribes to ntfy with. `token` is the read-only one. */
+export interface PushConfig {
+  url: string; // edith's ntfy over Tailscale, e.g. http://100.78.124.98:2586
+  topic: string;
+  token: string;
+}
+
 /** GET /v1/app/latest (contracts/app-updates.md §3). */
 export interface AppRelease {
   versionName: string;
@@ -411,6 +418,12 @@ export function createApi(t: Transport) {
     async press(action: string): Promise<ActionResult> {
       const r = await t.request<Obj>('POST', '/v1/actions', { action });
       return { ref: str(r.ref), toast: r.toast ? str(r.toast) : null, note: r.note ? str(r.note) : null, replies: replies(r.replies) };
+    },
+
+    /** edith's ntfy, its topic and the phone's read-only token, for turning push on. */
+    async pushConfig(): Promise<PushConfig> {
+      const r = await t.request<Obj>('GET', '/v1/push/config');
+      return { url: str(r.url), topic: str(r.topic), token: str(r.token) };
     },
 
     /** The newest APK edith offers, or null when it has none yet (404). */

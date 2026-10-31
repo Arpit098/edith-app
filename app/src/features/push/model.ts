@@ -1,7 +1,10 @@
 // Push while the app is closed (contracts/push.md): turns the native push service on and off, keeps
 // its App API address and token in step with the connection (for Allow/Deny), and reports how it's
-// doing. The service itself runs natively (ports.push); this holds no tokens beyond handing them over.
+// doing. "Turn on" asks edith for its ntfy and the phone's read-only token (GET /v1/push/config), so
+// nothing is pasted; pasting stays as a fallback. The service itself runs natively (ports.push) and keeps
+// the tokens Keystore-encrypted; this holds none beyond handing them over.
 
+import { ApiError, type Api } from '../../core/api';
 import type { Connection } from '../../core/connection';
 import type { AppVisibility, PushMode, PushReceiver, PushStatus, Transport } from '../../core/ports';
 import { createStore, type Store } from '../../core/store';
@@ -14,6 +17,7 @@ const CHECKS_MS = [1000, 2000, 4000, 8000];
 export interface PushState {
   status: PushStatus;
   error: string | null; // a refused setup, shown under the form
+  fetching: boolean; // turnOn() is asking edith for the push config
 }
 
 const OFF: PushStatus = { enabled: false, ntfyUrl: null, mode: 'instant', connected: false, error: null, lastCheckAt: null, batteryUnrestricted: false };
@@ -22,6 +26,14 @@ const OFF: PushStatus = { enabled: false, ntfyUrl: null, mode: 'instant', connec
 export function defaultNtfyUrl(apiBaseUrl: string | null): string {
   const m = apiBaseUrl?.match(/^(https?:\/\/[^/:]+)/i);
   return m ? `${m[1]!.replace(/^https:/i, 'http:')}:${NTFY_PORT}` : '';
+}
+
+/** Why GET /v1/push/config gave nothing usable, in Arpit's words. */
+function configError(e: unknown): string {
+  if (e instanceof ApiError && e.status === 404) return 'edith doesn’t hand out the push token (push isn’t set up there, or it needs an update). Use Advanced to paste it.';
+  if (e instanceof ApiError && e.status === 503) return 'edith’s phone token for push isn’t usable. Check ~/.config/edith/ntfy-phone-token on edith.';
+  if (e instanceof ApiError && e.status === 0) return 'Can’t reach edith. Is Tailscale on?';
+  return 'Couldn’t get the push setup from edith. Try again, or use Advanced.';
 }
 
 /** "Bearer <token>" from the transport's auth headers -> the App API base URL and token. */
@@ -33,8 +45,10 @@ function apiAuth(transport: Transport): { apiUrl: string; apiToken: string } | n
 
 export interface PushModel {
   store: Store<PushState>;
-  /** Turn pushes on with the phone's ntfy token. False (and `error` set) when the setup is refused. */
-  enable(ntfyUrl: string, ntfyToken: string, mode?: PushMode): boolean;
+  /** Turn pushes on with what edith hands over (GET /v1/push/config): nothing to paste. */
+  turnOn(mode?: PushMode): Promise<boolean>;
+  /** Turn pushes on with the phone's ntfy token (Advanced: pasted by hand). False (and `error` set) when the setup is refused. */
+  enable(ntfyUrl: string, ntfyToken: string, mode?: PushMode, topic?: string): boolean;
   /** Always-on, or a check every 15 minutes (less battery, up to 15 minutes late). */
   setMode(mode: PushMode): void;
   disable(): void;
@@ -45,13 +59,14 @@ export interface PushModel {
 
 export function createPushModel(deps: {
   push: PushReceiver;
+  api: Pick<Api, 'pushConfig'>;
   transport: Transport;
   connection: Connection;
   visibility?: AppVisibility;
   ensurePermission?: () => Promise<boolean>; // Android 13+: pushes show as notifications
 }): PushModel {
   const { push, transport, connection, visibility } = deps;
-  const store = createStore<PushState>({ status: OFF, error: null });
+  const store = createStore<PushState>({ status: OFF, error: null, fetching: false });
   let checks: ReturnType<typeof setTimeout> | null = null;
 
   const refresh = () => store.set((s) => ({ ...s, status: push.status() }));
@@ -88,26 +103,42 @@ export function createPushModel(deps: {
   });
   const offVisibility = visibility?.onChange((active) => active && refresh());
 
+  function enable(ntfyUrl: string, ntfyToken: string, mode: PushMode = 'instant', topic = TOPIC): boolean {
+    const url = ntfyUrl.trim().replace(/\/+$/, '');
+    const token = ntfyToken.trim();
+    const auth = apiAuth(transport);
+    let error: string | null = null;
+    if (!/^https?:\/\/[^/\s]+$/i.test(url)) error = 'Enter the push server as http://<edith’s address>:2586.';
+    else if (!/^tk_[A-Za-z0-9]{29}$/.test(token)) error = 'That isn’t an ntfy token (tk_ and 29 letters or digits): use the phone token from edith.';
+    else if (!auth) error = 'Connect to edith first: Allow and Deny on pushes use that connection.';
+    if (error || !auth) {
+      store.set((s) => ({ ...s, error }));
+      return false;
+    }
+    void deps.ensurePermission?.();
+    const started = push.enable({ ntfyUrl: url, topic, ntfyToken: token, ...auth, mode });
+    store.set((s) => ({ ...s, error: started ? null : 'Android didn’t let the push service start. Open EDITH again and retry.' }));
+    stopChecks();
+    check(0);
+    return started;
+  }
+
   return {
     store,
-    enable(ntfyUrl, ntfyToken, mode = 'instant') {
-      const url = ntfyUrl.trim().replace(/\/+$/, '');
-      const token = ntfyToken.trim();
-      const auth = apiAuth(transport);
-      let error: string | null = null;
-      if (!/^https?:\/\/[^/\s]+$/i.test(url)) error = 'Enter the push server as http://<edith’s address>:2586.';
-      else if (!/^tk_[A-Za-z0-9]{29}$/.test(token)) error = 'That isn’t an ntfy token (tk_ and 29 letters or digits): use the phone token from edith.';
-      else if (!auth) error = 'Connect to edith first: Allow and Deny on pushes use that connection.';
-      if (error || !auth) {
-        store.set((s) => ({ ...s, error }));
+    enable,
+    async turnOn(mode = 'instant') {
+      if (store.get().fetching) return false;
+      store.set((s) => ({ ...s, fetching: true, error: null }));
+      try {
+        const config = await deps.api.pushConfig();
+        // The token goes straight to the service, which keeps it Keystore-encrypted; it is never shown or kept here.
+        return enable(config.url, config.token, mode, config.topic || TOPIC);
+      } catch (e) {
+        store.set((s) => ({ ...s, error: configError(e) }));
         return false;
+      } finally {
+        store.set((s) => ({ ...s, fetching: false }));
       }
-      void deps.ensurePermission?.();
-      const started = push.enable({ ntfyUrl: url, topic: TOPIC, ntfyToken: token, ...auth, mode });
-      store.set((s) => ({ ...s, error: started ? null : 'Android didn’t let the push service start. Open EDITH again and retry.' }));
-      stopChecks();
-      check(0);
-      return started;
     },
     setMode(mode) {
       const started = push.setMode(mode);
@@ -118,7 +149,7 @@ export function createPushModel(deps: {
     disable() {
       stopChecks();
       push.disable();
-      store.set({ status: push.status(), error: null });
+      store.set({ status: push.status(), error: null, fetching: false });
     },
     refresh,
     openBatterySettings: () => push.openBatterySettings(),

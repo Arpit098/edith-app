@@ -8,7 +8,9 @@ unreachable server is retried with backoff (1 s, 2 s), a 4xx other than 429 is n
     url = "http://100.78.124.98:2586"
     topic = "edith"
     token_file = "~/.config/edith/ntfy-publish-token"
+    phone_token_file = "~/.config/edith/ntfy-phone-token"   # read-only; handed to the app (subscription())
 """
+import hmac
 import json
 import logging
 import os
@@ -42,6 +44,7 @@ class NtfyNotifier:
             raise ValueError("[adapter.ntfy] needs url (edith's Tailscale IP and ntfy's port)")
         self.topic = config.get("topic", "edith")
         self.token_file = os.path.expanduser(config.get("token_file", "~/.config/edith/ntfy-publish-token"))
+        self.phone_token_file = os.path.expanduser(config.get("phone_token_file", "~/.config/edith/ntfy-phone-token"))
         self.timeout, self.retries, self.backoff = timeout, retries, backoff
         self._token = None
         self._stop = threading.Event()  # set by close(): a retry wait ends at once
@@ -79,6 +82,25 @@ class NtfyNotifier:
                 delay *= 2
         log.error("ntfy %s; message dropped", reason)
         return False
+
+    def subscription(self) -> dict:
+        """What the phone subscribes with (contracts/push.md, GET /v1/push/config): this server's url and
+        topic and the phone's read-only token, read fresh (it is asked for once, when push is turned
+        on). Raises ValueError, without the token in the message, when the phone token file is
+        unusable or holds the publish token: that one is never handed out."""
+        try:
+            token = read_token(self.phone_token_file)
+        except (OSError, ValueError) as e:
+            raise ValueError(f"phone token unusable: {e}") from None
+        if os.path.realpath(self.phone_token_file) == os.path.realpath(self.token_file):
+            raise ValueError("phone_token_file is the publish token file")
+        try:
+            publish = read_token(self.token_file)
+        except (OSError, ValueError):
+            publish = None
+        if publish is not None and hmac.compare_digest(token, publish):
+            raise ValueError(f"{self.phone_token_file} holds the publish token")
+        return {"url": self.url, "topic": self.topic, "token": token}
 
     def close(self) -> None:
         self._stop.set()
