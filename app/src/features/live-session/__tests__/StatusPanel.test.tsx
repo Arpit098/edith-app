@@ -172,6 +172,36 @@ describe('StatusChip and StatusPopup', () => {
     act(() => r.unmount());
   });
 
+  it('reply done, background work running: calm (still bubble, no timer, "1 bg"); the card lists the work', async () => {
+    const f = fakes();
+    f.details.mockResolvedValue(statusDetailsFrom({ ...DETAILS, edith: { ...DETAILS.edith, state: 'waiting', tool: null, step: null, ref: null, since: 990 } }));
+    const r = await mount(f);
+    await act(async () => {
+      f.store.set((s) =>
+        [
+          ev('turn.started', { ref: 'r1', lane: 'main' }),
+          ev('background.changed', { jobs: [{ id: 'tu1', kind: 'shell', label: 'Wait for PR 41 CI', started: 820 }] }),
+          ev('turn.done', { ref: 'r1', lane: 'main', text: 'Watching it' }),
+        ].reduce(reduce, s),
+      );
+    });
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(5_000);
+    });
+    expect(bubbleActive(r)).toBe(false);
+    expect(texts(r)).toBe('1 bg'); // no turn timer
+    expect(chip(r).props.accessibilityLabel).toBe('Connected. EDITH: Waiting on background work, 1 bg. Show details');
+
+    await act(async () => toggle(r));
+    const shown = texts(r);
+    // The card's summary (no turn timer), its Background section, and the waiting agent's chip.
+    for (const part of ['Waiting on background work', '1 bg · for 10s', 'Background', 'Shell · Wait for PR 41 CI · 3 min', 'edith-ci',
+      'Waiting · bg shell']) {
+      expect(shown).toContain(part);
+    }
+    act(() => r.unmount());
+  });
+
   it('stops fetching in the background and refreshes on return', async () => {
     const f = fakes();
     const r = await mount(f);

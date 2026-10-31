@@ -23,6 +23,20 @@ BUSY_HELP = {  # by the agent's busy_policy
 }
 
 
+KINDS = {"shell": "Shell", "agent": "Agent"}
+
+
+def background_lines(jobs, now=None) -> list[str]:
+    """"Shell · Wait for PR 41 CI · 3 min" per background job."""
+    now = time.time() if now is None else now
+    out = []
+    for j in jobs:
+        mins = int((now - j["started"]) // 60) if j.get("started") else None
+        out.append(" · ".join(filter(None, [KINDS.get(j["kind"], j["kind"].title()), j["label"],
+                                            None if mins is None else f"{mins} min"])))
+    return out
+
+
 def setup(ctx: Context) -> None:
     agent = ctx.ports.agent
 
@@ -34,6 +48,10 @@ def setup(ctx: Context) -> None:
     def stop(call: CommandCall):
         r = agent.stop()
         if not (r.running or r.dropped):
+            jobs = background_lines(agent.background())
+            if jobs:  # /stop ends turns; work a finished turn left running isn't one
+                return ("Nothing is running. Still in the background (/stop doesn't cancel it; ask me to):\n"
+                        + "\n".join(f"• {j}" for j in jobs))
             return "Nothing is running."
         return f"🛑 Stopping {r.running} task(s)." + (f" Also dropped {len(r.dropped)} queued message(s)." if r.dropped else "")
 
@@ -45,6 +63,9 @@ def setup(ctx: Context) -> None:
             call.reply("\n".join(lines) + f"\nQueued: {queued}")
         else:
             call.reply("💤 Idle. " + ("Conversation in progress." if agent.has_conversation() else "No conversation yet."))
+        jobs = background_lines(agent.background())
+        if jobs:
+            call.reply("⏳ In the background:\n" + "\n".join(f"• {j}" for j in jobs))
         sid = agent.current_session()
         call.reply(f"🖥 tmux session: {'running' if agent.tmux_alive() else 'down'}"
                    + (f" · {agent.session_title(sid) or sid[:8]}" if sid else "")
@@ -86,7 +107,9 @@ def setup(ctx: Context) -> None:
 
     def api_stop(req):
         r = agent.stop()
-        return {"running": r.running, "dropped": r.dropped}
+        # `background`: what still runs, which a stop doesn't cancel (the app says so).
+        return {"running": r.running, "dropped": r.dropped,
+                "background": [{k: j[k] for k in ("id", "kind", "label", "started")} for j in agent.background()]}
 
     def api_status(req):
         runs, queued = agent.status()
@@ -94,6 +117,7 @@ def setup(ctx: Context) -> None:
         return {"main": "busy" if agent.busy() else "idle", "queued": queued,
                 "runs": [{"ref": r.ref, "lane": r.lane, "seconds": int(time.time() - r.started), "step": r.step}
                          for r in runs],
+                "background": [{k: j[k] for k in ("id", "kind", "label", "started")} for j in agent.background()],
                 "tmux": "running" if agent.tmux_alive() else "down", "conversation": agent.has_conversation(),
                 "session": {"id": sid, "title": agent.session_title(sid)} if sid else None}
 

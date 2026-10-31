@@ -1,14 +1,14 @@
 // Live session: the transcript and turn state, reduced from stream events and filled from history.
 
 import { backoffDelay, type Backoff } from '../../common/backoff';
-import { ApiError, isRetryable, type Api, type Command, type HistoryPage, type Reply, type Status, type StatusDetails } from '../../core/api';
+import { ApiError, backgroundFrom, isRetryable, type Api, type BackgroundJob, type Command, type HistoryPage, type Reply, type Status, type StatusDetails } from '../../core/api';
 import { cursorOf, type ButtonRows, type EdithEvent, type EventBus, type Lane, type Origin } from '../../core/events';
 import { bool, buttonRows, num, str } from '../../core/guards';
 import type { AppVisibility, KeyValueStore } from '../../core/ports';
 import { createStore, type Store } from '../../core/store';
 import { ID_LIFETIME_S, type SentAttachment } from './attachments';
 import { quoteFrom, quoteText, type Quote } from './reply';
-import { trackTurnStart } from './status';
+import { backgroundLine, trackTurnStart } from './status';
 
 export const MAX_ITEMS = 400; // the transcript keeps the newest ones; older ones drop off
 export const PAGE = 100; // history events per request
@@ -92,6 +92,9 @@ export interface LiveState {
   side: number;
   queued: number;
   runs: Record<string, RunInfo>; // by turn ref
+  // Work EDITH started in the background that still runs, maybe after her reply ended the turn:
+  // not a turn (no timer, nothing for Stop to end), shown as "waiting" (status.ts).
+  background: BackgroundJob[];
   session: { id: string; title: string | null } | null;
   seq: number;
   // When the running turn began on the phone's clock, one value for the chip and the card alike
@@ -117,6 +120,7 @@ export const initialLive: LiveState = {
   side: 0,
   queued: 0,
   runs: {},
+  background: [],
   session: null,
   seq: 0,
   turnStart: null,
@@ -144,6 +148,17 @@ function withoutKey<T>(map: Record<string, T>, key: string): Record<string, T> {
 function withoutRun(s: LiveState, ref: string): LiveState {
   const runs = withoutKey(s.runs, ref);
   return runs === s.runs ? s : { ...s, runs };
+}
+
+/**
+ * A turn ended: its run goes, and if it was the main lane's, the main lane is idle again (the next
+ * queued message's turn.started makes it busy). The server sends no `lane.status`, so without this
+ * `main` stayed "busy" until the next reconnect: the chip kept thinking, with its timer and Stop.
+ */
+function endRun(s: LiveState, ref: string, mainLane: boolean): LiveState {
+  const wasMain = mainLane || s.runs[ref]?.lane === 'main';
+  const next = withoutRun(s, ref);
+  return wasMain && next.main !== 'idle' ? { ...next, main: 'idle' } : next;
 }
 
 /** Main-lane tool events (transcript: no ref) start or end "running <tool>" on the main run. */
@@ -375,7 +390,7 @@ function apply(s: LiveState, e: EdithEvent): LiveState {
     case 'turn.done': {
       const ref = str(d.ref);
       const lane = d.lane === 'side' ? 'side' : 'main';
-      let next = track(withoutRun(s, ref), ref, { phase: 'done', lane });
+      let next = track(endRun(s, ref, lane === 'main'), ref, { phase: 'done', lane });
       // A side lane's reply isn't in the conversation's transcript: turn.done carries it, so show it
       // here (once: the server may also send it as message.assistant with lane "side").
       const text = str(d.display_text) || str(d.text); // display_text: without REACT:/SEND_FILE: lines
@@ -386,14 +401,16 @@ function apply(s: LiveState, e: EdithEvent): LiveState {
     }
     case 'turn.stopped': {
       const ref = str(d.ref);
-      const next = track(withoutRun(s, ref), ref, { phase: 'stopped', lane: d.lane === 'side' ? 'side' : null });
+      // A dropped queued message (lane "queued") never ran: the lane it waited for is as it was.
+      const next = track(endRun(s, ref, d.lane === 'main'), ref, { phase: 'stopped', lane: d.lane === 'side' ? 'side' : null });
       return push(next, ts, system(d.lane === 'queued' ? '⏹ A queued message was dropped' : '⏹ Stopped'));
     }
     case 'turn.failed': {
       const ref = str(d.ref);
       const why = { not_ready: "Claude isn't ready", crashed: 'Claude crashed', queue_full: 'Too many messages waiting', bridge_error: 'Bridge error' }[str(d.reason)];
       const detail = str(d.detail);
-      const next = track(withoutRun(s, ref), ref, { phase: 'failed', lane: d.lane === 'side' ? 'side' : null });
+      // Only a turn that was running frees the lane (queue_full and not_ready never started one).
+      const next = track(endRun(s, ref, false), ref, { phase: 'failed', lane: d.lane === 'side' ? 'side' : null });
       return push(next, ts, system(`❌ ${why ?? 'Failed'}${detail ? `: ${detail}` : ''}`, 'error'));
     }
     case 'turn.queued': {
@@ -428,6 +445,8 @@ function apply(s: LiveState, e: EdithEvent): LiveState {
       const approvals = withoutKey(s.approvals, str(d.id));
       return approvals === s.approvals ? s : { ...s, approvals };
     }
+    case 'background.changed':
+      return { ...s, background: backgroundFrom(d.jobs) };
     case 'lane.status': {
       const next = { ...s, main: d.main === 'busy' ? ('busy' as const) : ('idle' as const), side: num(d.side), queued: num(d.queued) };
       // Nothing running anywhere: no turn can still be "working" (e.g. its end was missed while offline).
@@ -541,7 +560,7 @@ export function withOlder(s: LiveState, page: HistoryPage): LiveState {
 export function applyStatus(s: LiveState, st: Status): LiveState {
   const runs: Record<string, RunInfo> = {};
   for (const r of st.runs) runs[r.ref] = { lane: r.lane, step: r.step, steps: s.runs[r.ref]?.steps ?? 0, elapsed: r.seconds, active: s.runs[r.ref]?.active ?? !!r.step };
-  return { ...s, main: st.main, queued: st.queued, side: st.runs.filter((r) => r.lane === 'side').length, runs, session: st.session ?? s.session };
+  return { ...s, main: st.main, queued: st.queued, side: st.runs.filter((r) => r.lane === 'side').length, runs, background: st.background, session: st.session ?? s.session };
 }
 
 /** What the status bar shows. */
@@ -569,6 +588,7 @@ export interface LiveModel {
   send(text: string, opts?: { voice?: boolean; attachments?: SentAttachment[]; replyTo?: Quote | null }): Promise<void>;
   /** Send a failed message again. */
   retry(key: string): Promise<void>;
+  /** Stop the running turns; the answer says what stopped, and what still runs in the background (a stop doesn't cancel it). */
   stop(): Promise<string>;
   /** The status panel's details (GET /v1/status/details); asked only while the panel is open. */
   details(): Promise<StatusDetails>;
@@ -893,8 +913,13 @@ export function createLiveModel(bus: EventBus, api: Api, storage?: KeyValueStore
     },
     async stop() {
       const r = await api.stop();
+      store.set((s) => ({ ...s, background: r.background }));
       const n = r.running + r.dropped.length;
-      return n ? `Stopped ${n} task${n === 1 ? '' : 's'}` : 'Nothing was running';
+      const stopped = n ? `Stopped ${n} task${n === 1 ? '' : 's'}` : r.background.length ? 'No reply to stop' : 'Nothing was running';
+      if (!r.background.length) return stopped;
+      // Stop ends turns; work a turn left running in the background goes on (contracts/status.md).
+      const now = Date.now() / 1000;
+      return `${stopped}. Still running in the background: ${r.background.map((j) => backgroundLine(j, now)).join('; ')}`;
     },
     details: () => api.statusDetails(),
     commands() {

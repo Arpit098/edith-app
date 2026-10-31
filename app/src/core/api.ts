@@ -45,26 +45,47 @@ export interface Status {
   main: 'busy' | 'idle';
   queued: number;
   runs: Run[];
+  background: BackgroundJob[];
   tmux: 'running' | 'down';
   conversation: boolean;
   session: { id: string; title: string | null } | null;
+}
+
+/**
+ * Work EDITH started in the background that still runs, maybe after her reply (contracts/status.md,
+ * "Background"): a shell command or a subagent. `started` is unix seconds on the server's clock.
+ */
+export interface BackgroundJob {
+  id: string;
+  kind: 'shell' | 'agent';
+  label: string;
+  started: number | null;
 }
 
 /** GET /v1/status/details (contracts/status.md): the status panel. Times are unix seconds. */
 export interface StatusDetails {
   ts: number; // the server's clock when it answered
   edith: {
-    state: 'idle' | 'thinking' | 'tool' | 'waiting_approval';
+    state: 'idle' | 'thinking' | 'tool' | 'waiting_approval' | 'waiting';
     tool: string | null;
     step: string | null;
     since: number | null;
     ref: string | null;
     turn_started: number | null;
     tmux: 'running' | 'down';
+    background: BackgroundJob[];
   };
   lanes: { side: { ref: string; seconds: number; step: string | null; summary: string | null }[]; max_side: number; queued: number; approvals: number };
   session: { id: string; title: string | null; started: number | null; messages: number | null; context_tokens: number | null } | null;
-  agents: { name: string; dir: string; branch: string | null; state: 'busy' | 'idle' | 'blocked'; blocked: 'permission' | 'usage_limit' | null; last: string | null }[];
+  agents: {
+    name: string;
+    dir: string;
+    branch: string | null;
+    state: 'busy' | 'idle' | 'blocked' | 'waiting'; // waiting: its turn is over, background work isn't
+    blocked: 'permission' | 'usage_limit' | null;
+    last: string | null;
+    background: string | null; // while waiting: Claude's own word for it ("shell", "busy"…)
+  }[];
   server: { tag: string | null; started: number; uptime: number };
 }
 
@@ -169,6 +190,11 @@ function list(v: unknown): Obj[] {
   return Array.isArray(v) ? v.filter((x): x is Obj => !!x && typeof x === 'object') : [];
 }
 
+/** A `background` list (GET /v1/status, the details, POST /v1/stop, `background.changed`); [] from older servers. */
+export function backgroundFrom(v: unknown): BackgroundJob[] {
+  return list(v).map((j) => ({ id: str(j.id), kind: j.kind === 'agent' ? 'agent' : 'shell', label: str(j.label), started: numOrNull(j.started) }));
+}
+
 export function statusDetailsFrom(r: Obj): StatusDetails {
   const e = (r.edith ?? {}) as Obj;
   const lanes = (r.lanes ?? {}) as Obj;
@@ -177,13 +203,14 @@ export function statusDetailsFrom(r: Obj): StatusDetails {
   return {
     ts: num(r.ts, Date.now() / 1000),
     edith: {
-      state: oneOf(e.state, ['idle', 'thinking', 'tool', 'waiting_approval'] as const, 'idle'),
+      state: oneOf(e.state, ['idle', 'thinking', 'tool', 'waiting_approval', 'waiting'] as const, 'idle'),
       tool: strOrNull(e.tool),
       step: strOrNull(e.step),
       since: numOrNull(e.since),
       ref: strOrNull(e.ref),
       turn_started: numOrNull(e.turn_started),
       tmux: e.tmux === 'running' ? 'running' : 'down',
+      background: backgroundFrom(e.background),
     },
     lanes: {
       side: list(lanes.side).map((x) => ({ ref: str(x.ref), seconds: num(x.seconds), step: strOrNull(x.step), summary: strOrNull(x.summary) })),
@@ -198,9 +225,10 @@ export function statusDetailsFrom(r: Obj): StatusDetails {
       name: str(a.name),
       dir: str(a.dir),
       branch: strOrNull(a.branch),
-      state: oneOf(a.state, ['busy', 'idle', 'blocked'] as const, 'idle'),
+      state: oneOf(a.state, ['busy', 'idle', 'blocked', 'waiting'] as const, 'idle'),
       blocked: a.blocked === 'permission' || a.blocked === 'usage_limit' ? a.blocked : null,
       last: strOrNull(a.last),
+      background: strOrNull(a.background),
     })),
     server: { tag: strOrNull(server.tag), started: num(server.started), uptime: num(server.uptime) },
   };
@@ -302,9 +330,10 @@ export function createApi(t: Transport) {
       return { id: str(r.id), name: str(r.name), type: str(r.type), size: num(r.size), sha256: str(r.sha256) };
     },
 
-    async stop(): Promise<{ running: number; dropped: string[] }> {
+    /** Stops the running turns; `background` is what still runs (a stop doesn't cancel it). */
+    async stop(): Promise<{ running: number; dropped: string[]; background: BackgroundJob[] }> {
       const r = await t.request<Obj>('POST', '/v1/stop');
-      return { running: num(r.running), dropped: Array.isArray(r.dropped) ? r.dropped.map((d) => str(d)) : [] };
+      return { running: num(r.running), dropped: Array.isArray(r.dropped) ? r.dropped.map((d) => str(d)) : [], background: backgroundFrom(r.background) };
     },
 
     async status(opts?: RequestOptions): Promise<Status> {
@@ -319,6 +348,7 @@ export function createApi(t: Transport) {
           seconds: num(x.seconds),
           step: x.step == null ? null : str(x.step),
         })),
+        background: backgroundFrom(r.background),
         tmux: r.tmux === 'running' ? 'running' : 'down',
         conversation: bool(r.conversation),
         session: session ? { id: str(session.id), title: session.title == null ? null : str(session.title) } : null,

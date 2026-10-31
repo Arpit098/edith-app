@@ -40,7 +40,9 @@ import subprocess
 import sys
 import time
 
-from .panes import Panes, proc_stat, same_process
+from edith.common.claude_sessions import proc_stat, same_process
+
+from .panes import Panes
 from .profiles import Profiles, write_private
 
 READY = re.compile(r"^\s*❯", re.M)  # Claude's input box

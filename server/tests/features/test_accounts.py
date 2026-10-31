@@ -17,7 +17,8 @@ from edith.core import ApiError, Event, EventBus, Ports, Registry
 from edith.core.registry import load_features
 from edith.features import accounts
 from edith.features.accounts.login import Login, LoginError, failure_line
-from edith.features.accounts.panes import Panes, proc_stat, same_process
+from edith.common.claude_sessions import proc_stat, same_process
+from edith.features.accounts.panes import Panes
 from edith.features.accounts.profiles import ProfileError, Profiles
 from edith.features.accounts.runner import Switch
 from edith.ports.agent import RunInfo

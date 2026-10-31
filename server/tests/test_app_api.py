@@ -41,6 +41,9 @@ class FakeAgent:
     def status(self):
         return [RunInfo("r1", "main", time.time() - 5, "$ ls")], 1
 
+    def background(self):
+        return [{"id": "tu1", "kind": "shell", "label": "Wait for PR 41 CI", "started": 100.0}]
+
     def busy(self):
         return True
 
@@ -274,7 +277,10 @@ class RoutesTest(unittest.TestCase):
     def test_status_stop_and_sessions(self):
         status, body = self.a.call("GET", "/v1/status")
         self.assertEqual((status, body["main"], body["queued"], body["session"]), (200, "busy", 1, {"id": "s1", "title": "First chat"}))
-        self.assertEqual(self.a.call("POST", "/v1/stop", {}), (200, {"running": 1, "dropped": ["q1"]}))
+        job = {"id": "tu1", "kind": "shell", "label": "Wait for PR 41 CI", "started": 100.0}
+        self.assertEqual(body["background"], [job])
+        # A stop says what still runs in the background (it doesn't cancel that).
+        self.assertEqual(self.a.call("POST", "/v1/stop", {}), (200, {"running": 1, "dropped": ["q1"], "background": [job]}))
         self.assertEqual(self.a.call("GET", "/v1/sessions")[1]["sessions"][0]["current"], True)
         self.assertEqual(self.a.call("PATCH", "/v1/sessions/s2", {"title": " Renamed "}), (200, {"session_id": "s2", "title": "Renamed"}))
         self.assertEqual(self.a.call("PATCH", "/v1/sessions/zz", {"title": "x"})[0], 404)
@@ -369,8 +375,9 @@ class RoutesTest(unittest.TestCase):
 
     def test_typed_commands_use_the_registry(self):
         body, events = self._typed("/status")
-        self.assertEqual([e.data["text"].split("\n")[0] for e in events if e.type == "command.reply"],
-                         ["⏳ Main: 5s", "🖥 tmux session: running · First chat"])
+        replies = [e.data["text"] for e in events if e.type == "command.reply"]
+        self.assertEqual([r.split("\n")[0] for r in replies], ["⏳ Main: 5s", "⏳ In the background:", "🖥 tmux session: running · First chat"])
+        self.assertRegex(replies[1], r"\n• Shell · Wait for PR 41 CI · \d+ min$")
         self.assertEqual(self.a.agent.sent, [])
         with mock.patch("time.strftime", return_value="2026-11-02 10:43 IST"):
             body, _ = self._typed("/queue after this")

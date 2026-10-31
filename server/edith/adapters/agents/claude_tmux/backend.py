@@ -716,6 +716,9 @@ class ClaudeTmux:
             queued = self._main.qsize() + len(self._held or ())
         return [RunInfo(r.ref, r.lane, r.started, r.step) for r in runs], queued
 
+    def background(self):
+        return self._live.background() if self._live else []
+
     def busy(self):
         return self.main_busy.is_set()
 

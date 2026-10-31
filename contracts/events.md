@@ -37,6 +37,7 @@ Every event on the bus, and on the app's `/v1/stream` WebSocket, has this shape:
 | `voice.reply` | `{ref, outcome, speak}` | What the app says aloud for that voice turn (see "Voice" below). Origin `app` |
 | `accounts.switch` | `{run, target, previous, state, step, detail, started, ts, agents}` | A Claude account switch starts, moves on a step and ends (contracts/accounts.md). Origin `system` |
 | `app.update_available` | `{kind, id, versionName, versionCode, runtimeVersion, sha, summary}` | A new app update is offered, once per update (contracts/app-updates.md §7). `kind`: `ota` or `apk`. Origin `system` |
+| `background.changed` | `{jobs: [{id, kind, label, started}]}` | The main session's background work changed: a job started or ended (contracts/status.md, "Background"). `jobs` is the whole list now (`[]`: none). Origin `system` |
 
 Fields the agent adds (new fields only; existing meanings unchanged):
 - `turn.started`, `turn.progress`, `turn.done`, `turn.stopped` and `turn.failed` carry `lane` (`main`
@@ -168,6 +169,7 @@ message never vanishes from the app, whichever way it reaches Claude. All carry 
 | tool | `turn.progress {step}` / `tool.call` (`step` is the tool summary, e.g. `$ npm test`) |
 | waiting_approval | `permission.request {ref, lane}`, until `permission.resolved` |
 | idle | `turn.done` / `turn.stopped` / `turn.failed` for that `ref` and `lane` |
+| waiting | idle, while the latest `background.changed` lists jobs: the turn is over, its background work isn't. Not working: no turn timer, and Stop has no turn to end |
 
 **Message log:** `message.user` (from frontends), `message.delivered`, `message.reaction`, the side-lane
 `message.assistant`, side-lane `turn.started`/`turn.done`, and the `command.reply` answers to a typed

@@ -10,47 +10,14 @@ nothing to do; `busy`, `shell`… while it works, background subagents and shell
 
 Read-only: `tmux list-panes` and `capture-pane`, never keys.
 """
-import json
 import os
 import re
 import subprocess
 
 from edith.common.claude_screen import read_screen
+from edith.common.claude_sessions import children, proc_stat, read_session
 
 SESSION_ID = re.compile(r"^[0-9a-f-]{36}$")
-
-
-def children(pid: int) -> list[int]:
-    out = []
-    try:
-        for tid in os.listdir(f"/proc/{pid}/task"):
-            with open(f"/proc/{pid}/task/{tid}/children") as f:
-                out += [int(c) for c in f.read().split()]
-    except OSError:
-        pass
-    return out
-
-
-def proc_stat(pid: int) -> tuple[str, str] | None:
-    """(comm, start time) of a process from /proc/<pid>/stat, or None if it's gone."""
-    try:
-        with open(f"/proc/{pid}/stat") as f:
-            stat = f.read()
-    except OSError:
-        return None
-    comm = stat[stat.index("(") + 1:stat.rindex(")")]
-    fields = stat[stat.rindex(")") + 2:].split()
-    return comm, fields[19]  # field 22 overall: the 20th after "pid (comm)"
-
-
-def same_process(pid: int, proc_start, stat=proc_stat) -> str | None:
-    """The process name of `pid` if it is still the process that wrote its session file (its start
-    time is the file's procStart, so the pid wasn't reused), else None. The name isn't required to be
-    "claude": a Claude under another name must still count, or a switch would go ahead around it."""
-    seen = stat(pid)
-    if not seen or (proc_start not in (None, "") and seen[1] != str(proc_start)):
-        return None
-    return seen[0]
 
 
 class Panes:
@@ -69,15 +36,7 @@ class Panes:
 
     def session(self, pid: int) -> dict | None:
         """A live Claude's session file (None if there is none, or the pid is no longer that Claude)."""
-        try:
-            with open(os.path.join(self.claude_dir, "sessions", f"{pid}.json")) as f:
-                d = json.load(f)
-        except (OSError, ValueError):
-            return None
-        if not isinstance(d, dict):
-            return None
-        comm = same_process(pid, d.get("procStart"), self._stat)
-        return dict(d, comm=comm) if comm is not None else None
+        return read_session(self.claude_dir, pid, self._stat)
 
     def _claude_in(self, pane_pid: int) -> tuple[int, dict] | None:
         """The Claude process of a pane: the pane's own process (`exec claude`) or one of its children."""

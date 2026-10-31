@@ -16,6 +16,7 @@ from unittest import mock
 from edith.adapters.agents.claude_tmux.backend import NOTES_HEADER, ClaudeTmux
 from edith.adapters.agents.claude_tmux.live import events_of
 from edith.adapters.agents.claude_tmux.tmux import Tmux
+from edith.common.claude_sessions import proc_stat
 from edith.core import CommandCall, EventBus, Ports, Registry, load_features
 from edith.ports.agent import TurnHandle
 from tests.fakes import FAKE_CLAUDE, FakeTmux
@@ -639,6 +640,30 @@ class LiveViewTest(unittest.TestCase):
             h.cond.wait_for(lambda: any(e.data.get("text") == "first in s3" for e in h.events), 5)
         texts = [e.data["text"] for e in h.events if e.type == "message.user"]
         self.assertEqual(texts, ["new in s2", "first in s3"])
+
+    def test_background_work_is_published_as_it_starts_and_ends(self):
+        h = Harness(self)
+        self.assertTrue(h.agent._live.ready.wait(5))
+        sessions = h.home / ".claude/sessions"
+        sessions.mkdir(parents=True, exist_ok=True)
+        pid = os.getpid()  # this process plays the Claude running s1, still working (a background shell)
+        (sessions / f"{pid}.json").write_text(json.dumps({"pid": pid, "sessionId": "s1", "status": "shell",
+                                                          "procStart": proc_stat(pid)[1], "statusUpdatedAt": 0}))
+        h.transcript_line({"type": "assistant", "timestamp": "2026-10-31T11:06:14Z", "message": {"content": [
+            {"type": "tool_use", "id": "tu1", "name": "Bash",
+             "input": {"command": "gh pr checks 41 --watch", "description": "Wait for PR 41 CI", "run_in_background": True}}]}})
+        started = h.wait("background.changed")
+        self.assertEqual(started.data["jobs"], [{"id": "tu1", "kind": "shell", "label": "Wait for PR 41 CI",
+                                                 "started": dt.datetime.fromisoformat("2026-10-31T11:06:14+00:00").timestamp()}])
+        self.assertEqual(started.session_id, "s1")
+        self.assertEqual([j["id"] for j in h.agent.background()], ["tu1"])
+        h.transcript_line({"type": "user", "origin": {"kind": "task-notification"}, "message": {"content":
+            "<task-notification>\n<task-id>b1</task-id>\n<tool-use-id>tu1</tool-use-id>\n<status>completed</status>\n</task-notification>"}})
+        with h.cond:
+            self.assertTrue(h.cond.wait_for(lambda: [e.data["jobs"] for e in h.events if e.type == "background.changed"][-1:] == [[]], 5))
+        self.assertEqual(h.agent.background(), [])
+        # The notification is a system wrapper: no message.user for it.
+        self.assertFalse([e for e in h.events if e.type == "message.user"])
 
 
 class HistoryTest(unittest.TestCase):

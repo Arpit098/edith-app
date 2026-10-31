@@ -9,7 +9,9 @@ describe('createApi', () => {
     const api = createApi(t);
     expect(await api.send('hi', { voice: false })).toEqual({ ref: 'app:1', lane: 'main' });
     expect(t.calls[0]).toEqual({ method: 'POST', path: '/v1/messages', body: { text: 'hi', voice: false } });
-    expect(await api.stop()).toEqual({ running: 1, dropped: ['app:2'] });
+    expect(await api.stop()).toEqual({ running: 1, dropped: ['app:2'], background: [] }); // an older server: no background
+    t.on('POST /v1/stop', { running: 0, dropped: [], background: [{ id: 'tu1', kind: 'agent', label: 'Review PR 41', started: 5 }] });
+    expect((await api.stop()).background).toEqual([{ id: 'tu1', kind: 'agent', label: 'Review PR 41', started: 5 }]);
   });
 
   it('parses status defensively', async () => {
