@@ -30,7 +30,7 @@ export function TrainScreen({ model }: { model: WakewordModel }) {
   const current = recording?.kind ?? open ?? firstOpen;
   useEffect(() => void model.refreshStatus(), [model]);
   const failed = clips.filter((c) => c.status === 'failed');
-  const chromeInsets = useChrome(); // the floating header and tab bar
+  const chromeInsets = useChrome(); // the floating header and the gesture area
 
   return (
     <ScrollView contentContainerStyle={[styles.body, { paddingTop: chromeInsets.top + space.m, paddingBottom: chromeInsets.bottom + space.l }]}>

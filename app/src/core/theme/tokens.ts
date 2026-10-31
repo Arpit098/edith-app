@@ -39,75 +39,110 @@ export const colors = {
   diffHunk: '#A9CBEF',
   overlay: 'rgba(5, 7, 10, 0.66)', // over a thumbnail while it uploads
   overlayStrong: 'rgba(5, 7, 10, 0.8)', // small controls on a thumbnail (remove)
+  panelDark: 'rgba(10, 12, 16, 0.78)', // a text panel inside other glass (the attach menu in the composer)
 } as const;
 
-export type GlassLevel = 'thin' | 'regular' | 'thick';
+/** thin/regular/thick: chrome (the full frost and lens); panel: glass with text on it (heavy frost, dark tint). */
+export type GlassLevel = 'thin' | 'regular' | 'thick' | 'panel';
 
 export interface GlassStyle {
-  blur: number; // blur radius, dp
-  tint: string; // laid over the blurred backdrop
-  flat: string; // the fallback without blur: the tint alone, a little more opaque
+  blur: number; // blur radius, dp (the frost: strong enough that text behind can't be read)
+  tint: string; // laid over the frost
+  flat: string; // the fallback without blur (battery saver, before Android 12): nearly opaque
   edge: readonly [string, string]; // the gradient light edge, top-left → bottom-right
   highlight: string; // the inner glow along the top
   // The lens (Android 13+, edith-glass's AGSL shader):
-  refraction: number; // how far the rim bends the backdrop, dp
+  refraction: number; // how far the rim bends the backdrop, dp (grows towards the edge)
   bezel: number; // how wide the refracting rim is, dp
-  dispersion: number; // colour fringe at the rim, 0..1
-  saturation: number; // 1 = unchanged; glass lifts colour a little
-  specular: number; // rim highlight from the top-left, 0..1
+  dispersion: number; // red/blue split at the rim, dp (about 2 px on a 3x screen)
+  saturation: number; // 1 = unchanged; the frost lets colours glow through
+  lift: number; // added brightness, 0..1: the frost's slight glow
+  specular: number; // the thin highlight along the edge (brightest on top), 0..1
+  rimWidth: number; // that highlight's width, dp
 }
 
 /** Glass surfaces, from the lightest (small pills) to the heaviest (the header). */
 export const glass: Record<GlassLevel, GlassStyle> = {
   thin: {
-    // Small pills over moving text (the status pill): enough blur and tint that what passes under
-    // reads as soft colour, never as words fighting the pill's own label.
-    blur: 22,
-    tint: 'rgba(28, 32, 38, 0.64)',
-    flat: 'rgba(30, 34, 40, 0.78)',
+    blur: 24,
+    tint: 'rgba(30, 34, 40, 0.30)',
+    flat: 'rgba(30, 34, 40, 0.92)',
     edge: ['rgba(255, 255, 255, 0.22)', 'rgba(255, 255, 255, 0.04)'],
     highlight: 'rgba(255, 255, 255, 0.06)',
-    refraction: 10,
-    bezel: 12,
-    dispersion: 0.25,
-    saturation: 1.35,
-    specular: 0.35,
+    refraction: 8,
+    bezel: 14,
+    dispersion: 0.6,
+    saturation: 1.6,
+    lift: 0.03,
+    specular: 0.45,
+    rimWidth: 1.2,
   },
   regular: {
-    blur: 20,
-    tint: 'rgba(24, 28, 34, 0.52)',
-    flat: 'rgba(26, 30, 36, 0.88)',
+    blur: 28,
+    tint: 'rgba(26, 30, 36, 0.28)',
+    flat: 'rgba(26, 30, 36, 0.94)',
     edge: ['rgba(255, 255, 255, 0.26)', 'rgba(255, 255, 255, 0.05)'],
     highlight: 'rgba(255, 255, 255, 0.08)',
-    refraction: 14,
-    bezel: 16,
-    dispersion: 0.3,
-    saturation: 1.4,
-    specular: 0.4,
-  },
-  thick: {
-    blur: 28,
-    tint: 'rgba(18, 21, 26, 0.66)',
-    flat: 'rgba(20, 23, 28, 0.94)',
-    edge: ['rgba(255, 255, 255, 0.30)', 'rgba(255, 255, 255, 0.06)'],
-    highlight: 'rgba(255, 255, 255, 0.10)',
     refraction: 12,
     bezel: 18,
-    dispersion: 0.2,
-    saturation: 1.3,
-    specular: 0.3,
+    dispersion: 0.6,
+    saturation: 1.7,
+    lift: 0.04,
+    specular: 0.5,
+    rimWidth: 1.2,
+  },
+  thick: {
+    blur: 32,
+    tint: 'rgba(20, 23, 28, 0.38)',
+    flat: 'rgba(20, 23, 28, 0.96)',
+    edge: ['rgba(255, 255, 255, 0.30)', 'rgba(255, 255, 255, 0.06)'],
+    highlight: 'rgba(255, 255, 255, 0.10)',
+    refraction: 10,
+    bezel: 20,
+    dispersion: 0.5,
+    saturation: 1.5,
+    lift: 0.03,
+    specular: 0.4,
+    rimWidth: 1.2,
+  },
+  panel: {
+    // Glass carrying text (the status card, the navigation menu): the same frost, but a dark tint
+    // at 0.8, so whatever is behind reads only as soft colour and never competes with the text;
+    // a gentle lens, so text near the rim doesn't swim.
+    blur: 32,
+    tint: 'rgba(14, 17, 22, 0.80)',
+    flat: 'rgba(18, 21, 26, 0.96)',
+    edge: ['rgba(255, 255, 255, 0.24)', 'rgba(255, 255, 255, 0.05)'],
+    highlight: 'rgba(255, 255, 255, 0.06)',
+    refraction: 6,
+    bezel: 14,
+    dispersion: 0.4,
+    saturation: 1.4,
+    lift: 0.02,
+    specular: 0.4,
+    rimWidth: 1.2,
   },
 };
 
-/** 'rgba(r, g, b, a)' → [r, g, b, a] in 0..1, the form the native glass view takes. */
+/** 'rgba(r, g, b, a)' or '#rrggbb' → [r, g, b, a] in 0..1, the form the native glass view takes. */
 export function rgbaOf(css: string): number[] {
+  const hex = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(css);
+  if (hex) return [parseInt(hex[1]!, 16) / 255, parseInt(hex[2]!, 16) / 255, parseInt(hex[3]!, 16) / 255, 1];
   const m = /^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*(?:,\s*([\d.]+)\s*)?\)$/.exec(css);
   if (!m) return [0, 0, 0, 0];
   return [Number(m[1]) / 255, Number(m[2]) / 255, Number(m[3]) / 255, m[4] === undefined ? 1 : Number(m[4])];
 }
 
 /** Each level's tint for the native view, parsed once. */
-export const glassTint: Record<GlassLevel, number[]> = { thin: rgbaOf(glass.thin.tint), regular: rgbaOf(glass.regular.tint), thick: rgbaOf(glass.thick.tint) };
+/** The opaque colour under the frost: the app's background (the backdrop can be transparent between things). */
+export const glassBase: number[] = rgbaOf(colors.bg);
+
+export const glassTint: Record<GlassLevel, number[]> = {
+  thin: rgbaOf(glass.thin.tint),
+  regular: rgbaOf(glass.regular.tint),
+  thick: rgbaOf(glass.thick.tint),
+  panel: rgbaOf(glass.panel.tint),
+};
 
 export const radius = { s: 8, m: 14, l: 22, pill: 999 } as const;
 
@@ -130,12 +165,9 @@ export const motion = {
   press: { damping: 15, stiffness: 420, mass: 0.6 }, // squish on press: quick in, a small rebound out
   settle: { damping: 16, stiffness: 220, mass: 1 }, // a new bubble settling into place
   grow: { damping: 17, stiffness: 260, mass: 0.9 }, // a sheet growing out of its trigger
-  // The tab droplet: the leading edge leaps, the trailing edge follows softer, so it stretches and settles.
-  dropletLead: { damping: 20, stiffness: 420, mass: 0.8 },
-  dropletTrail: { damping: 22, stiffness: 170, mass: 1 },
   pressScale: 0.95,
   blobMs: 2400, // one breath of the working blob
 } as const;
 
-/** Chrome sizes the shell lays over the content (screens pad by these; see useChrome()). */
-export const chrome = { headerHeight: 52, tabBarHeight: 60 } as const;
+/** The header the shell lays over the content (screens pad by it; see useChrome()). */
+export const chrome = { headerHeight: 52 } as const;

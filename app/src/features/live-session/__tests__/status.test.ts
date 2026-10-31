@@ -9,16 +9,21 @@ const run = (events: Parameters<typeof reduce>[1][], from: LiveState = initialLi
 
 describe('barSummary', () => {
   it('is idle with nothing running', () => {
-    expect(barSummary(initialLive)).toEqual({ state: 'idle', tone: 'idle', label: 'Idle', counts: '', title: null });
+    expect(barSummary(initialLive)).toEqual({ state: 'idle', tone: 'idle', label: 'Idle', counts: '', detail: null });
   });
 
   it('follows the main lane through a turn', () => {
-    let s = run([ev('session.changed', { session_id: 's1', title: 'disk check', source: 'resume' }), ev('turn.started', { ref: 'r1', lane: 'main' })]);
-    expect(barSummary(s)).toMatchObject({ state: 'thinking', tone: 'busy', label: 'Thinking', title: 'disk check' });
+    // The pill's detail is the step running, else the latest prompt; never the session title (Arpit's 13R).
+    let s = run([
+      ev('session.changed', { session_id: 's1', title: 'you are aware of the 3 agents working on the server?', source: 'resume' }),
+      ev('message.user', { text: 'run the tests' }, { origin: 'app' }),
+      ev('turn.started', { ref: 'r1', lane: 'main' }),
+    ]);
+    expect(barSummary(s)).toMatchObject({ state: 'thinking', tone: 'busy', label: 'Thinking', detail: 'run the tests' });
     s = reduce(s, ev('tool.call', { id: 't1', name: 'Bash', summary: '$ npm test' }));
-    expect(barSummary(s)).toMatchObject({ state: 'tool', label: 'Running Bash' });
+    expect(barSummary(s)).toMatchObject({ state: 'tool', label: 'Running Bash', detail: '$ npm test' });
     s = reduce(s, ev('tool.result', { id: 't1', name: 'Bash', ok: true, summary: '' }));
-    expect(barSummary(s).label).toBe('Thinking');
+    expect(barSummary(s)).toMatchObject({ label: 'Thinking', detail: 'run the tests' });
     s = run([ev('turn.done', { ref: 'r1', lane: 'main', text: 'ok' }), ev('lane.status', { main: 'idle', side: 0, queued: 0 })], s);
     expect(barSummary(s).state).toBe('idle');
   });

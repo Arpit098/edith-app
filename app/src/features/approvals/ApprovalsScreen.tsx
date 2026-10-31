@@ -12,7 +12,7 @@ const selectCount = (s: ApprovalsState) => s.pending.length;
 
 export function ApprovalsScreen({ model }: { model: ApprovalsModel }) {
   const count = useStore(model.store, selectCount);
-  const chromeInsets = useChrome(); // the floating header and tab bar
+  const chromeInsets = useChrome(); // the floating header and the gesture area
   const insets = { paddingTop: chromeInsets.top + space.m, paddingBottom: chromeInsets.bottom + space.l };
   if (!count) {
     return (

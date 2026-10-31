@@ -64,6 +64,16 @@ top_activity() { adb shell dumpsys activity activities | grep -m1 -E "topResumed
 launcher_on_top() { top_activity | grep -qi launcher; }
 keyboard_shown() { adb shell dumpsys input_method | grep -q "mInputShown=true"; }
 
+# Navigate with the header's menu (top right): open it, pick the screen (its item says
+# "<name>, current screen" when it's the one shown).
+go_to() {
+  wait_until "the menu button" on_screen Menu || return 1 # a dump can fail mid-scroll: wait, don't tap blind
+  tap Menu || return 1
+  wait_until "the menu" on_screen "Close the menu" || return 1
+  if on_screen "$1, current screen"; then tap "$1, current screen" || return 1; else tap "$1" || return 1; fi
+  wait_until "the menu to close" on_screen Menu
+}
+
 # Tap the centre of the first node whose content-desc (or, failing that, text) is $1.
 tap() {
   local xy
@@ -124,14 +134,14 @@ battery_saver() { # on|off: the glass goes flat while it's on (edith-glass's Pow
 # Frame times for one scripted run: scroll the transcript up and down, then go round the tabs.
 measure() {
   local label=$1
-  tap Live || return 1
-  wait_until "the live tab" on_screen "Reminder set for Monday 2 November at 9:00." || return 1
+  go_to Live || return 1
+  wait_until "the live tab" on_screen "Now run the server tests and tell me if anything fails" || return 1
   adb shell dumpsys gfxinfo "$PKG" reset >/dev/null
   for _ in 1 2 3; do
     scroll_up 300
     scroll_down 300
   done
-  for t in Sessions Tools Settings Live; do tap "$t" || return 1; done
+  for t in Sessions Tools Settings Live; do go_to "$t" || return 1; done
   adb shell dumpsys gfxinfo "$PKG" >"$OUT/gfxinfo-$label.txt"
   {
     echo "#### $label"
@@ -169,31 +179,44 @@ tap "Token"
 adb shell input text "ci-token"
 keyboard_shown && adb shell input keyevent KEYCODE_BACK
 tap Connect
-wait_until "the live session" on_screen "Reminder set for Monday 2 November at 9:00."
+wait_until "the live session" on_screen "Now run the server tests and tell me if anything fails"
 keyboard_shown && adb shell input keyevent KEYCODE_BACK
 
 screenshots() {
 shot 01-live
+# The status card open over the long chat (Arpit's second screenshot): tap the pill, shoot, close.
+tap Idle || return 1
+wait_until "the status card" on_screen "edith-notify" || return 1
+shot 01b-status-card-open
+tap Idle || return 1
 scroll_up
 shot 02-live-scrolled-under-the-glass
 scroll_down
-tap Sessions || return 1
+# Arpit's first screenshot: back at the end, then a short drag so the long reply sits under the composer.
+adb shell input swipe $((W / 2)) $((H * 45 / 100)) $((W / 2)) $((H * 62 / 100)) 400
+shot 02b-composer-over-the-long-reply
+scroll_down
+go_to Sessions || return 1
 wait_until "sessions" on_screen "Morning briefing" || return 1
 shot 03-sessions
-tap Tools || return 1
+go_to Tools || return 1
 shot 04-tools
-tap Settings || return 1
+go_to Settings || return 1
 scroll_to "Measure frames" || return 1
 shot 05-settings
-tap Live || return 1
+go_to Live || return 1
 tap "Attach a photo or audio file" || return 1
 wait_until "the attach menu" on_screen "Camera" || return 1
 shot 06-attach-menu
 tap "Close the attach menu" || return 1
+tap Menu || return 1
+wait_until "the menu" on_screen "Close the menu" || return 1
+shot 06b-navigation-menu-open
+tap "Close the menu" || return 1
 battery_saver on
-tap Settings || return 1
+go_to Settings || return 1
 scroll_to "Glass: flat" || return 1
-tap Live || return 1
+go_to Live || return 1
 shot 07-live-battery-saver-flat
 battery_saver off
 }
@@ -208,13 +231,13 @@ cat "$OUT/frames.md"
 }
 
 recording() {
-tap Live || return 1
-wait_until "the live tab" on_screen "Reminder set for Monday 2 November at 9:00." || return 1
+go_to Live || return 1
+wait_until "the live tab" on_screen "Now run the server tests and tell me if anything fails" || return 1
 adb shell screenrecord --time-limit 90 --bit-rate 8000000 /sdcard/clip.mp4 &
 rec=$!
 sleep 1.5
 for t in Sessions Tools Settings Live; do
-  tap "$t" || return 1
+  go_to "$t" || return 1
   sleep 1.4
 done
 scroll_up 700
@@ -229,9 +252,9 @@ tap "Attach a photo or audio file" || return 1
 sleep 1.5
 tap "Close the attach menu" || return 1
 sleep 1
-tap Sessions || return 1
+go_to Sessions || return 1
 sleep 1.2
-tap Live || return 1
+go_to Live || return 1
 # Last, the task starts (the demo API's /demo/work): the working blob and the spinner. From here
 # the UI never goes idle, so nothing reads the screen with uiautomator after this.
 curl -s -X POST localhost:8787/demo/work >/dev/null

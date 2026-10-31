@@ -53,7 +53,7 @@ describe('StatusPanel', () => {
   });
   afterEach(() => jest.useRealTimers());
 
-  it('shows the state, elapsed time, counts and title; opens and closes the card', async () => {
+  it('shows the state, elapsed time, counts and the step running; opens and closes the card', async () => {
     const { model, store, details } = fakeModel();
     let r!: ReactTestRenderer;
     await act(async () => {
@@ -77,7 +77,7 @@ describe('StatusPanel', () => {
     });
     expect(texts(r)).toMatch(/Running Bash \|  · 0:0[34] \|/);
     expect(texts(r)).toContain(' · 2 queued');
-    expect(texts(r)).toContain('disk check');
+    expect(texts(r)).toContain('$ npm test'); // the step, not the session title
 
     await act(async () => {
       toggle(r);

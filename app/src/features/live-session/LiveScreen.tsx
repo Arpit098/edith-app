@@ -47,7 +47,7 @@ export function LiveScreen({ model, voice, attach }: { model: LiveModel; voice: 
   const loadOlder = useCallback(() => void model.loadOlder(), [model]);
   const chromeInsets = useChrome();
   // The transcript is the backdrop of the composer and the status pill: it scrolls under them (and
-  // under the header and tab bar), which bend and blur it. Inverted, so its visual top is paddingBottom.
+  // under the header), which bend and blur it. Inverted, so its visual top is paddingBottom.
   const backdrop = useBackdrop();
   const [composerHeight, setComposerHeight] = useState(COMPOSER_HEIGHT);
   const onComposerLayout = useCallback((e: LayoutChangeEvent) => setComposerHeight(Math.round(e.nativeEvent.layout.height)), []);

@@ -47,6 +47,17 @@ HISTORY = [
     ev("message.user", 320, {"text": "Add a reminder to check it again next Monday", "voice": False, "ref": "app:3", "delivery": "main", "attachments": []}, "telegram"),
     ev("file.diff", 300, {"id": "d1", "path": "~/edith/reminders.json", "diff": "@@ -3,3 +3,8 @@\n   }\n+  {\n+    \"when\": \"2026-11-02T09:00:00+05:30\",\n+    \"text\": \"Check the disk on edith\"\n+  }\n ]"}),
     ev("message.assistant", 290, {"text": "Reminder set for Monday 2 November at 9:00."}),
+    ev("message.user", 120, {"text": "What are the other agents doing?", "voice": False, "ref": "app:3b", "delivery": "main", "attachments": []}, "app"),
+    # A long reply, so long text passes behind the composer and the status card (Arpit's screenshots).
+    ev("message.assistant", 100, {"text": (
+        "Here's where things stand. The notifications agent finished its review fixes: tests have passed and the "
+        "backup is taken. The main agent is now turning on the status feature in the server settings, then restarts "
+        "the bridge, which drops the app and Telegram for about 10 seconds. I'll confirm when it's back.\n\n"
+        "I'll compact the agents as they finish, Arpit, never in the middle of a task. I've added a compact command "
+        "to the agent tool that refuses unless the agent is idle, and saved your rule to memory.\n\n"
+        "- Compacting now: the main agent and the notifications agent, since both have finished their work.\n"
+        "- Later: the app agent (its glass builds are still running) and the account-switching agent (waiting on "
+        "its build and review). I'll compact them once their updates are merged.")}),
     ev("message.user", 40, {"text": "Now run the server tests and tell me if anything fails", "voice": False, "ref": "app:4", "delivery": "main", "attachments": []}, "app"),
     ev("message.delivered", 39, {"ref": "app:4", "delivery": "main", "rid": "r4"}),
     ev("message.reaction", 38, {"ref": "app:4", "emoji": "👀"}),
@@ -72,6 +83,19 @@ ROUTES = {
         ]
     },
     "/v1/permissions": {"pending": []},
+    "/v1/status/details": {
+        "ts": NOW,
+        "edith": {"state": "idle", "tool": None, "step": None, "since": NOW - 60, "ref": None, "turn_started": None, "tmux": "running"},
+        "lanes": {"side": [], "max_side": 2, "queued": 0, "approvals": 0},
+        "session": {"id": SID, "title": "Disk space and tests", "started": NOW - 26 * 3600, "messages": 228, "context_tokens": 131_000},
+        "agents": [
+            {"name": "edith-app", "dir": "edith-app-ui", "branch": "glass-frost", "state": "busy", "blocked": None, "last": "Waiting for the emulator screenshots"},
+            {"name": "edith-dev", "dir": "edith-app", "branch": "chat-missing-msg", "state": "idle", "blocked": None, "last": "p1-live-9 is live and working"},
+            {"name": "edith-notify", "dir": "edith-app-notify", "branch": "notify-island", "state": "busy", "blocked": None, "last": "PR #23 (push-ntfy) is green; the release APK build passed"},
+            {"name": "edith-status", "dir": "edith-app-status", "branch": "status-panel", "state": "idle", "blocked": None, "last": "The Claude accounts feature is up as PR #25"},
+        ],
+        "server": {"tag": "p1-live-9", "started": NOW - 420, "uptime": 420},
+    },
     "/v1/commands": {
         "commands": [
             {"name": "today", "description": "Today's agenda and reminders", "usage": "", "help": ""},
