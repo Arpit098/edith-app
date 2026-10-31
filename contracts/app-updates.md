@@ -233,3 +233,31 @@ At most the newest 10 updates are kept per runtimeVersion (only the newest is se
 - No OTA key: the APK is built with expo-updates **disabled** and no `edith-ota` artifact is made. An
   APK never accepts unsigned bundles.
 - The commands to create both are in `app/README.md` ("Signing keys").
+
+## 7. Update announcements (`app.update_available`)
+
+After each collect pass the server announces a newly offerable update once on the event bus (and so on
+`/v1/stream`); the `notifications` feature pushes it (contracts/push.md), even while the app is connected.
+
+```json
+{ "kind": "ota", "id": "1c9e5a3e-…", "versionName": null, "versionCode": null, "runtimeVersion": "4f0c…",
+  "sha": "8f12b81c…", "summary": "New: Attach photos · Fix: Messages no longer vanish" }
+```
+
+- **apk**: the newest offerable `versionCode` is above the last one announced. `id` is the versionCode as a
+  string; `versionName` and `versionCode` are set.
+- **ota**: the newest update for the newest offerable APK's `runtimeVersion` has an id not announced before.
+  `id` is the update id.
+- A new APK whose `runtimeVersion` equals the previous APK's (only JS changed) usually comes with an OTA
+  for that runtime: then only the `ota` is announced, since nothing needs installing. A new APK with new
+  native code (or no OTA beside it) is announced as `apk`; its own OTA is not announced too.
+- `summary`: the first 3 of the build's release notes as `New: …` / `Fix: …` / `Change: …`, joined with
+  ` · `; without notes, `EDITH <versionName> (build <versionCode>) is ready to install` (apk) or
+  `A newer version of the app's code is ready` (ota).
+- What was announced is kept in `index.json` (`announced: {apk: <versionCode>, ota: [<ids>, ≤ 50]}`) and
+  written before the event is published, so an update is announced at most once, also across restarts.
+  A store with no `announced` record (the first start with this feature, or an index rebuilt from
+  scratch) records what it holds as the baseline and announces nothing.
+
+The app, on that event or on its own check, shows a small "Update ready · Restart" banner for an update
+it hasn't shown before (remembered on the phone), and `edith://settings/updates` opens Settings → Updates.

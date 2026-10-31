@@ -33,13 +33,14 @@ def apk_artifact(run_id, code, signing="release", cert=PIN, runtime="rt1", body=
     return {"edith.apk": body, "apk.json": json.dumps(meta).encode()}
 
 
-def ota_artifact(run_id, update_id, runtime="rt1", created=1793280000, files=None, lie=False):
+def ota_artifact(run_id, update_id, runtime="rt1", created=1793280000, files=None, lie=False, notes=None):
     files = files or {"dist/bundle.hbc": b"bundle " + update_id.encode(), "dist/assets/font": b"shared font"}
     entries = [{"path": p, "sha256": sha(b"x" if lie and i == 0 else d), "size": len(d),
                 "contentType": "application/javascript" if p.endswith(".hbc") else "font/ttf",
                 **({"launch": True} if p.endswith(".hbc") else {})} for i, (p, d) in enumerate(files.items())]
     update = {"id": update_id, "createdAt": created, "runtimeVersion": runtime, "channel": "main",
-              "platform": "android", "sha": "abc", "run_id": run_id, "files": entries}
+              "platform": "android", "sha": "abc", "run_id": run_id, "files": entries,
+              **({"release_notes": notes} if notes is not None else {})}
     manifest = b'{"id": "%s", "runtimeVersion": "%s", "createdAt": "2026-10-29T12:30:00.000Z", "launchAsset": {}}' % (
         update_id.encode(), runtime.encode())
     return {"update.json": json.dumps(update).encode(), "manifest.json": manifest,
@@ -81,11 +82,8 @@ class World:
         self.dir = tempfile.mkdtemp()
         test.addCleanup(shutil.rmtree, self.dir)
         self.gh = FakeGitHub()
-        self.registry = Registry()
-        with mock.patch.object(app_updates, "GitHub", lambda *a, **k: self.gh):
-            report = load_features(["app_updates"], EventBus(), Ports(), self.registry,
-                                   {"app_updates": {"state_dir": self.dir, "cert_sha256": pin}})
-        assert report.loaded == ["app_updates"], report.failed
+        self.announced = []  # app.update_available data, in order
+        self.restart(pin)
         self.root = pathlib.Path(self.dir, "app-updates")
 
     def collect(self):
@@ -96,10 +94,12 @@ class World:
 
     def restart(self, pin=PIN):
         """A new process: same files, fresh feature."""
-        self.registry = Registry()
+        self.registry, bus = Registry(), EventBus()
+        bus.subscribe("app.update_available", lambda ev: self.announced.append(ev.data))
         with mock.patch.object(app_updates, "GitHub", lambda *a, **k: self.gh):
-            load_features(["app_updates"], EventBus(), Ports(), self.registry,
-                          {"app_updates": {"state_dir": self.dir, "cert_sha256": pin}})
+            report = load_features(["app_updates"], bus, Ports(), self.registry,
+                                   {"app_updates": {"state_dir": self.dir, "cert_sha256": pin}})
+        assert report.loaded == ["app_updates"], report.failed
 
 
 class CollectTest(unittest.TestCase):
@@ -172,6 +172,78 @@ class CollectTest(unittest.TestCase):
     def test_loading_touches_no_file(self):
         w = World(self)
         self.assertFalse(w.root.exists())  # created by the first job pass or request
+
+
+NOTES = {"new": ["Photos in chat", "Dark mode"], "fixes": ["Messages no longer vanish", "Faster start"],
+         "changes": [], "details": ["feat: photos"]}
+
+
+class AnnounceTest(unittest.TestCase):
+    """app.update_available (contracts/app-updates.md §7): once per new update, never for known ones."""
+
+    def setUp(self):
+        self.w = World(self)
+        self.w.gh.add_run(101, apk=apk_artifact(101, 1101), ota=ota_artifact(101, "u1"))
+        self.w.collect()
+
+    def test_what_is_there_at_first_is_not_news(self):
+        self.assertEqual(self.w.announced, [])
+        self.assertEqual(json.loads((self.w.root / "index.json").read_text())["announced"], {"apk": 1101, "ota": ["u1"]})
+
+    def test_a_new_ota_is_announced_once_with_a_summary(self):
+        self.w.gh.add_run(102, ota=ota_artifact(102, "u2", created=1793280100, notes=NOTES))
+        self.w.collect()
+        self.w.collect()
+        self.assertEqual(self.w.announced, [{
+            "kind": "ota", "id": "u2", "versionName": None, "versionCode": None, "runtimeVersion": "rt1", "sha": "abc",
+            "summary": "New: Photos in chat · New: Dark mode · Fix: Messages no longer vanish"}])
+
+    def test_known_updates_are_not_announced_after_a_restart(self):
+        self.w.gh.add_run(102, ota=ota_artifact(102, "u2", created=1793280100))
+        self.w.collect()
+        self.w.restart()
+        self.w.collect()
+        self.w.restart()
+        self.w.collect()
+        self.assertEqual([a["id"] for a in self.w.announced], ["u2"])
+
+    def test_a_new_apk_with_new_native_code_is_announced_as_an_apk(self):
+        self.w.gh.add_run(102, apk=apk_artifact(102, 1102, runtime="rt2", notes=NOTES),
+                          ota=ota_artifact(102, "u2", runtime="rt2", created=1793280100))
+        self.w.collect()
+        self.assertEqual([(a["kind"], a["id"], a["versionName"], a["versionCode"]) for a in self.w.announced],
+                         [("apk", "1102", "0.1102", 1102)])  # the OTA for rt2 is in that APK: not announced too
+        self.w.restart()
+        self.w.collect()
+        self.assertEqual(len(self.w.announced), 1)
+
+    def test_a_js_only_build_is_announced_as_an_ota(self):
+        self.w.gh.add_run(102, apk=apk_artifact(102, 1102), ota=ota_artifact(102, "u2", created=1793280100))
+        self.w.collect()
+        self.assertEqual([(a["kind"], a["id"]) for a in self.w.announced], [("ota", "u2")])
+        self.w.gh.add_run(103, apk=apk_artifact(103, 1103))  # no OTA (signing key missing): the APK is the update
+        self.w.collect()
+        self.assertEqual([(a["kind"], a["id"]) for a in self.w.announced], [("ota", "u2"), ("apk", "1103")])
+        self.assertTrue(self.w.announced[1]["summary"].startswith("EDITH 0.1103 (build 1103)"))
+
+    def test_unoffered_apks_are_never_announced(self):
+        self.w.gh.add_run(102, apk=apk_artifact(102, 1102, signing="debug"))
+        self.w.gh.add_run(103, apk=apk_artifact(103, 1103, cert="AA:BB"))
+        self.w.collect()
+        self.assertEqual(self.w.announced, [])
+
+    def test_a_store_that_never_announced_starts_quiet(self):
+        index = self.w.root / "index.json"
+        data = json.loads(index.read_text())
+        del data["announced"]  # e.g. the first start after this feature is deployed
+        self.w.gh.add_run(102, ota=ota_artifact(102, "u2", created=1793280100))
+        index.write_text(json.dumps(data))
+        self.w.restart()
+        self.w.collect()
+        self.assertEqual(self.w.announced, [])
+        self.w.gh.add_run(103, ota=ota_artifact(103, "u3", created=1793280200))
+        self.w.collect()
+        self.assertEqual([a["id"] for a in self.w.announced], ["u3"])
 
 
 class RoutesTest(unittest.TestCase):

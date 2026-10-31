@@ -6,7 +6,7 @@ message as a local notification.
 
 ## When edith pushes
 
-The `notifications` feature pushes only while **the app isn't connected** (the app open, or held by
+The `notifications` feature pushes only while **the app isn't connected** (update alerts aside, below) (the app open, or held by
 its foreground service, shows the news itself). It asks the App API at push time, on its worker
 thread: only clients that connected as `/v1/stream?client=app` count (a tool on the stream doesn't
 silence pushes), and one not heard from in the last 2 s gets a protocol ping and counts only if it
@@ -19,12 +19,24 @@ answers within 3 s, so a half-open socket (a phone asleep or off the network) ne
 | `permission.request` | origin not `telegram` (Telegram shows its own) | `perm:<id>` |
 | `permission.resolved` | its request was pushed: a `cancel` for `perm:<id>` | `perm:<id>` |
 | `reminder.due` | always | `rem:<id>:<due>` (once per due time of a repeating reminder) |
+| `app.update_available` | always, **even while the app is connected** (it may not check for hours); off with `[features.notifications] update_alerts = false` | `update:<kind>:<id>` (`update:ota:<update id>`, `update:apk:<versionCode>`) |
 
 Each tag is pushed at most once (a cancel aside), and counts as pushed only once ntfy took it: a
 publish that failed, or one skipped because the app was there, can go when the next event with that
 tag comes. An approval answered before its push went out is never sent. One worker thread publishes, so the bus never
 waits on ntfy. A publish has a 5 s timeout; an unreachable ntfy (or a 5xx/429) is retried after 1 s
 and 2 s, then the push is dropped and logged. Approvals go at ntfy priority 4, cancels at 1, the rest at 3.
+Update alerts go at priority 3 with the ntfy tag `arrow_up` (only plain ntfy clients show it).
+
+Update alerts (`app.update_available`):
+
+| Kind | Title | Text |
+|---|---|---|
+| `ota` | `EDITH update ready` | the event's `summary` (first 3 `New:`/`Fix:` items), else `Restart EDITH to use it.` |
+| `apk` | `New EDITH app version` | the event's `summary`, else `Install it from Settings → Updates.` |
+
+Both link to `edith://settings/updates` and use the channel `updates`. Apps whose native push code
+predates that channel show them on the replies channel (an unknown channel falls back to it).
 
 ## Topic and access
 
@@ -80,9 +92,9 @@ plain ntfy client still shows something readable. The app reads only the JSON:
 | Field | Meaning |
 |---|---|
 | `v` | 1. A higher major version the app doesn't know is shown as title and text only |
-| `tag` | The local notification tag (`perm:<id>`, `turn:<ref>`, `rem:<id>:<due>`), the same the app uses when open: a push and a local notification for one thing replace each other |
-| `channel` | `approvals`, `replies`, `errors` or `reminders` (the app's channels) |
+| `tag` | The local notification tag (`perm:<id>`, `turn:<ref>`, `rem:<id>:<due>`, `update:<kind>:<id>`), the same the app uses when open: a push and a local notification for one thing replace each other |
+| `channel` | `approvals`, `replies`, `errors`, `reminders` or `updates` (the app's channels) |
 | `title`, `text` | Ready to show; `text` is a plain one-line preview (at most 300 characters) |
-| `link` | Where a tap goes: `edith://live` or `edith://approvals` |
+| `link` | Where a tap goes: `edith://live`, `edith://approvals` or `edith://settings/updates` (`edith://<screen>/<settings page>`) |
 | `permission` | Approvals only: the id. The app adds Allow/Deny that call `POST /v1/permissions/{id}` with its own App API token (no token ever goes through ntfy) |
 | `cancel` | `true`: remove the notification with this `tag` (an approval answered or timed out); only `v` and `tag` come with it |

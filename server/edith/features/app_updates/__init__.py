@@ -10,6 +10,10 @@
 - Routes: GET /v1/updates/manifest and /v1/updates/assets/{sha256} (Expo Updates protocol v1),
   GET /v1/app/latest and /v1/app/apk/{versionCode} (Range resume). Files are streamed from disk.
 - Only release-signed APKs whose certificate matches the pinned `cert_sha256` are offered.
+- After each pass, a new offerable update is announced once on the bus as `app.update_available`
+  (contracts/app-updates.md §7; the notifications feature pushes it). What was announced is kept in
+  the index, so a restart never repeats it; the first pass on a store that has never announced only
+  records what is there.
 
 Config [features.app_updates]: cert_sha256, repo, workflow, branch, interval, gh.
 """
@@ -21,7 +25,7 @@ import shutil
 import threading
 
 from edith.common.paths import resolve
-from edith.core import ApiError, Context, Feature, Response
+from edith.core import ApiError, Context, Event, Feature, Response
 
 from .github import GhError, GitHub, MissingArtifact
 from .store import Rejected, Store, is_sha256, normalize_cert
@@ -35,6 +39,8 @@ NOTE_LISTS = {"new": 20, "fixes": 20, "changes": 20, "details": 30}  # list -> m
 PLAIN = (("new", "New"), ("fixes", "Fix"), ("changes", "Change"))
 ARTIFACT_FILES = ("update.json", "manifest.json", "manifest.sig")  # an edith-ota artifact's own files
 REJECTED_KEEP = 7 * 86400  # seconds a rejected local build stays in the inbox for a look
+ANNOUNCED_OTA_KEEP = 50    # OTA ids remembered as announced (older ones are long pruned)
+SUMMARY_ITEMS = 3          # release-note lines in an announcement's summary
 
 
 def release_notes(value):
@@ -53,6 +59,26 @@ def has_items(notes):
 def plain_notes(notes):
     """The release notes as the plain `notes` text that apps from before them show."""
     return "\n".join(f"{label}: {line}" for key, label in PLAIN for line in notes[key])
+
+
+def summary(notes, fallback):
+    """One line for a push: the first SUMMARY_ITEMS `New:`/`Fix:`/`Change:` items, else `fallback`."""
+    items = [f"{label}: {line}" for key, label in PLAIN for line in notes[key]] if has_items(notes) else []
+    return " · ".join(items[:SUMMARY_ITEMS]) or fallback
+
+
+def announcement(kind, record, apk):
+    """The app.update_available data for an OTA update `record` or an APK `apk` (contracts/app-updates.md §7)."""
+    notes = release_notes(record.get("release_notes"))
+    if kind == "apk":
+        fallback = f"EDITH {apk['versionName']} (build {apk['versionCode']}) is ready to install"
+        update_id = str(apk["versionCode"])
+    else:
+        fallback = "A newer version of the app's code is ready"
+        update_id = record["id"]
+    return {"kind": kind, "id": update_id, "versionName": apk["versionName"] if kind == "apk" else None,
+            "versionCode": apk["versionCode"] if kind == "apk" else None,
+            "runtimeVersion": record["runtimeVersion"], "sha": record.get("sha"), "summary": summary(notes, fallback)}
 
 
 def setup(ctx: Context) -> None:
@@ -149,9 +175,48 @@ def setup(ctx: Context) -> None:
                 if outcome == "collected":
                     log.info("collected run %s %s", run["id"], kind)
         s.prune()
+        announce(s)
         if failed:
             raise GhError("; ".join(failed)[:500])  # the job runner retries with backoff
         return interval
+
+    def announce(s):
+        """Publish app.update_available for what this pass made newly offerable (contracts/app-updates.md §7).
+
+        - APK: the newest offerable versionCode, when it is above the last one announced.
+        - OTA: the newest update for the newest APK's runtimeVersion (the code an up-to-date app runs),
+          when its id wasn't announced.
+        - A new APK whose runtimeVersion is the previous one's (only JS changed) comes with an OTA for
+          the phone: then only the OTA is announced, as nothing needs installing. Either way both are
+          recorded, so each update is announced at most once.
+        The record is written before publishing: a crash in between loses one push, never repeats it."""
+        apks = [a for a in s.index["apks"].values() if offerable(a)]
+        if not apks:
+            return
+        newest = max(apks, key=lambda a: a["versionCode"])
+        ota = s.newest_update(newest["runtimeVersion"], "main")
+        known = s.index.get("announced")
+        now = {"apk": newest["versionCode"], "ota": [ota["id"]] if ota else []}
+        if known is None:  # never announced from this store: what is here is the baseline, not news
+            s.set_announced(now)
+            return
+        seen_ota = list(known.get("ota") or [])
+        new_apk = newest["versionCode"] > int(known.get("apk") or 0)
+        new_ota = ota is not None and ota["id"] not in seen_ota
+        if not new_apk and not new_ota:
+            return
+        previous = [a for a in apks if a["versionCode"] <= int(known.get("apk") or 0)]
+        native_changed = not previous or max(previous, key=lambda a: a["versionCode"])["runtimeVersion"] != newest["runtimeVersion"]
+        if new_apk and (native_changed or not new_ota):
+            data = announcement("apk", newest, newest)
+        else:
+            data = announcement("ota", ota, newest)
+        if new_ota:
+            seen_ota.append(ota["id"])
+        s.set_announced({"apk": max(newest["versionCode"], int(known.get("apk") or 0)),
+                         "ota": seen_ota[-ANNOUNCED_OTA_KEEP:]})
+        log.info("announcing %s update %s", data["kind"], data["id"])
+        ctx.bus.publish(Event("app.update_available", data))
 
     ctx.add_job("collect", collect)
 

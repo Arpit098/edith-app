@@ -36,6 +36,7 @@ Every event on the bus, and on the app's `/v1/stream` WebSocket, has this shape:
 | `voice.turn` | `{ref}` | The App API accepted a `POST /v1/messages` with `voice: true` (sent before the turn's own events). Origin `app` |
 | `voice.reply` | `{ref, outcome, speak}` | What the app says aloud for that voice turn (see "Voice" below). Origin `app` |
 | `accounts.switch` | `{run, target, previous, state, step, detail, started, ts, agents}` | A Claude account switch starts, moves on a step and ends (contracts/accounts.md). Origin `system` |
+| `app.update_available` | `{kind, id, versionName, versionCode, runtimeVersion, sha, summary}` | A new app update is offered, once per update (contracts/app-updates.md §7). `kind`: `ota` or `apk`. Origin `system` |
 
 Fields the agent adds (new fields only; existing meanings unchanged):
 - `turn.started`, `turn.progress`, `turn.done`, `turn.stopped` and `turn.failed` carry `lane` (`main`
