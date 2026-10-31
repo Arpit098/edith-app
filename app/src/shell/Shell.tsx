@@ -9,7 +9,7 @@ import { localEvent } from '../core/events';
 import type { LoadedFeatures } from '../core/feature';
 import type { FrameMeter } from '../core/ports';
 import { useStore } from '../core/store';
-import { ChromeContext, chrome, colors, space, type } from '../core/theme';
+import { ChromeContext, chrome, colors, space, titleGlow, type } from '../core/theme';
 import { Ambient } from '../ui/Ambient';
 import { Glass, useBackdrop } from '../ui/Glass';
 import { Icon } from '../ui/Icon';
@@ -29,6 +29,7 @@ interface Route {
 }
 
 const selectLink = (s: ConnectionState) => s.link;
+const APP_TITLE = 'E.D.I.T.H';
 
 export function Shell({ loaded, connection, meter }: { loaded: LoadedFeatures; connection: Connection; meter: FrameMeter | null }) {
   const link = useStore(connection.store, selectLink);
@@ -108,6 +109,11 @@ function Main({ loaded, connection, meter }: { loaded: LoadedFeatures; connectio
   }, [go]);
   useEffect(() => setMenuOpen(false), [top]);
 
+  // The header's left side: a feature's chip (the live session's status), else the connection dot.
+  const headerPanel = useMemo(() => loaded.panels.find((p) => p.slot === 'header'), [loaded]);
+  const HeaderPanel = headerPanel?.component;
+  const HeaderOverlay = headerPanel?.overlay;
+
   return (
     <KeyboardAvoidingView style={styles.flex} behavior="padding">
       <ChromeContext.Provider value={chromeInsets}>
@@ -132,27 +138,30 @@ function Main({ loaded, connection, meter }: { loaded: LoadedFeatures; connectio
 
       <Glass level="thick" backdrop={backdrop.tag} radius={0} edges={{ bottom: true }} style={styles.header}>
         <View onLayout={onHeaderLayout} style={{ paddingTop: insets.top }}>
+          {/* [● bubble 0:42]      E.D.I.T.H      [☰] (plans/ui-next.md §2); other screens show their own title. */}
           <View style={styles.headerRow}>
+            <Text style={styles.title} numberOfLines={1} accessibilityRole="header" pointerEvents="none">
+              {top === home ? APP_TITLE : (route?.title ?? APP_TITLE)}
+            </Text>
             {stacked ? (
               <Pressable onPress={() => setNav((s) => back(s, home) ?? s)} hitSlop={10} accessibilityRole="button" accessibilityLabel="Back" style={styles.backBtn}>
                 <Icon name="arrow-left" />
               </Pressable>
             ) : null}
-            <Text style={styles.title} numberOfLines={1}>
-              {route?.title ?? 'EDITH'}
-            </Text>
-            <ConnectionPill connection={connection} onUnauthorized={() => go('settings')} />
+            {HeaderPanel ? <HeaderPanel top={headerHeight} backdrop={backdrop.tag} /> : <ConnectionPill connection={connection} onUnauthorized={() => go('settings')} />}
+            <View style={styles.flex} />
             <MenuButton open={menuOpen} onPress={toggleMenu} />
           </View>
           {loaded.panels
             .filter((p) => p.slot === 'banner')
             .map((p, i) => (
-              <p.component key={i} />
+              <p.component key={i} top={headerHeight} backdrop={backdrop.tag} />
             ))}
         </View>
       </Glass>
 
       <View style={styles.menuSlot} pointerEvents="box-none">
+        {HeaderOverlay ? <HeaderOverlay top={headerHeight} backdrop={backdrop.tag} /> : null}
         <NavMenu open={menuOpen} items={tabs} current={stacked ? null : nav.tab} top={headerHeight} backdrop={backdrop.tag} onSelect={pick} onClose={closeMenu} />
       </View>
     </KeyboardAvoidingView>
@@ -179,6 +188,7 @@ const styles = StyleSheet.create({
   header: { position: 'absolute', top: 0, left: 0, right: 0 },
   headerRow: { flexDirection: 'row', alignItems: 'center', gap: space.s, paddingHorizontal: space.l, minHeight: chrome.headerHeight },
   backBtn: { paddingRight: space.xs },
-  title: { color: colors.text, fontSize: type.size.heading, fontWeight: '700', flex: 1, letterSpacing: 0.2 },
+  // Centred over the whole row whatever sits either side; its glow is a static text shadow (titleGlow).
+  title: { position: 'absolute', left: 96, right: 96, textAlign: 'center', color: colors.text, fontSize: type.size.heading, fontWeight: '700', letterSpacing: 1.5, ...titleGlow },
   menuSlot: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
 });

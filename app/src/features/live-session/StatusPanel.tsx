@@ -1,39 +1,91 @@
-// The status bar under the Live header and the card it drops down. The bar follows stream events
-// only (status.ts barSummary); the card fetches GET /v1/status/details while it is open and EDITH is
-// on screen, every 10 s (paused in the background, refreshed at once on return).
+// EDITH's status in the header (plans/ui-next.md §2): a chip on the left with the connection dot,
+// the thinking bubble and, while EDITH works, the elapsed time; tapping it drops the status card.
+// The chip follows stream events only (status.ts); the card fetches GET /v1/status/details while it
+// is open and EDITH is on screen, every 10 s (paused in the background, refreshed at once on return).
 
 import { memo, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { BackHandler, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import type { StatusDetails } from '../../core/api';
-import { shallowEqual, useStore } from '../../core/store';
+import { describeLink, LINK_TONE, type Connection, type ConnectionState } from '../../core/connection';
+import { shallowEqual, useStore, type Store } from '../../core/store';
 import { clockIST, formatIST } from '../../common/format';
 import { colors, radius, space, type } from '../../core/theme';
 import { Glass } from '../../ui/Glass';
-import { Icon } from '../../ui/Icon';
+import { GrowSheet, Squish } from '../../ui/motion';
+import { ThinkingBubble } from '../../ui/ThinkingBubble';
 import type { LiveModel } from './model';
-import { barSummary, detailsLabel, formatElapsed, formatTokens, formatUptime, pollDetails, sinceFrom, type BarSummary } from './status';
+import { barSummary, detailsLabel, formatElapsed, formatTokens, formatUptime, mainRun, pollDetails, turnSince } from './status';
 
 const REFRESH_MS = 10_000;
+const BUBBLE = 22;
 
-const TONE: Record<BarSummary['tone'], string> = { idle: colors.ok, busy: colors.accent, approval: colors.warn };
 const AGENT: Record<StatusDetails['agents'][number]['state'], string> = { idle: colors.textDim, busy: colors.accent, blocked: colors.warn };
 
 type Fetched = { details: StatusDetails; at: number } | null;
 
-/** `backdrop`: the view the pill and card float over (useBackdrop), for real glass; flat without it. */
-export const StatusPanel = memo(function StatusPanel({ model, backdrop }: { model: LiveModel; backdrop?: number | null }) {
+const selectLink = (s: ConnectionState) => ({ link: s.link, error: s.error, retryInMs: s.retryInMs });
+const selectOpen = (s: boolean) => s;
+
+export interface StatusProps {
+  model: LiveModel;
+  connection: Connection;
+  /** Whether the card is open: the chip and the card share it. */
+  open: Store<boolean>;
+}
+
+/** The header chip: `● bubble 0:42`. The bubble moves only while EDITH thinks or runs a tool. */
+export const StatusChip = memo(function StatusChip({ model, connection, open, backdrop }: StatusProps & { backdrop?: number | null }) {
   const bar = useStore(model.store, barSummary, shallowEqual);
-  const [open, setOpen] = useState(false);
+  const run = useStore(model.store, mainRun, shallowEqual);
+  const link = useStore(connection.store, selectLink, shallowEqual);
+  const isOpen = useStore(open, selectOpen);
+  const working = bar.tone !== 'idle';
+  // When this turn began on the phone's clock: from the server's elapsed when an event carried it,
+  // else the moment work began here (a new turn, or EDITH going busy).
+  const startedHere = useMemo(() => Date.now() / 1000, [working, run.ref]);
+  const since = useMemo(() => turnSince(run.elapsed, Date.now() / 1000, startedHere), [run.elapsed, startedHere]);
+
+  const label = `${describeLink(link)}. EDITH: ${bar.label}${bar.counts ? `, ${bar.counts}` : ''}. ${isOpen ? 'Hide' : 'Show'} details`;
+  return (
+    <Squish
+      onPress={() => open.set((o) => !o)}
+      hitSlop={6}
+      accessibilityRole="button"
+      accessibilityState={{ expanded: isOpen }}
+      accessibilityLabel={label}
+    >
+      <Glass level="thin" backdrop={backdrop} radius={radius.pill} style={styles.chip}>
+        <View style={[styles.dot, { backgroundColor: colors[LINK_TONE[link.link]] }]} />
+        <ThinkingBubble active={bar.tone === 'busy'} size={BUBBLE} />
+        {working ? <Elapsed since={since} warn={bar.tone === 'approval'} /> : null}
+      </Glass>
+    </Squish>
+  );
+});
+
+/** "0:42", ticking once a second; mounted only while EDITH works. */
+function Elapsed({ since, warn }: { since: number; warn: boolean }) {
+  const [now, setNow] = useState(() => Date.now() / 1000);
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now() / 1000), 1000);
+    return () => clearInterval(id);
+  }, []);
+  return <Text style={[styles.elapsed, warn && styles.warn]}>{formatElapsed(now - since)}</Text>;
+}
+
+/**
+ * The status card, dropped from the chip (the shell draws it over the screen, `top` under the
+ * header). It grows out of the chip's corner; a tap outside or Android's back closes it.
+ */
+export function StatusPopup({ model, connection, open, top, backdrop, onSettings }: StatusProps & { top: number; backdrop: number | null; onSettings: () => void }) {
+  const isOpen = useStore(open, selectOpen);
   const [fetched, setFetched] = useState<Fetched>(null);
   const [error, setError] = useState<string | null>(null);
-  const changedAt = useMemo(() => Date.now() / 1000, [bar.state]); // when the bar's state last changed here
-  const since = sinceFrom(bar.state, changedAt, fetched?.details ?? null, fetched?.at ?? 0);
-
   const visible = useVisible(model);
 
   useEffect(() => {
-    if (!open || !visible) return;
+    if (!isOpen || !visible) return;
     return pollDetails(
       () => model.details(),
       (r) => {
@@ -43,36 +95,27 @@ export const StatusPanel = memo(function StatusPanel({ model, backdrop }: { mode
       },
       REFRESH_MS,
     );
-  }, [open, visible, model]);
+  }, [isOpen, visible, model]);
+
+  // Back closes the card first (handlers run newest first).
+  useEffect(() => {
+    if (!isOpen) return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      open.set(false);
+      return true;
+    });
+    return () => sub.remove();
+  }, [isOpen, open]);
 
   return (
-    <View>
-      <Glass level="thin" backdrop={backdrop} radius={radius.pill}>
-        <Pressable
-          style={styles.bar}
-          onPress={() => setOpen((o) => !o)}
-          accessibilityRole="button"
-          accessibilityState={{ expanded: open }}
-          accessibilityLabel={`${bar.label}${bar.counts ? `, ${bar.counts}` : ''}. ${open ? 'Hide' : 'Show'} details`}
-        >
-          <View style={[styles.dot, { backgroundColor: TONE[bar.tone] }]} />
-          <Text style={styles.barText} numberOfLines={1}>
-            {bar.label}
-            {bar.tone !== 'idle' ? <Elapsed since={since} /> : null}
-            {bar.counts ? <Text style={styles.dim}>{` · ${bar.counts}`}</Text> : null}
-          </Text>
-          {bar.detail ? (
-            <Text style={styles.barDetail} numberOfLines={1}>
-              {bar.detail}
-            </Text>
-          ) : null}
-          <Icon name={open ? 'chevron-up' : 'chevron-down'} size={18} color={colors.textDim} />
-        </Pressable>
-      </Glass>
-      {open ? <Card fetched={fetched} error={error} backdrop={backdrop} /> : null}
+    <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+      {isOpen ? <Pressable style={StyleSheet.absoluteFill} onPress={() => open.set(false)} accessibilityLabel="Close the status" importantForAccessibility="no" /> : null}
+      <GrowSheet open={isOpen} origin="left top" style={[styles.popup, { top: top + space.xs }]}>
+        <Card model={model} connection={connection} fetched={fetched} error={error} backdrop={backdrop} onSettings={onSettings} />
+      </GrowSheet>
     </View>
   );
-});
+}
 
 /** Whether EDITH is on screen; true where the app has no visibility port. */
 function useVisible(model: LiveModel): boolean {
@@ -86,66 +129,84 @@ function useVisible(model: LiveModel): boolean {
   return visible;
 }
 
-/** " · 0:42", ticking once a second; mounted only while EDITH is busy. */
-function Elapsed({ since }: { since: number }) {
-  const [now, setNow] = useState(() => Date.now() / 1000);
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now() / 1000), 1000);
-    return () => clearInterval(id);
-  }, []);
-  return <Text>{` · ${formatElapsed(now - since)}`}</Text>;
+interface CardProps {
+  model: LiveModel;
+  connection: Connection;
+  fetched: Fetched;
+  error: string | null;
+  backdrop: number | null;
+  onSettings: () => void;
 }
 
-function Card({ fetched, error, backdrop }: { fetched: Fetched; error: string | null; backdrop?: number | null }) {
+function Card({ model, connection, fetched, error, backdrop, onSettings }: CardProps) {
+  const bar = useStore(model.store, barSummary, shallowEqual);
+  const link = useStore(connection.store, selectLink, shallowEqual);
   const d = fetched?.details;
-  if (!d) {
-    return (
-      <Glass level="panel" backdrop={backdrop} radius={radius.l} style={styles.card}>
-        <Text style={error ? styles.error : styles.dim}>{error ? `Couldn't load the details: ${error}` : 'Loading…'}</Text>
-      </Glass>
-    );
-  }
-  const ago = (t: number | null) => (t == null ? null : formatElapsed(d.ts - t));
-  const e = d.edith;
+  const ago = (t: number | null) => (d && t != null ? formatElapsed(d.ts - t) : null);
   return (
-    <Glass level="panel" backdrop={backdrop} radius={radius.l} style={styles.card}>
+    <Glass level="panel" backdrop={backdrop} radius={radius.l} rim style={styles.card}>
       <ScrollView style={styles.scroll} nestedScrollEnabled>
-        {error ? <Text style={styles.error}>{`Couldn't refresh: ${error}`}</Text> : null}
-        <Section title="EDITH">
-          <Row label="State" value={[detailsLabel(e), ago(e.since)].filter(Boolean).join(' · ')} />
-          {e.step ? <Row label="Step" value={e.step} mono /> : null}
-          {e.ref ? <Row label="Turn" value={`${e.ref}${e.turn_started ? ` · since ${clockIST(e.turn_started)}` : ''}`} /> : null}
-          <Row label="tmux" value={e.tmux} warn={e.tmux === 'down'} />
+        {/* From the stream: right even before (or without) the details. */}
+        <Section title="Now">
+          <Row label="EDITH" value={[bar.label, bar.counts].filter(Boolean).join(' · ')} />
+          {bar.tone !== 'idle' && bar.detail ? <Row label="Doing" value={bar.detail} mono /> : null}
+          <Row label="Server" value={describeLink(link)} warn={link.link !== 'open'} />
+          {link.link === 'unauthorized' ? (
+            <CardButton label="Open Settings" onPress={onSettings} />
+          ) : link.link === 'offline' || link.link === 'connecting' ? (
+            <CardButton label="Retry now" onPress={() => connection.retry()} />
+          ) : null}
         </Section>
-        <Section title="Lanes">
-          {d.lanes.side.map((l) => (
-            <Row key={l.ref} label="Parallel" value={[l.summary ?? l.ref, l.step, formatElapsed(l.seconds)].filter(Boolean).join(' · ')} />
-          ))}
-          <Row label="Side lanes" value={`${d.lanes.side.length} of ${d.lanes.max_side}`} />
-          <Row label="Queued" value={String(d.lanes.queued)} />
-          <Row label="Approvals" value={String(d.lanes.approvals)} warn={d.lanes.approvals > 0} />
-        </Section>
-        <Section title="Session">
-          {d.session ? (
-            <>
-              <Row label="Name" value={d.session.title ?? 'Untitled'} />
-              <Row label="Id" value={d.session.id.slice(0, 8)} mono />
-              {d.session.started != null ? <Row label="Started" value={formatIST(d.session.started)} /> : null}
-              {d.session.messages != null ? <Row label="Messages" value={String(d.session.messages)} /> : null}
-              {d.session.context_tokens != null ? <Row label="Context" value={`${formatTokens(d.session.context_tokens)} tokens`} /> : null}
-            </>
-          ) : (
-            <Text style={styles.dim}>No conversation yet</Text>
-          )}
-        </Section>
-        <Section title="Agents">
-          {d.agents.length ? d.agents.map((a) => <AgentRow key={a.name} agent={a} />) : <Text style={styles.dim}>No coding agents running</Text>}
-        </Section>
-        <Text style={styles.footer}>
-          {[d.server.tag ? `Live ${d.server.tag}` : null, `up ${formatUptime(d.server.uptime)}`, `updated ${clockIST(fetched.at)} IST`].filter(Boolean).join(' · ')}
-        </Text>
+        {!d ? (
+          <Text style={error ? styles.error : styles.cardDim}>{error ? `Couldn't load the details: ${error}` : 'Loading…'}</Text>
+        ) : (
+          <>
+            {error ? <Text style={styles.error}>{`Couldn't refresh: ${error}`}</Text> : null}
+            <Section title="EDITH">
+              <Row label="State" value={[detailsLabel(d.edith), ago(d.edith.since)].filter(Boolean).join(' · ')} />
+              {d.edith.step ? <Row label="Step" value={d.edith.step} mono /> : null}
+              {d.edith.ref ? <Row label="Turn" value={`${d.edith.ref}${d.edith.turn_started ? ` · since ${clockIST(d.edith.turn_started)}` : ''}`} /> : null}
+              <Row label="tmux" value={d.edith.tmux} warn={d.edith.tmux === 'down'} />
+            </Section>
+            <Section title="Lanes">
+              {d.lanes.side.map((l) => (
+                <Row key={l.ref} label="Parallel" value={[l.summary ?? l.ref, l.step, formatElapsed(l.seconds)].filter(Boolean).join(' · ')} />
+              ))}
+              <Row label="Side lanes" value={`${d.lanes.side.length} of ${d.lanes.max_side}`} />
+              <Row label="Queued" value={String(d.lanes.queued)} />
+              <Row label="Approvals" value={String(d.lanes.approvals)} warn={d.lanes.approvals > 0} />
+            </Section>
+            <Section title="Session">
+              {d.session ? (
+                <>
+                  <Row label="Name" value={d.session.title ?? 'Untitled'} />
+                  <Row label="Id" value={d.session.id.slice(0, 8)} mono />
+                  {d.session.started != null ? <Row label="Started" value={formatIST(d.session.started)} /> : null}
+                  {d.session.messages != null ? <Row label="Messages" value={String(d.session.messages)} /> : null}
+                  {d.session.context_tokens != null ? <Row label="Context" value={`${formatTokens(d.session.context_tokens)} tokens`} /> : null}
+                </>
+              ) : (
+                <Text style={styles.cardDim}>No conversation yet</Text>
+              )}
+            </Section>
+            <Section title="Agents">
+              {d.agents.length ? d.agents.map((a) => <AgentRow key={a.name} agent={a} />) : <Text style={styles.cardDim}>No coding agents running</Text>}
+            </Section>
+            <Text style={styles.footer}>
+              {[d.server.tag ? `Live ${d.server.tag}` : null, `up ${formatUptime(d.server.uptime)}`, `updated ${clockIST(fetched!.at)} IST`].filter(Boolean).join(' · ')}
+            </Text>
+          </>
+        )}
       </ScrollView>
     </Glass>
+  );
+}
+
+function CardButton({ label, onPress }: { label: string; onPress: () => void }) {
+  return (
+    <Squish onPress={onPress} style={styles.cardButton} accessibilityRole="button" accessibilityLabel={label}>
+      <Text style={styles.cardButtonText}>{label}</Text>
+    </Squish>
   );
 }
 
@@ -193,27 +254,29 @@ function AgentRow({ agent: a }: { agent: StatusDetails['agents'][number] }) {
 }
 
 const styles = StyleSheet.create({
-  bar: { flexDirection: 'row', alignItems: 'center', gap: space.s, paddingHorizontal: space.m, paddingVertical: space.s },
-  dot: { width: 10, height: 10, borderRadius: 5, marginHorizontal: 5 },
-  barText: { color: colors.text, fontSize: type.size.small, flex: 1 },
-  barDetail: { color: colors.textDim, fontSize: type.size.caption, maxWidth: '40%' },
-  dim: { color: colors.textDim },
-  card: { marginTop: space.s, padding: space.m },
-  scroll: { maxHeight: 420 },
+  chip: { flexDirection: 'row', alignItems: 'center', gap: space.s, height: 34, paddingHorizontal: space.m },
+  dot: { width: 8, height: 8, borderRadius: 4 },
+  elapsed: { color: colors.text, fontSize: type.size.small, fontVariant: ['tabular-nums'], minWidth: 30 },
+  popup: { position: 'absolute', left: space.m, right: space.m, maxWidth: 420 },
+  cardDim: { color: colors.textSecondary }, // on the popup glass: 4.5:1 over any backdrop
+  card: { padding: space.m },
+  scroll: { maxHeight: 460 },
   error: { color: colors.danger, fontSize: type.size.small, marginBottom: space.s },
   section: { marginBottom: space.m },
-  sectionTitle: { color: colors.textDim, fontSize: type.size.caption, fontWeight: '600', letterSpacing: 0.8, textTransform: 'uppercase', marginBottom: space.xs },
+  sectionTitle: { color: colors.textSecondary, fontSize: type.size.caption, fontWeight: '600', letterSpacing: 0.8, textTransform: 'uppercase', marginBottom: space.xs },
   row: { flexDirection: 'row', gap: space.s, paddingVertical: 2 },
-  label: { color: colors.textDim, fontSize: type.size.small, width: 84 },
+  label: { color: colors.textSecondary, fontSize: type.size.small, width: 84 },
   value: { color: colors.text, fontSize: type.size.small, flex: 1 },
   mono: { fontFamily: type.mono },
   warn: { color: colors.warn },
+  cardButton: { alignSelf: 'flex-start', marginTop: space.xs, marginLeft: 84 + space.s, paddingHorizontal: space.m, paddingVertical: space.xs, borderRadius: radius.pill, backgroundColor: colors.accentSoft },
+  cardButtonText: { color: colors.text, fontSize: type.size.small, fontWeight: '600' },
   agent: { paddingVertical: space.xs },
   agentHead: { flexDirection: 'row', alignItems: 'center', gap: space.s },
   smallDot: { width: 8, height: 8, borderRadius: 4 },
   agentName: { color: colors.text, fontSize: type.size.small, fontWeight: '600', flexShrink: 1 },
-  agentBranch: { color: colors.textDim, fontSize: type.size.caption, flex: 1 },
-  agentState: { color: colors.textDim, fontSize: type.size.caption },
-  agentLast: { color: colors.textDim, fontSize: type.size.caption, marginLeft: 16, marginTop: 2 },
-  footer: { color: colors.textDim, fontSize: type.size.caption, textAlign: 'center' },
+  agentBranch: { color: colors.textSecondary, fontSize: type.size.caption, flex: 1 },
+  agentState: { color: colors.textSecondary, fontSize: type.size.caption },
+  agentLast: { color: colors.textSecondary, fontSize: type.size.caption, marginLeft: 16, marginTop: 2 },
+  footer: { color: colors.textSecondary, fontSize: type.size.caption, textAlign: 'center' },
 });

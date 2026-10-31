@@ -30,6 +30,7 @@ token_file = "~/.config/edith/app-token"
 # url = "http://100.78.124.98:2586"
 # topic = "edith"
 # token_file = "~/.config/edith/ntfy-publish-token"
+# phone_token_file = "~/.config/edith/ntfy-phone-token"   # read-only; the app fetches it (GET /v1/push/config)
 
 [adapter.google]
 credentials_dir = "~/.config/edith-google"   # OAuth client + token; never in git

@@ -23,7 +23,7 @@ describe('glass tints for the native view', () => {
   });
 
   it('every level has a parsed tint matching its token', () => {
-    for (const level of ['thin', 'regular', 'thick', 'panel'] as const) {
+    for (const level of ['thin', 'regular', 'thick', 'control', 'panel'] as const) {
       expect(glassTint[level]).toEqual(rgbaOf(glass[level].tint));
       expect(glassTint[level][3]).toBeGreaterThan(0);
     }
@@ -37,7 +37,7 @@ describe('the frost (Arpit, 13R: text showed through the glass sharp)', () => {
   });
 
   it('blurs 24–32 dp, lifts saturation 1.4–1.8x, splits RGB by under a dp, and the fallback is nearly opaque', () => {
-    for (const level of ['thin', 'regular', 'thick', 'panel'] as const) {
+    for (const level of ['thin', 'regular', 'thick', 'control', 'panel'] as const) {
       const g = glass[level];
       expect(g.blur).toBeGreaterThanOrEqual(24);
       expect(g.blur).toBeLessThanOrEqual(32);
@@ -51,10 +51,16 @@ describe('the frost (Arpit, 13R: text showed through the glass sharp)', () => {
 });
 
 describe('text panels (status card, menus)', () => {
-  it('tint dark at 0.75–0.85 over the frost, so what is behind reads only as colour', () => {
-    const [r, g, b, a] = rgbaOf(glass.panel.tint);
+  it('a dark scrim at 0.75–0.85 over the content area, so what is behind reads only as colour', () => {
+    const [r, g, b, a] = rgbaOf(glass.panel.legibility!.scrim);
     expect(a).toBeGreaterThanOrEqual(0.75);
     expect(a).toBeLessThanOrEqual(0.85);
-    expect(Math.max(r!, g!, b!)).toBeLessThan(0.15); // dark
+    expect(Math.max(r!, g!, b!)).toBeLessThan(0.3); // dark
+  });
+
+  it('a light tint and a strong lens on the rim, so the backdrop visibly bends there (Liquid Glass)', () => {
+    expect(rgbaOf(glass.panel.tint)[3]).toBeLessThanOrEqual(0.4);
+    expect(glass.panel.refraction).toBeGreaterThanOrEqual(glass.regular.refraction);
+    expect(glass.panel.legibility!.centreBlur).toBeGreaterThan(glass.panel.blur);
   });
 });

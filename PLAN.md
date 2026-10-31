@@ -283,8 +283,25 @@ show in the phone's "dynamic island".
     bottom tab bar); its glass drop-down sheet grows out of the button and shrinks back on springs;
   - sheets grow out of the control that opened them;
   - controls squish slightly when pressed;
+  - the composer (asked for 2026-10-31) is three glass pieces with gaps: a round menu button (2×2
+    dots), the message pill (mic inside) and a round send button; the menu button's frosted panel
+    (Camera, Gallery, Audio file, Record, Commands) grows out of it. Glass can carry a specular rim
+    (bright top-left and bottom-right), used by the composer and its menu for now;
+  - popups (menus, the status card, asked for 2026-10-31) refract at the rim like Liquid Glass while
+    their text stays at WCAG 4.5:1 over any backdrop: a harder-blurred content area and a scrim over
+    it, all from JS (OTA). A per-pixel luminance cap and a true centre-weighted blur in the AGSL
+    shader would need a native release: a later follow-up;
   - new bubbles settle in on a spring;
-  - the "working" indicator is a morphing glass blob.
+  - the "working" indicator is a morphing glass blob;
+  - the header (asked for 2026-10-31, plans/ui-next.md): "E.D.I.T.H" in the centre with a soft
+    static glow in the logo's blue; on the left a status chip (connection dot, the thinking bubble,
+    the turn's elapsed time while working) that opens the status card; the hamburger on the right.
+    The old status pill is gone. The thinking bubble is an iridescent orb in the icon's colours
+    whose rim wobbles and whose inner bands swirl while EDITH works (a still frame when idle);
+  - swipe a message right to reply to it (2026-10-31): a quote bar above the composer, the quote
+    on the sent bubble (tap to jump to the original), and the quote in Claude's prompt. The light
+    haptic needs a native release (VIBRATE is blocked; `performHapticFeedback` would need no
+    permission): a later follow-up.
   - With Android's "Remove animations" setting on, everything jumps straight to its end state.
 - **Performance:** frame times are measured by the module (`FrameMetrics`: p50/p95/p99, janky
   frames) while scrolling and switching tabs, with the glass on and off. The target is 60–120 fps

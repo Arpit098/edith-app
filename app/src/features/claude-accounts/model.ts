@@ -1,5 +1,5 @@
 // Claude accounts (contracts/accounts.md): the saved logins on edith, switching EDITH and the coding
-// agents to another one, and adding one with Claude's own sign-in (link → paste code).
+// agents to another one, adding one with Claude's own sign-in (link → paste code), renaming and removing.
 // Resynced from GET /v1/accounts on app.connected (a switch drops the stream while EDITH restarts, so
 // that is also how its progress comes back), and kept current by accounts.switch events. No polling.
 
@@ -12,8 +12,19 @@ export interface AccountsState {
   switch: AccountSwitch | null;
   login: { id: string; url: string } | null; // an open sign-in: show its link and the code field
   loaded: boolean;
-  busy: 'refresh' | 'switch' | 'login' | 'code' | 'remove' | null;
+  busy: 'refresh' | 'switch' | 'login' | 'code' | 'rename' | 'remove' | null;
   error: string | null; // the last action's problem (e.g. why a switch was refused)
+}
+
+/** The server's limit on a name (contracts/accounts.md), after trimming. */
+export const LABEL_MAX = 40;
+
+/** Why a typed name can't be saved, or null when it can. */
+export function labelProblem(label: string): string | null {
+  const name = label.trim();
+  if (!name) return 'Enter a name.';
+  if (name.length > LABEL_MAX) return `A name can be at most ${LABEL_MAX} characters.`;
+  return null;
 }
 
 export const initialAccounts: AccountsState = { accounts: [], switch: null, login: null, loaded: false, busy: null, error: null };
@@ -51,6 +62,8 @@ export interface AccountsModel {
   startLogin(): Promise<string | null>; // the sign-in link
   finishLogin(code: string, label?: string): Promise<boolean>;
   cancelLogin(): Promise<void>;
+  /** True once saved; false (with `error` set) when the name or the request was refused. */
+  rename(id: string, label: string): Promise<boolean>;
   remove(id: string): Promise<void>;
   dispose(): void;
 }
@@ -128,6 +141,20 @@ export function createAccountsModel(bus: EventBus, api: Api): AccountsModel {
       const login = store.get().login;
       store.set((s) => ({ ...s, login: null, error: null }));
       if (login) await api.cancelLogin(login.id).catch(() => undefined); // it expires on its own anyway
+    },
+    async rename(id, label) {
+      const problem = labelProblem(label);
+      if (problem) {
+        store.set((s) => ({ ...s, error: problem }));
+        return false;
+      }
+      const saved = await act('rename', async () => {
+        const account = await api.renameAccount(id, label.trim());
+        if (account) store.set((s) => ({ ...s, accounts: s.accounts.map((a) => (a.id === id ? account : a)) }));
+        await load(); // the order follows the new name
+        return true;
+      });
+      return saved === true;
     },
     async remove(id) {
       await act('remove', async () => {

@@ -31,6 +31,7 @@ import time
 import urllib.parse
 
 from edith.common.paths import resolve
+from edith.common.text import reply_line
 from edith.core import ApiError, CommandCall, Event, Reply, Response, Route
 
 from . import ws
@@ -267,6 +268,10 @@ class AppApi:
             raise ApiError(e.status, e.message)
         if not text and not files:
             raise ApiError(400, "text is required")
+        try:
+            quoted = reply_line(body.get("replying_to"))  # the message Arpit swiped to reply to
+        except ValueError as e:
+            raise ApiError(400, str(e))
         ref = f"app:{secrets.token_hex(6)}"
         found = self.registry.find_command(text)
         if found:  # a typed bridge command (/compact, /stop, …) runs as on Telegram; unknown /text goes to Claude
@@ -274,7 +279,7 @@ class AppApi:
         else:
             if body.get("voice"):  # before send, so the voice feature knows the ref before any of its turn events
                 self.bus.publish(self._event("voice.turn", {"ref": ref}))
-            prompt = self._with_files(self._prompt(text, bool(body.get("voice"))), files)
+            prompt = self._with_files(self._prompt(text, bool(body.get("voice"))) + quoted, files)
             handle = self.agent.send(prompt, "app", ref, force_queue=bool(body.get("queue")))
             answer = {"ref": ref, "lane": handle.lane}
         if not files:

@@ -5,15 +5,20 @@ Only while the app isn't connected (ports.presence, asked at push time); the app
 itself while it is open. Each tag is pushed once it is delivered. Publishing runs on one worker thread, so a slow or unreachable ntfy
 never holds up the bus.
 
+GET /v1/push/config hands the app what it subscribes with (the notifier's subscription(): ntfy's url,
+topic and the phone's read-only token), so turning push on needs nothing pasted. The token is in the
+answer only: never logged, never in the audit line, and not cached by the client (no-store).
+
     [features.notifications]
     via = ["ntfy"]   # notifier adapters to push through
 """
+import json
 import queue
 import re
 import threading
 from collections import OrderedDict
 
-from edith.core import Context, Event, Feature
+from edith.core import ApiError, Context, Event, Feature, Response
 
 SEEN_MAX = 256    # tags pushed lately (oldest forgotten first)
 WAITING_MAX = 50  # pushes waiting for the worker; past that they are dropped (and logged)
@@ -78,6 +83,21 @@ def message(ev: Event) -> dict | None:
 def setup(ctx: Context) -> None:
     via = set(ctx.config.get("via", ["ntfy"]))
     notifiers = [n for n in ctx.ports.notifiers if n.name in via]
+    subscribable = [n for n in notifiers if callable(getattr(n, "subscription", None))]
+
+    def push_config(req):
+        if not subscribable:
+            raise ApiError(404, "push isn't set up on edith (no ntfy notifier)")
+        try:
+            sub = subscribable[0].subscription()
+        except ValueError as e:  # the message never holds the token
+            ctx.log("push config refused: %s", e)
+            raise ApiError(503, "edith's phone token for push isn't usable; see deploy/ntfy/README.md")
+        body = {"url": sub["url"], "topic": sub["topic"], "token": sub["token"]}
+        return Response(200, {"content-type": "application/json", "cache-control": "no-store"},
+                        json.dumps(body).encode(), audit={"push": "config"})
+
+    ctx.add_route("GET", "/v1/push/config", push_config)
     if not notifiers:
         ctx.log("no notifier among %s: nothing is pushed", sorted(via))
         return

@@ -80,16 +80,20 @@ export function detailsLabel(e: StatusDetails['edith']): string {
   }
 }
 
+/** The running main turn (or any run): its ref and the server's elapsed seconds at its last event. */
+export function mainRun(s: LiveState): { ref: string | null; elapsed: number | null } {
+  const refs = Object.keys(s.runs);
+  const ref = refs.find((r) => s.runs[r]!.lane === 'main') ?? refs[0] ?? null;
+  return { ref, elapsed: ref ? s.runs[ref]!.elapsed : null };
+}
+
 /**
- * When the bar's state began, on the phone's clock: the moment the bar changed state here, or the
- * server's `since` once details for the same state arrive (correct even if the app opened mid-turn).
- * The server's time is moved onto the phone's clock with its `ts`, so a clock offset doesn't matter.
+ * When the running turn began, on the phone's clock: counted back from now by the server's elapsed
+ * (correct even if the app opened mid-turn, whatever the clock offset), or `startedHere` (the moment
+ * work began here) when no event has carried an elapsed time yet. Call it when `elapsed` changes.
  */
-export function sinceFrom(state: BarState, changedAt: number, details: StatusDetails | null, receivedAt: number): number {
-  if (details && details.edith.state === state && details.edith.since != null) {
-    return receivedAt - (details.ts - details.edith.since);
-  }
-  return changedAt;
+export function turnSince(elapsed: number | null, now: number, startedHere: number): number {
+  return elapsed != null && elapsed > 0 ? now - elapsed : startedHere;
 }
 
 /**

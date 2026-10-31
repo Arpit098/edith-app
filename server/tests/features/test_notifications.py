@@ -1,12 +1,18 @@
 """Pushes while the app is closed (contracts/push.md): the notifications feature and the ntfy adapter."""
 import http.server
 import json
+import logging
 import os
+import pathlib
 import queue
+import shutil
 import tempfile
 import threading
 import unittest
+import urllib.error
+import urllib.request
 
+from edith.adapters.frontends.app_api import AppApi
 from edith.adapters.notifiers.ntfy import NtfyNotifier
 from edith.core import Event, EventBus, JobRunner, Ports, Registry, load_features
 from edith.features.notifications import preview
@@ -180,6 +186,149 @@ class AdapterTest(unittest.TestCase):
         open_token = NtfyNotifier({"url": "http://127.0.0.1:1", "token_file": self.token})
         self.assertFalse(open_token.notify("a", "b"))
         self.assertEqual(self.server.seen, [])
+
+
+API_TOKEN = "t" * 40
+PHONE = "tk_" + "p1" * 14 + "q"  # the phone's read-only token (29 after tk_)
+
+
+class Captured(logging.Handler):
+    def __init__(self):
+        super().__init__(logging.DEBUG)
+        self.lines = []
+
+    def emit(self, record):
+        self.lines.append(self.format(record))
+
+
+class PushConfigTest(unittest.TestCase):
+    """GET /v1/push/config on a running App API, with the real ntfy adapter (it publishes nothing here)."""
+
+    def setUp(self, notifiers=None):
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.dir)
+        self.publish_file, self.phone_file = self.secret("publish", TOKEN), self.secret("phone", PHONE)
+        api_token = self.secret("app-token", API_TOKEN)
+        self.ntfy = NtfyNotifier({"url": "http://100.78.124.98:2586", "topic": "edith", "token_file": self.publish_file,
+                                  "phone_token_file": self.phone_file})
+        self.logs = Captured()
+        root = logging.getLogger()
+        level = root.level
+        root.addHandler(self.logs)
+        root.setLevel(logging.DEBUG)
+        self.addCleanup(lambda: (root.removeHandler(self.logs), root.setLevel(level)))
+        bus, registry = EventBus(), Registry()
+        report = load_features(["notifications"], bus, Ports(notifiers=[self.ntfy] if notifiers is None else notifiers),
+                               registry, {})
+        self.assertEqual(report.failed, {})
+        self.audit = os.path.join(self.dir, "audit.jsonl")
+        self.api = AppApi({"bind": "tailscale", "port": 0, "token_file": api_token, "audit_log": self.audit},
+                          resolve_ip=lambda: "127.0.0.1", allow_loopback=True)
+        self.api.start(bus, registry, None)
+        self.addCleanup(self.api.stop)
+        self.assertTrue(self.api.listening.wait(5))
+
+    def secret(self, name, value):
+        path = os.path.join(self.dir, name)
+        with open(path, "w") as f:
+            f.write(value + "\n")
+        os.chmod(path, 0o600)
+        return path
+
+    def get(self, token=API_TOKEN):
+        host, port = self.api.address
+        req = urllib.request.Request(f"http://{host}:{port}/v1/push/config")
+        if token:
+            req.add_header("Authorization", f"Bearer {token}")
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                return r.status, dict(r.headers), json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            return e.code, dict(e.headers), json.loads(e.read())
+
+    def assert_no_token_anywhere(self):
+        self.api.stop()  # every audit line is written
+        written = (pathlib.Path(self.audit).read_text() if os.path.exists(self.audit) else "") + "\n".join(self.logs.lines)
+        for secret in (PHONE, TOKEN, API_TOKEN):
+            self.assertNotIn(secret, written)
+
+    def test_needs_the_bearer_token(self):
+        for token in (None, "wrong", API_TOKEN + "x"):
+            with self.subTest(token=token):
+                status, _, body = self.get(token)
+                self.assertEqual((status, body), (401, {"error": "unauthorized"}))
+        self.assert_no_token_anywhere()
+
+    def test_hands_over_the_phone_token_only(self):
+        status, headers, body = self.get()
+        self.assertEqual(status, 200)
+        self.assertEqual(body, {"url": "http://100.78.124.98:2586", "topic": "edith", "token": PHONE})
+        self.assertEqual(headers.get("cache-control") or headers.get("Cache-Control"), "no-store")
+        self.assert_no_token_anywhere()
+        lines = [json.loads(line) for line in pathlib.Path(self.audit).read_text().splitlines()]
+        self.assertEqual([(a["path"], a["status"], a.get("push")) for a in lines], [("/v1/push/config", 200, "config")])
+
+    def test_never_the_publish_token(self):
+        self.secret("phone", TOKEN)  # the publish token copied into the phone's file
+        status, _, body = self.get()
+        self.assertEqual(status, 503)
+        self.assertNotIn("token", body)
+        self.ntfy.phone_token_file = self.publish_file  # or pointed at the publish file itself
+        self.assertEqual(self.get()[0], 503)
+        self.assertTrue(any("publish token" in line for line in self.logs.lines))
+        self.assert_no_token_anywhere()
+
+    def test_an_unusable_phone_token_file_is_refused(self):
+        os.chmod(self.phone_file, 0o644)  # readable by others
+        self.assertEqual(self.get()[0], 503)
+        os.remove(self.phone_file)
+        self.assertEqual(self.get()[0], 503)
+        self.assert_no_token_anywhere()
+
+    def test_only_a_well_formed_ntfy_token_is_handed_out(self):
+        for bad in ("tk_" + "p1" * 15,             # 30 after tk_
+                    "tk_" + "p1" * 14 + "-",       # 29, but not letters or digits
+                    "xx_" + "p1" * 14 + "q",       # not tk_
+                    "tk_" + "p1" * 14 + "q extra"):  # trailing text on the same line
+            with self.subTest(bad=bad):
+                self.secret("phone", bad)
+                status, _, body = self.get()
+                self.assertEqual(status, 503)
+                self.assertNotIn(bad, json.dumps(body))
+        self.assertTrue(any("tk_ and 29 letters or digits" in line for line in self.logs.lines))
+        self.secret("phone", PHONE)
+        self.assertEqual(self.get()[0], 200)
+        self.assert_no_token_anywhere()
+
+    def test_refused_while_the_publish_token_cant_be_checked(self):
+        for broken in ("open", "missing"):
+            with self.subTest(broken=broken):
+                if broken == "open":
+                    os.chmod(self.publish_file, 0o644)
+                else:
+                    os.remove(self.publish_file)
+                status, _, body = self.get()
+                self.assertEqual(status, 503)
+                self.assertNotIn("token", body)
+        self.assertTrue(any("can't be checked" in line for line in self.logs.lines))
+        self.assert_no_token_anywhere()
+
+    def test_never_the_cached_publish_token_either(self):
+        self.ntfy._token = PHONE  # publishing cached it; the publish file was then rotated
+        self.assertEqual(self.get()[0], 503)
+        self.ntfy._token = TOKEN
+        self.assertEqual(self.get()[0], 200)
+        self.assert_no_token_anywhere()
+
+
+class PushConfigWithoutNtfyTest(unittest.TestCase):
+    get, secret, assert_no_token_anywhere = PushConfigTest.get, PushConfigTest.secret, PushConfigTest.assert_no_token_anywhere
+
+    def test_says_push_isnt_set_up(self):
+        PushConfigTest.setUp(self, notifiers=[FakeNotifier("telegram")])
+        status, _, body = self.get()
+        self.assertEqual((status, body), (404, {"error": "push isn't set up on edith (no ntfy notifier)"}))
+        self.assert_no_token_anywhere()
 
 
 if __name__ == "__main__":

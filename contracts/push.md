@@ -31,6 +31,35 @@ and 2 s, then the push is dropped and logged. Approvals go at ntfy priority 4, c
 - ntfy listens on edith's Tailscale IP, port 2586. Access is deny-all: edith publishes with a
   write-only token, the phone subscribes with a read-only one. Both live in mode-600 files, never in git.
 - One topic, `edith` by default (`[adapter.ntfy] topic`).
+- The phone's token is handed to the app by edith (below); it is never pasted by hand unless
+  Settings → Push → Advanced is used (the fallback, e.g. for an older edith).
+
+## Turning it on
+
+Settings → Push → **Turn on** calls `GET /v1/push/config` with the app's App API bearer token (like every
+route; 401 without it) and gets what the phone subscribes with:
+
+```json
+{ "url": "http://100.78.124.98:2586", "topic": "edith", "token": "tk_…" }
+```
+
+| Field | Meaning |
+|---|---|
+| `url` | edith's ntfy over Tailscale (`[adapter.ntfy] url`) |
+| `topic` | The topic to subscribe to (`[adapter.ntfy] topic`) |
+| `token` | The phone's **read-only** token, read from `[adapter.ntfy] phone_token_file` (default `~/.config/edith/ntfy-phone-token`, mode 600) each time it is asked for |
+
+- Only the subscribe-only token is ever returned. The publish token never is: a phone token file that
+  is the publish token file, or holds the same token as the publish file or the publish token edith
+  last used, is refused (503). So is any request while the publish token file can't be read (missing
+  or not mode 600), since the phone token can't then be checked against it.
+- 404 `{error}`: no ntfy notifier is configured. 503 `{error}`: the phone token file is missing, open to
+  others (not mode 600) or not exactly an ntfy token (`tk_` and 29 letters or digits, the shape the app
+  accepts). Neither error carries the token.
+- The answer has `Cache-Control: no-store`. The token never appears in edith's logs or the audit log
+  (the audit line is `{path, status, "push": "config"}`), and status text redacts `tk_…` tokens.
+- The app hands the token straight to the native push service, which keeps it encrypted with an
+  Android Keystore key (as it does a pasted one); it is never shown or kept in the app's JS state.
 - The phone subscribes with `GET /<topic>/json?since=<last message id>` (one long-lived stream), so
   nothing is missed across reconnects. ntfy keeps messages 1 h (`cache-duration`).
 - In the 15-minute check mode (Settings → Push) there is no stream: a periodic job fetches

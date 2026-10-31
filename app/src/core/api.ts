@@ -85,6 +85,13 @@ export interface HistoryPage {
   reset: boolean; // the cursor given was another conversation's: this is the newest page instead
 }
 
+/** GET /v1/push/config (contracts/push.md): what the phone subscribes to ntfy with. `token` is the read-only one. */
+export interface PushConfig {
+  url: string; // edith's ntfy over Tailscale, e.g. http://100.78.124.98:2586
+  topic: string;
+  token: string;
+}
+
 /** GET /v1/app/latest (contracts/app-updates.md §3). */
 export interface AppRelease {
   versionName: string;
@@ -264,9 +271,18 @@ type Obj = Record<string, unknown>;
 export function createApi(t: Transport) {
   return {
     /** Send text to the main lane (or a side lane when busy). The turn's events arrive with `ref`. */
-    async send(text: string, opts: { voice?: boolean; queue?: boolean; attachments?: string[] } = {}): Promise<{ ref: string; lane: string }> {
-      const { attachments, ...rest } = opts;
-      const r = await t.request<Obj>('POST', '/v1/messages', { text, ...rest, ...(attachments?.length ? { attachments } : {}) });
+    async send(
+      text: string,
+      opts: { voice?: boolean; queue?: boolean; attachments?: string[]; replyingTo?: { text: string; from: 'edith' | 'arpit' | null } } = {},
+    ): Promise<{ ref: string; lane: string }> {
+      const { attachments, replyingTo, ...rest } = opts;
+      const r = await t.request<Obj>('POST', '/v1/messages', {
+        text,
+        ...rest,
+        ...(attachments?.length ? { attachments } : {}),
+        // The message Arpit swiped to reply to: the server quotes it in Claude's prompt (contracts/events.md).
+        ...(replyingTo ? { replying_to: { text: replyingTo.text, ...(replyingTo.from ? { from: replyingTo.from } : {}) } } : {}),
+      });
       return { ref: str(r.ref), lane: str(r.lane) };
     },
 
@@ -346,6 +362,12 @@ export function createApi(t: Transport) {
       await t.request<Obj>('DELETE', `/v1/accounts/login/${seg(loginId)}`);
     },
 
+    /** Renames a saved account (its label only; 1–40 characters after trimming). The account as saved. */
+    async renameAccount(id: string, label: string): Promise<ClaudeAccount | null> {
+      const r = await t.request<Obj>('PATCH', `/v1/accounts/${seg(id)}`, { label });
+      return r.account && typeof r.account === 'object' ? accountFrom(r.account as Obj) : null;
+    },
+
     async removeAccount(id: string): Promise<void> {
       await t.request<Obj>('DELETE', `/v1/accounts/${seg(id)}`);
     },
@@ -411,6 +433,12 @@ export function createApi(t: Transport) {
     async press(action: string): Promise<ActionResult> {
       const r = await t.request<Obj>('POST', '/v1/actions', { action });
       return { ref: str(r.ref), toast: r.toast ? str(r.toast) : null, note: r.note ? str(r.note) : null, replies: replies(r.replies) };
+    },
+
+    /** edith's ntfy, its topic and the phone's read-only token, for turning push on. */
+    async pushConfig(): Promise<PushConfig> {
+      const r = await t.request<Obj>('GET', '/v1/push/config');
+      return { url: str(r.url), topic: str(r.topic), token: str(r.token) };
     },
 
     /** The newest APK edith offers, or null when it has none yet (404). */
