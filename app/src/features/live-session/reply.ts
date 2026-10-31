@@ -13,10 +13,23 @@ export interface Quote {
   from: 'edith' | 'arpit' | null;
 }
 
-/** One line, at most QUOTE_MAX characters, cut with "…": the same rule the server applies, so both sides agree. */
+/**
+ * One line, at most QUOTE_MAX characters (code points: an emoji is never cut in half), cut with "…":
+ * the same rule the server applies, so both sides agree.
+ */
 export function quoteText(text: string): string {
   const one = text.split(/\s+/).filter(Boolean).join(' ');
-  return one.length > QUOTE_MAX ? `${one.slice(0, QUOTE_MAX - 1).trimEnd()}…` : one;
+  const chars = Array.from(one);
+  return chars.length > QUOTE_MAX ? `${chars.slice(0, QUOTE_MAX - 1).join('').trimEnd()}…` : one;
+}
+
+/**
+ * A quote reduced for comparing: one line, the server's "］" (it stands in for "]" inside the prompt's
+ * brackets) back to "]", and no trailing "…" (a cut quote is a prefix of its original).
+ */
+function comparable(text: string): string {
+  const q = quoteText(text).replace(/］/g, ']');
+  return q.endsWith('…') ? q.slice(0, -1).trimEnd() : q;
 }
 
 /** What swiping this message attaches, or null for rows that can't be replied to (tools, diffs, notices). */
@@ -31,11 +44,17 @@ export function quoteOf(item: Item): Quote | null {
   return text ? { text, from: 'arpit' } : null;
 }
 
-/** Whether `item` is the message `quote` refers to: its quote starts the same (a cut quote ends in "…"). */
+/**
+ * Whether `item` is the message `quote` refers to. Both are normalised first (a Telegram reply's
+ * quote keeps its newlines and runs to 1500 characters; ours are one line of 300), then either may
+ * be the cut one: it matches when one starts with the other.
+ */
 function quotes(item: Item, quote: string): boolean {
-  const q = quote.endsWith('…') ? quote.slice(0, -1) : quote;
+  const q = comparable(quote);
   const own = quoteOf(item);
-  return !!q && !!own && (own.text === quote || own.text.startsWith(q));
+  if (!q || !own) return false;
+  const mine = comparable(own.text);
+  return !!mine && (mine.startsWith(q) || q.startsWith(mine));
 }
 
 /**
@@ -46,6 +65,21 @@ export function findQuoted(items: Item[], quote: string, replyId: number | null 
   const from = replyId === null ? -1 : items.findIndex((x) => x.id === replyId);
   for (let i = from + 1; i < items.length; i++) if (quotes(items[i]!, quote)) return i;
   return -1;
+}
+
+/**
+ * A send that answers the quoted message (`reply`) and clears it, as the Send button does: voice's
+ * auto-send goes through this, so speaking right after a swipe replies too.
+ */
+export function sendWithReply<O extends { replyTo?: Quote | null }>(
+  reply: { get(): Quote | null; set(v: Quote | null): void },
+  send: (text: string, opts: O) => Promise<void>,
+): (text: string, opts: O) => Promise<void> {
+  return (text, opts) => {
+    const replyTo = reply.get();
+    reply.set(null);
+    return send(text, { ...opts, replyTo });
+  };
 }
 
 /** Who wrote the quoted message, from the messages loaded; null when it isn't among them. */

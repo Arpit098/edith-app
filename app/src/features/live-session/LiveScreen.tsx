@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, use
 import { ActivityIndicator, FlatList, StyleSheet, Text, TextInput, View, type LayoutChangeEvent } from 'react-native';
 
 import type { Command } from '../../core/api';
-import { useStore, type Store } from '../../core/store';
+import { createStore, useStore, type Store } from '../../core/store';
 import { colors, radius, space, type, useChrome } from '../../core/theme';
 import { Empty } from '../../ui/Empty';
 import { Glass, useBackdrop } from '../../ui/Glass';
@@ -11,7 +11,7 @@ import { SettleIn, Squish, useReduceMotion } from '../../ui/motion';
 import { SwipeToReply } from '../../ui/SwipeToReply';
 import { toast } from '../../ui/toast';
 import { ItemView, quoteLabel } from './ItemView';
-import { needsArgs, sendStatus, summarize, tickOf, type Item, type LiveModel, type LiveState } from './model';
+import { needsArgs, sendStatus, summarize, tickOf, type Item, type LiveModel, type LiveState, type SendStatus, type Tick } from './model';
 import { findQuoted, quoteOf, type Quote } from './reply';
 import { WorkingRow } from './WorkingRow';
 import { AttachmentBar } from './AttachmentBar';
@@ -47,15 +47,20 @@ export function LiveScreen({ model, voice, attach, menu, reply }: LiveScreenProp
   const onRetry = useCallback((key: string) => void model.retry(key), [model]);
   const onReply = useCallback((item: Item) => reply.set(quoteOf(item)), [reply]);
 
-  // Tapping a reply's quote scrolls to the message it quotes and marks it for a moment.
+  // Tapping a reply's quote scrolls to the message it quotes and marks it for a moment. The mark is
+  // a store each row reads for its own id, so it re-renders only the two rows it moves between.
   const list = useRef<FlatList<Item>>(null);
   const reduce = useReduceMotion();
-  const [flash, setFlash] = useState<number | null>(null);
-  useEffect(() => {
-    if (flash === null) return;
-    const t = setTimeout(() => setFlash(null), FLASH_MS);
-    return () => clearTimeout(t);
-  }, [flash]);
+  const flash = useMemo(() => createStore<number | null>(null), []);
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scrollRetry = useRef<{ timer: ReturnType<typeof setTimeout> | null; tries: number }>({ timer: null, tries: 0 });
+  useEffect(
+    () => () => {
+      if (flashTimer.current) clearTimeout(flashTimer.current);
+      if (scrollRetry.current.timer) clearTimeout(scrollRetry.current.timer);
+    },
+    [],
+  );
   const onQuote = useCallback(
     (replyId: number, quote: string) => {
       const items = model.store.get().items;
@@ -64,37 +69,49 @@ export function LiveScreen({ model, voice, attach, menu, reply }: LiveScreenProp
         toast("The original message is further back than what's loaded.");
         return;
       }
-      setFlash(items[index]!.id);
+      flash.set(items[index]!.id);
+      if (flashTimer.current) clearTimeout(flashTimer.current);
+      flashTimer.current = setTimeout(() => flash.set(null), FLASH_MS);
+      if (scrollRetry.current.timer) clearTimeout(scrollRetry.current.timer);
+      scrollRetry.current = { timer: null, tries: 0 };
       list.current?.scrollToIndex({ index, viewPosition: 0.5, animated: !reduce });
     },
-    [model, reduce],
+    [model, reduce, flash],
   );
-  // A row far up hasn't been measured yet: jump near it by the average height, then aim again.
+  // A row far up hasn't been measured yet: jump near it by the average height, then aim again
+  // (a few times at most: each jump measures more rows).
   const onScrollToIndexFailed = useCallback(
     (info: { index: number; averageItemLength: number }) => {
+      const retry = scrollRetry.current;
+      if (retry.tries >= MAX_SCROLL_TRIES) return;
+      retry.tries++;
       list.current?.scrollToOffset({ offset: info.averageItemLength * info.index, animated: false });
-      setTimeout(() => list.current?.scrollToIndex({ index: info.index, viewPosition: 0.5, animated: !reduce }), 50);
+      if (retry.timer) clearTimeout(retry.timer);
+      retry.timer = setTimeout(() => {
+        retry.timer = null;
+        list.current?.scrollToIndex({ index: info.index, viewPosition: 0.5, animated: !reduce });
+      }, 50);
     },
     [reduce],
   );
 
   const renderItem = useCallback(
-    ({ item, index }: { item: Item; index: number }) => {
-      const replyable = item.kind === 'user' || item.kind === 'assistant';
-      const row =
-        item.kind === 'user' ? (
-          <ItemView item={item} onPress={onPress} tick={tickOf(item, turns)} status={sendStatus(item, turns)} onRetry={onRetry} onReply={onReply} onQuote={onQuote} highlight={flash === item.id} />
-        ) : (
-          <ItemView item={item} onPress={onPress} onReply={replyable ? onReply : undefined} highlight={flash === item.id} />
-        );
+    ({ item, index }: { item: Item; index: number }) => (
       // The newest message, if it just arrived, settles in on a spring; history and rows scrolled
       // back into view don't move.
-      return (
-        <SettleIn animate={index === 0 && Date.now() / 1000 - item.ts < FRESH_S}>
-          {replyable ? <SwipeToReply onReply={() => onReply(item)}>{row}</SwipeToReply> : row}
-        </SettleIn>
-      );
-    },
+      <SettleIn animate={index === 0 && Date.now() / 1000 - item.ts < FRESH_S}>
+        <Row
+          item={item}
+          tick={item.kind === 'user' ? tickOf(item, turns) : null}
+          status={item.kind === 'user' ? sendStatus(item, turns) : null}
+          flash={flash}
+          onPress={onPress}
+          onRetry={onRetry}
+          onReply={onReply}
+          onQuote={onQuote}
+        />
+      </SettleIn>
+    ),
     [onPress, onRetry, onReply, onQuote, flash, turns],
   );
   const loadOlder = useCallback(() => void model.loadOlder(), [model]);
@@ -157,6 +174,46 @@ export function LiveScreen({ model, voice, attach, menu, reply }: LiveScreenProp
 
 const COMPOSER_HEIGHT = 60; // until the composer has measured itself
 const FRESH_S = 4; // a message this new (by its timestamp) arrived just now
+
+const MAX_SCROLL_TRIES = 3; // jumping to a quoted message that isn't measured yet
+
+interface RowProps {
+  item: Item;
+  tick: Tick | null;
+  status: SendStatus | null;
+  flash: Store<number | null>;
+  onPress: (id: number, action: string) => Promise<unknown>;
+  onRetry: (key: string) => void;
+  onReply: (item: Item) => void;
+  onQuote: (itemId: number, quote: string) => void;
+}
+
+/**
+ * One transcript row: Arpit's and EDITH's messages can be swiped to reply. Its props are plain
+ * values and stable callbacks (the swipe's own is made here, per item), so the memo holds; the
+ * quote-jump mark is read from `flash` for this row's id only.
+ */
+const Row = memo(function Row({ item, tick, status, flash, onPress, onRetry, onReply, onQuote }: RowProps) {
+  const id = item.id;
+  const marked = useCallback((f: number | null) => f === id, [id]);
+  const highlight = useStore(flash, marked);
+  const swiped = useCallback(() => onReply(item), [onReply, item]);
+  if (item.kind === 'user') {
+    return (
+      <SwipeToReply onReply={swiped}>
+        <ItemView item={item} onPress={onPress} tick={tick} status={status} onRetry={onRetry} onReply={onReply} onQuote={onQuote} highlight={highlight} />
+      </SwipeToReply>
+    );
+  }
+  if (item.kind === 'assistant') {
+    return (
+      <SwipeToReply onReply={swiped}>
+        <ItemView item={item} onPress={onPress} onReply={onReply} highlight={highlight} />
+      </SwipeToReply>
+    );
+  }
+  return <ItemView item={item} onPress={onPress} />;
+});
 
 const selectLoadingOlder = (s: LiveState) => s.loadingOlder;
 

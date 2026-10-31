@@ -62,12 +62,15 @@ def reply_line(replying_to) -> str:
     """The prompt line for the message Arpit replies to (the app's swipe to reply), as Telegram's
     replies have it: "\n[Arpit is replying to EDITH's message: <quote>]", the quote on one line and
     at most QUOTE_MAX characters; "" without one. clean_prompt takes it out again as `replying_to`.
+    A "]" in the quote becomes "］", so the quote can never close the bracket early; lone surrogates
+    (malformed JSON text) become "?".
     `replying_to` is {text, from: "edith" | "arpit"} or None; anything else is a ValueError."""
     if replying_to is None:
         return ""
     if not isinstance(replying_to, dict) or not isinstance(replying_to.get("text"), str):
         raise ValueError("replying_to must be {text, from}")
-    quote = " ".join(replying_to["text"].split())
+    text = replying_to["text"].encode("utf-8", "replace").decode("utf-8")
+    quote = " ".join(text.replace("]", "］").split())
     if not quote:
         return ""
     if len(quote) > QUOTE_MAX:

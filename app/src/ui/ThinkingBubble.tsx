@@ -41,8 +41,7 @@ export const ThinkingBubble = memo(function ThinkingBubble({ active, size = 24 }
     return () => cancelAnimation(t);
   }, [moving, t]);
 
-  const fill = useAnimatedProps(() => ({ d: rimPath(C, C, R, t.value, AMP) }));
-  const rim = useAnimatedProps(() => ({ d: rimPath(C, C, R, t.value, AMP) }));
+  const outline = useAnimatedProps(() => ({ d: rimPath(C, C, R, t.value, AMP) })); // the body and the rim: one path per frame
   const band0 = useAnimatedProps(() => ({ d: bandPath(C, C, R, t.value, 0) }));
   const band1 = useAnimatedProps(() => ({ d: bandPath(C, C, R, t.value, 1) }));
   const band2 = useAnimatedProps(() => ({ d: bandPath(C, C, R, t.value, 2) }));
@@ -66,7 +65,7 @@ export const ThinkingBubble = memo(function ThinkingBubble({ active, size = 24 }
             <Path d={rimPath(C, C, R * 0.97, STILL, 0)} />
           </ClipPath>
         </Defs>
-        <AnimatedPath animatedProps={fill} fill="url(#tb-body)" />
+        <AnimatedPath animatedProps={outline} fill="url(#tb-body)" />
         <G clipPath="url(#tb-inside)">
           {BANDS.map((b, i) => (
             <AnimatedPath
@@ -80,7 +79,7 @@ export const ThinkingBubble = memo(function ThinkingBubble({ active, size = 24 }
             />
           ))}
         </G>
-        <AnimatedPath animatedProps={rim} fill="none" stroke="url(#tb-rim)" strokeWidth={6} />
+        <AnimatedPath animatedProps={outline} fill="none" stroke="url(#tb-rim)" strokeWidth={6} />
       </Svg>
     </View>
   );

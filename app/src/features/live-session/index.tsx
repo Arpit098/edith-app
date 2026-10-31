@@ -9,7 +9,7 @@ import { createStore } from '../../core/store';
 import { createAttachmentsModel, type AttachmentsModel } from './attachments';
 import { LiveScreen } from './LiveScreen';
 import { createLiveModel, type LiveModel } from './model';
-import type { Quote } from './reply';
+import { sendWithReply, type Quote } from './reply';
 import { StatusChip, StatusPopup } from './StatusPanel';
 import { createVoiceModel, type VoiceModel } from './voice';
 import { VoiceSettings } from './VoiceSettings';
@@ -50,7 +50,9 @@ const liveSession: FeatureModule = {
   panels: [{ slot: 'header', component: Chip, overlay: Popup }],
   setup: ({ bus, api, ports, connection: conn }) => {
     const m = createLiveModel(bus, api, ports.data, ports.visibility);
-    const v = createVoiceModel({ bus, send: (text, o) => m.send(text, o), storage: ports.storage, recorder: ports.recorder, stt: ports.stt });
+    // Speech sent by itself (auto-send) answers the quoted message too, as the Send button does.
+    const voiceSend = sendWithReply(reply, (text, o: { voice: boolean; replyTo?: Quote | null }) => m.send(text, o));
+    const v = createVoiceModel({ bus, send: voiceSend, storage: ports.storage, recorder: ports.recorder, stt: ports.stt });
     const a = createAttachmentsModel({ api, media: ports.media });
     ports.media?.prune(); // old picked files and thumbnails: bounded by age and size
     const offScreen = bus.on(

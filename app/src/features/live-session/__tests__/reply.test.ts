@@ -4,7 +4,8 @@
 import { ev, fakeContext, MemoryStorage } from '../../../testing/fakes';
 import { createLiveModel, fromHistory, initialLive, outboxOf, reduce, restoreOutbox, type Item, type LiveState } from '../model';
 import { caught, swipeOffset, SWIPE, wantsSwipe } from '../../../ui/swipe';
-import { findQuoted, QUOTE_MAX, quoteFrom, quoteOf, quoteText } from '../reply';
+import { createStore } from '../../../core/store';
+import { findQuoted, QUOTE_MAX, quoteFrom, quoteOf, quoteText, sendWithReply, type Quote } from '../reply';
 
 type User = Extract<Item, { kind: 'user' }>;
 const users = (s: LiveState) => s.items.filter((x): x is User => x.kind === 'user');
@@ -48,6 +49,38 @@ describe('quotes', () => {
     expect(findQuoted(s.items, 'not here', reply.id)).toBe(-1);
     expect(quoteFrom(s.items, 'Done.')).toBe('edith');
     expect(quoteFrom(s.items, 'not here')).toBeNull();
+  });
+});
+
+describe('quotes from elsewhere', () => {
+  it('cut between characters, never inside an emoji', () => {
+    const q = quoteText('😀'.repeat(400));
+    expect(Array.from(q)).toHaveLength(QUOTE_MAX);
+    expect(q).toBe(`${'😀'.repeat(QUOTE_MAX - 1)}…`);
+  });
+
+  it("a Telegram reply's quote (newlines, up to 1500 characters) finds its original, and so does the server's ］", () => {
+    const long = Array.from({ length: 80 }, (_, i) => `line ${i} of the report`).join('\n');
+    const s = run([
+      ev('message.assistant', { text: long }),
+      ev('message.assistant', { text: 'see [1]\nthen [2]' }),
+      ev('message.user', { text: 'why?', replying_to: long.slice(0, 1500) }, { origin: 'telegram' }),
+      ev('message.user', { text: 'and?', replying_to: 'see [1］ then [2］' }, { origin: 'app' }),
+    ]);
+    const [bracket, telegram] = users(s);
+    expect(telegram!.replyTo).toEqual({ text: quoteText(long), from: 'edith' }); // shown as one line of 300
+    expect(findQuoted(s.items, telegram!.replyTo!.text, telegram!.id)).toBe(3);
+    expect(findQuoted(s.items, long.slice(0, 1500), telegram!.id)).toBe(3); // the raw quote too
+    expect(bracket!.replyTo).toEqual({ text: 'see [1] then [2]', from: 'edith' });
+    expect(findQuoted(s.items, bracket!.replyTo!.text, bracket!.id)).toBe(2);
+  });
+
+  it('matches when either side is the cut one', () => {
+    const s = run([ev('message.assistant', { text: 'Done' })]);
+    expect(findQuoted(s.items, 'Nope')).toBe(-1);
+    expect(findQuoted(s.items, 'Do…')).toBe(0); // the quote cut short
+    const t = run([ev('message.assistant', { text: 'Done, and the tests pass' })]);
+    expect(findQuoted(t.items, 'Done, and the tests pass on CI')).toBe(0); // the original is the shorter one
   });
 });
 
@@ -98,6 +131,17 @@ describe('replying', () => {
       reset: false,
     };
     expect(users(fromHistory(m.store.get(), page))[0]!.replyTo).toEqual(quote);
+  });
+
+  it("voice's auto-send answers the quoted message and clears it", async () => {
+    const reply = createStore<Quote | null>({ text: 'Disk is 40% full.', from: 'edith' });
+    const send = jest.fn().mockResolvedValue(undefined);
+    const voiceSend = sendWithReply(reply, send);
+    await voiceSend('and now?', { voice: true });
+    expect(send).toHaveBeenCalledWith('and now?', { voice: true, replyTo: { text: 'Disk is 40% full.', from: 'edith' } });
+    expect(reply.get()).toBeNull();
+    await voiceSend('next', { voice: true });
+    expect(send).toHaveBeenLastCalledWith('next', { voice: true, replyTo: null });
   });
 
   it('a message without a quote sends no replying_to', async () => {

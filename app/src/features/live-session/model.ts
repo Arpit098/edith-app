@@ -7,7 +7,7 @@ import { bool, buttonRows, num, str } from '../../core/guards';
 import type { AppVisibility, KeyValueStore } from '../../core/ports';
 import { createStore, type Store } from '../../core/store';
 import { ID_LIFETIME_S, type SentAttachment } from './attachments';
-import { quoteFrom, type Quote } from './reply';
+import { quoteFrom, quoteText, type Quote } from './reply';
 
 export const MAX_ITEMS = 400; // the transcript keeps the newest ones; older ones drop off
 export const PAGE = 100; // history events per request
@@ -451,7 +451,8 @@ function apply(s: LiveState, e: EdithEvent): LiveState {
 
 /** message.user.replying_to (the quoted text, or null) → the quote a bubble shows; who wrote it from the messages loaded. */
 function replyOf(s: LiveState, v: unknown): Quote | null {
-  const text = typeof v === 'string' ? v.trim() : '';
+  // Normalised as ours are: a Telegram reply's quote keeps its newlines and runs to 1500 characters.
+  const text = typeof v === 'string' ? quoteText(v.replace(/］/g, ']')) : '';
   return text ? { text, from: quoteFrom(s.items, text) } : null;
 }
 

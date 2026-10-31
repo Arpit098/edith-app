@@ -20,12 +20,27 @@ class TextTest(unittest.TestCase):
         self.assertEqual(voice_summary("Disk is 40% full.\n\nDetails:\n- /dev/sda1"), "Disk is 40% full.")
 
     def test_reply_line_round_trips_through_clean_prompt(self):
-        line = reply_line({"text": "Disk is\n  40% full [ok]", "from": "edith"})
-        self.assertEqual(line, "\n[Arpit is replying to EDITH's message: Disk is 40% full [ok]]")
+        line = reply_line({"text": "Disk is\n  40% full", "from": "edith"})
+        self.assertEqual(line, "\n[Arpit is replying to EDITH's message: Disk is 40% full]")
         parsed = clean_prompt("[App message from Arpit, 2026-11-02 10:43 IST]\nand now?" + line)
-        self.assertEqual((parsed["text"], parsed["replying_to"]), ("and now?", "Disk is 40% full [ok]"))
+        self.assertEqual((parsed["text"], parsed["replying_to"]), ("and now?", "Disk is 40% full"))
         self.assertIn("an earlier message", reply_line({"text": "mine", "from": "arpit"}))
         self.assertIn("an earlier message", reply_line({"text": "no from"}))
+
+    def test_reply_line_brackets_in_the_quote_never_close_it(self):
+        # A quote's own "]" (here at a line end, the case clean_prompt's pattern stops at) would end
+        # the line early and leave the rest in the message text.
+        line = reply_line({"text": "see [1]\nthen [2]", "from": "edith"})
+        self.assertEqual(line, "\n[Arpit is replying to EDITH's message: see [1］ then [2］]")
+        self.assertEqual(line.count("]"), 1)  # only the closing bracket
+        parsed = clean_prompt("ok" + line + "\n[Attached file saved at: /inbox/a.jpg]")
+        self.assertEqual((parsed["text"], parsed["replying_to"], parsed["attachments"]), ("ok", "see [1］ then [2］", ["/inbox/a.jpg"]))
+
+    def test_reply_line_survives_bad_unicode(self):
+        quote = clean_prompt("hi" + reply_line({"text": "ok \ud83d then"}))["replying_to"]
+        self.assertEqual(quote, "ok ? then")  # a lone surrogate (bad JSON text): no crash, no broken prompt
+        emoji = clean_prompt("hi" + reply_line({"text": "😀" * 400}))["replying_to"]
+        self.assertEqual(emoji, "😀" * (QUOTE_MAX - 1) + "…")  # cut between characters, never inside one
 
     def test_reply_line_is_short_and_optional(self):
         long = reply_line({"text": "x " * 1000, "from": "edith"})
