@@ -9,6 +9,7 @@ import commands from './commands';
 import liveSession from './live-session';
 import liveStatus from './live-status';
 import notifications from './notifications';
+import push from './push';
 import sessions from './sessions';
 import wakeword from './wakeword';
 
@@ -21,6 +22,7 @@ export const features: FeatureModule[] = [
   claudeAccounts,
   liveStatus,
   notifications,
+  push, // Phase 5: pushes with the app closed (ntfy)
   // Phase 3: voice, assistant, widget
   wakeword, // Phase 4: training and settings now; the detector later
 ];

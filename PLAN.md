@@ -127,7 +127,7 @@ All of them run in the same `edith-bridge` service, and the existing behaviour m
     - Allow/Deny cards shown inline.
   - **Sessions**: list, switch, rename, new.
   - **Tools**: a launcher grid with one tile per tool (`FeatureModule.tool` in `app/src/core/feature.ts`).
-    Only a few screens get a bottom tab (the tab bar fits about 5); every other tool lives here.
+    Only a few main screens are in the navigation menu (top right of the header); every other tool lives here.
   - **Settings**: server address and token, **"Hey Edith" toggle (off by default)** and sensitivity, voice (TTS) on/off, auto-send after speech.
 - **Home-screen widget**: one tap opens EDITH already listening.
 - **Voice out:** Android TextToSpeech (`expo-speech`). It speaks EDITH's short voice summary (see 4.7).
@@ -260,7 +260,7 @@ show in the phone's "dynamic island".
   - Without blur (older Android, or battery saver) it falls back to flat translucent grey.
   - Tokens live in one theme module (`app/src/core/theme/`: colours, glass levels, radii, motion).
     Screens use the tokens and no raw colours, so each feature keeps its own look in step.
-  - Blur only on a few large surfaces (header, tab bar, cards, sheets), never in lists, to keep
+  - Blur only on a few large surfaces (header, cards, sheets), never in lists, to keep
     scrolling at 60 fps and spare the battery.
 - **Real Liquid Glass (asked for 2026-10-30):** a native `GlassView` in our module
   `android-modules/edith-glass`, by Android version:
@@ -270,7 +270,7 @@ show in the phone's "dynamic island".
     blur plus a little extra saturation inside.
   - **Android 12:** blur and saturation only (`createBlurEffect` chained with a colour matrix).
   - **Below 12, or in battery saver:** the flat translucent fallback.
-  - Where it goes: chrome surfaces only (tab bar, header, composer, sheets, the floating mic),
+  - Where it goes: chrome surfaces only (header, the navigation menu, composer, sheets, the floating mic),
     never list rows or bubbles.
   - How it works: the backdrop is the screen content's display list, recorded into a `RenderNode`
     (no bitmap copies). The glass redraws only when the content draws (a pre-draw listener), never
@@ -279,7 +279,8 @@ show in the phone's "dynamic island".
   - Any open-source shader code we use is credited in the module's README with its MIT or Apache
     licence. The shader we use now is our own.
 - **Liquid motion (Reanimated, all on the UI thread):**
-  - the tab bar's selection is a glass droplet that stretches and settles as it moves;
+  - navigation is a hamburger at the top right of the header (asked for 2026-10-30, replacing the
+    bottom tab bar); its glass drop-down sheet grows out of the button and shrinks back on springs;
   - sheets grow out of the control that opened them;
   - controls squish slightly when pressed;
   - new bubbles settle in on a spring;

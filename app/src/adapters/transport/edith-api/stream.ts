@@ -50,7 +50,7 @@ const OPEN = 1;
 const PING = JSON.stringify({ type: 'ping' });
 
 export function streamUrl(baseUrl: string): string {
-  return baseUrl.replace(/^http/i, 'ws') + '/v1/stream';
+  return baseUrl.replace(/^http/i, 'ws') + '/v1/stream?client=app'; // the server counts app clients apart (contracts/push.md)
 }
 
 /** One wire message -> an event, 'pong' for the server's answer to our ping, or null if malformed. */

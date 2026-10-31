@@ -143,6 +143,7 @@ class Ports:
     mail: Any = None       # ports.mail.MailBox
     calendar: Any = None   # ports.calendar.Calendar
     notifiers: list = field(default_factory=list)  # [ports.notifier.Notifier]
+    presence: Any = None   # ports.presence.Presence: the App API, set once frontends are built
 
 
 class Registry:

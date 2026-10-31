@@ -37,7 +37,7 @@ function boot() {
   const bus = new EventBus();
   const api = createApi(transport);
   const connection = new Connection(transport, storage, bus);
-  const loaded = loadFeatures(features, { bus, ports: { transport, storage, data, installer, ota, recorder, stt, media: createExpoMediaPicker(), status: system?.status, notifier: system?.notifier, visibility }, api, connection });
+  const loaded = loadFeatures(features, { bus, ports: { transport, storage, data, installer, ota, recorder, stt, media: createExpoMediaPicker(), status: system?.status, notifier: system?.notifier, push: system?.push, visibility }, api, connection });
   return { connection, loaded, glass: createAndroidGlass() };
 }
 

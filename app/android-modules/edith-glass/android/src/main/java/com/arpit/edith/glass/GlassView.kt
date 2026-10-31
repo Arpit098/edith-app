@@ -11,6 +11,7 @@ import android.graphics.RenderNode
 import android.graphics.RuntimeShader
 import android.graphics.Shader
 import android.os.Build
+import android.os.SystemClock
 import android.util.Log
 import android.view.View
 import android.view.ViewTreeObserver
@@ -49,7 +50,14 @@ class GlassView(context: Context, appContext: AppContext) : ExpoView(context, ap
     set(v) { field = v; changed() }
   var bezelDp = 16f
     set(v) { field = v; changed() }
-  var dispersion = 0f
+  var dispersionDp = 0f // red/blue split at the rim
+    set(v) { field = v; changed() }
+  var lift = 0f // added to every channel: the frost's glow
+    set(v) { field = v; changed() }
+  var rimWidthDp = 1f // the specular line's width at the edge
+    set(v) { field = v; changed() }
+  /** Straight RGBA, each 0..1: the opaque colour under the backdrop (the app's background). */
+  var base = floatArrayOf(0f, 0f, 0f, 1f)
     set(v) { field = v; changed() }
   var saturation = 1f
     set(v) { field = v; changed() }
@@ -64,19 +72,48 @@ class GlassView(context: Context, appContext: AppContext) : ExpoView(context, ap
 
   private var node: RenderNode? = null
   private var effect: RenderEffect? = null
-  private var effectKey: List<Any>? = null
+  // What `effect` was built for; a new one only when these or a prop (paramsDirty) change.
+  private var paramsDirty = true
+  private var effectShader = false
+  private var effectW = 0
+  private var effectH = 0
+  private var effectMargin = 0
+  private var effectBlur = 0f
+  private var lensShader: RuntimeShader? = null // one per view: the AGSL compiles once, uniforms are set again
   private val clip = Path()
   private val tintPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+  private val basePaint = Paint(Paint.ANTI_ALIAS_FLAG)
   private val here = IntArray(2)
   private val there = IntArray(2)
   private var lastX = Int.MIN_VALUE
   private var lastY = Int.MIN_VALUE
 
+  // Redraws for a changed backdrop are capped at MIN_REDRAW_MS (about 30 a second): a running
+  // task's spinner and blob would otherwise re-record and re-blur every glass surface at 120 Hz.
+  // The last change is never lost: one redraw is queued for when the interval is up. Glass that
+  // moves itself (a sheet, the header growing) redraws at once.
+  private var lastDrawMs = 0L
+  private var redrawQueued = false
+  private val redraw = Runnable {
+    redrawQueued = false
+    invalidate()
+  }
+
   private val preDraw = ViewTreeObserver.OnPreDrawListener {
     val b = backdrop()
     if (b != null) {
       getLocationInWindow(here)
-      if (b.isDirty || here[0] != lastX || here[1] != lastY) invalidate()
+      if (here[0] != lastX || here[1] != lastY) {
+        invalidate()
+      } else if (b.isDirty) {
+        val wait = MIN_REDRAW_MS - (SystemClock.uptimeMillis() - lastDrawMs)
+        if (wait <= 0) {
+          invalidate()
+        } else if (!redrawQueued) {
+          redrawQueued = true
+          postDelayed(redraw, wait)
+        }
+      }
     }
     true
   }
@@ -93,7 +130,7 @@ class GlassView(context: Context, appContext: AppContext) : ExpoView(context, ap
   }
 
   private fun changed() {
-    effectKey = null
+    paramsDirty = true
     invalidate()
   }
 
@@ -118,7 +155,14 @@ class GlassView(context: Context, appContext: AppContext) : ExpoView(context, ap
 
   override fun onDetachedFromWindow() {
     viewTreeObserver.removeOnPreDrawListener(preDraw)
+    removeCallbacks(redraw)
+    redrawQueued = false
     node?.discardDisplayList()
+    // The compiled lens goes back to the pool for the next glass view (a menu opened again).
+    lensShader?.let { releaseShader(it) }
+    lensShader = null
+    effect = null
+    paramsDirty = true
     super.onDetachedFromWindow()
   }
 
@@ -169,6 +213,7 @@ class GlassView(context: Context, appContext: AppContext) : ExpoView(context, ap
     b.getLocationInWindow(there)
     lastX = here[0]
     lastY = here[1]
+    lastDrawMs = SystemClock.uptimeMillis()
 
     val n = node ?: RenderNode("EdithGlass").also { node = it }
     n.setPosition(0, 0, w, h)
@@ -191,7 +236,13 @@ class GlassView(context: Context, appContext: AppContext) : ExpoView(context, ap
     clip.rewind()
     clip.addRoundRect(0f, 0f, width.toFloat(), height.toFloat(), r, r, Path.Direction.CW)
     canvas.save()
-    if (!lensOn) canvas.clipPath(clip) // the lens shapes and antialiases its own edge
+    if (!lensOn) {
+      canvas.clipPath(clip) // the lens shapes and antialiases its own edge
+      // The backdrop can be transparent between things: lay it over the app's background so the
+      // glass is opaque and the real (sharp) content behind it never shows through.
+      basePaint.setARGB(255, (base[0] * 255).toInt(), (base[1] * 255).toInt(), (base[2] * 255).toInt())
+      canvas.drawPath(clip, basePaint)
+    }
     canvas.translate(-margin.toFloat(), -margin.toFloat())
     canvas.drawRenderNode(n)
     canvas.restore()
@@ -204,8 +255,10 @@ class GlassView(context: Context, appContext: AppContext) : ExpoView(context, ap
   /** The effect chain, rebuilt only when the size or a parameter changes (it's immutable). */
   @RequiresApi(Build.VERSION_CODES.S)
   private fun effectFor(shader: Boolean, w: Int, h: Int, margin: Int, blurPx: Float): RenderEffect {
-    val key = listOf(shader, w, h, margin, blurPx, cornerRadiusDp, refractionDp, bezelDp, dispersion, saturation, specular, tint.toList())
-    effect?.let { if (key == effectKey) return it }
+    val current = effect
+    if (current != null && !paramsDirty && shader == effectShader && w == effectW && h == effectH && margin == effectMargin && blurPx == effectBlur) {
+      return current
+    }
     val blur = RenderEffect.createBlurEffect(blurPx, blurPx, Shader.TileMode.CLAMP)
     val lensEffect = if (shader) {
       try {
@@ -225,22 +278,30 @@ class GlassView(context: Context, appContext: AppContext) : ExpoView(context, ap
       RenderEffect.createChainEffect(RenderEffect.createColorFilterEffect(ColorMatrixColorFilter(m)), blur)
     }
     effect = e
-    effectKey = key
+    paramsDirty = false
+    effectShader = shader
+    effectW = w
+    effectH = h
+    effectMargin = margin
+    effectBlur = blurPx
     return e
   }
 
   @RequiresApi(Build.VERSION_CODES.TIRAMISU)
   private fun lens(blur: RenderEffect, margin: Int): RenderEffect {
-    val s = RuntimeShader(GLASS_AGSL)
+    val s = lensShader ?: takeShader().also { lensShader = it }
     s.setFloatUniform("origin", margin.toFloat(), margin.toFloat())
     s.setFloatUniform("size", width.toFloat(), height.toFloat())
     s.setFloatUniform("radius", (cornerRadiusDp * density).coerceAtMost(minOf(width, height) / 2f))
     s.setFloatUniform("bezel", (bezelDp * density).coerceAtLeast(1f))
     s.setFloatUniform("refraction", refractionDp * density)
-    s.setFloatUniform("dispersion", dispersion)
+    s.setFloatUniform("dispersion", dispersionDp * density)
     s.setFloatUniform("saturation", saturation)
+    s.setFloatUniform("lift", lift)
     s.setFloatUniform("tint", tint[0], tint[1], tint[2], tint[3])
+    s.setFloatUniform("base", base[0], base[1], base[2], 1f)
     s.setFloatUniform("specular", specular)
+    s.setFloatUniform("rimWidth", (rimWidthDp * density).coerceAtLeast(1f))
     // Chain: the inner effect (blur) runs first, the lens reads its result as `content`.
     return RenderEffect.createChainEffect(RenderEffect.createRuntimeShaderEffect(s, "content"), blur)
   }
@@ -252,6 +313,30 @@ class GlassView(context: Context, appContext: AppContext) : ExpoView(context, ap
     /** The lens shader failed to compile once: no view tries again (UI thread only). */
     internal var shaderBroken = false
 
+    // Compiled lens shaders not in use: a view that detaches gives its shader back and a new view
+    // takes one, so mounting glass (the navigation menu's sheet, each time it opens) doesn't compile
+    // the AGSL again. Each shader belongs to one view at a time (its uniforms are that view's).
+    // The first compile also makes one spare, for the first glass mounted later. UI thread only.
+    private const val POOL_MAX = 4
+    private val pool = ArrayDeque<Any>() // RuntimeShader (typed Any: the class exists from Android 13)
+    private var spareMade = false
+
+    @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+    private fun takeShader(): RuntimeShader {
+      (pool.removeLastOrNull() as RuntimeShader?)?.let { return it }
+      val s = RuntimeShader(GLASS_AGSL) // throws IllegalArgumentException if the AGSL doesn't compile
+      if (!spareMade) {
+        spareMade = true
+        pool.addLast(RuntimeShader(GLASS_AGSL))
+      }
+      return s
+    }
+
+    private fun releaseShader(s: Any) {
+      if (pool.size < POOL_MAX) pool.addLast(s)
+    }
+
     private const val TAG = "EdithGlass"
+    private const val MIN_REDRAW_MS = 33L
   }
 }

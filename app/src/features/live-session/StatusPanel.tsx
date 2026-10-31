@@ -61,9 +61,9 @@ export const StatusPanel = memo(function StatusPanel({ model, backdrop }: { mode
             {bar.tone !== 'idle' ? <Elapsed since={since} /> : null}
             {bar.counts ? <Text style={styles.dim}>{` · ${bar.counts}`}</Text> : null}
           </Text>
-          {bar.title ? (
-            <Text style={styles.barTitle} numberOfLines={1}>
-              {bar.title}
+          {bar.detail ? (
+            <Text style={styles.barDetail} numberOfLines={1}>
+              {bar.detail}
             </Text>
           ) : null}
           <Icon name={open ? 'chevron-up' : 'chevron-down'} size={18} color={colors.textDim} />
@@ -100,7 +100,7 @@ function Card({ fetched, error, backdrop }: { fetched: Fetched; error: string | 
   const d = fetched?.details;
   if (!d) {
     return (
-      <Glass level="regular" backdrop={backdrop} radius={radius.l} style={styles.card}>
+      <Glass level="panel" backdrop={backdrop} radius={radius.l} style={styles.card}>
         <Text style={error ? styles.error : styles.dim}>{error ? `Couldn't load the details: ${error}` : 'Loading…'}</Text>
       </Glass>
     );
@@ -108,7 +108,7 @@ function Card({ fetched, error, backdrop }: { fetched: Fetched; error: string | 
   const ago = (t: number | null) => (t == null ? null : formatElapsed(d.ts - t));
   const e = d.edith;
   return (
-    <Glass level="regular" backdrop={backdrop} radius={radius.l} style={styles.card}>
+    <Glass level="panel" backdrop={backdrop} radius={radius.l} style={styles.card}>
       <ScrollView style={styles.scroll} nestedScrollEnabled>
         {error ? <Text style={styles.error}>{`Couldn't refresh: ${error}`}</Text> : null}
         <Section title="EDITH">
@@ -196,7 +196,7 @@ const styles = StyleSheet.create({
   bar: { flexDirection: 'row', alignItems: 'center', gap: space.s, paddingHorizontal: space.m, paddingVertical: space.s },
   dot: { width: 10, height: 10, borderRadius: 5, marginHorizontal: 5 },
   barText: { color: colors.text, fontSize: type.size.small, flex: 1 },
-  barTitle: { color: colors.textDim, fontSize: type.size.caption, maxWidth: '35%' },
+  barDetail: { color: colors.textDim, fontSize: type.size.caption, maxWidth: '40%' },
   dim: { color: colors.textDim },
   card: { marginTop: space.s, padding: space.m },
   scroll: { maxHeight: 420 },

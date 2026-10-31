@@ -8,7 +8,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { memo, useCallback, useState, type ReactNode } from 'react';
 import { findNodeHandle, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 
-import { glass, glassTint, radius as radii, useGlass, type GlassLevel } from '../core/theme';
+import { glass, glassBase, glassTint, radius as radii, useGlass, type GlassLevel } from '../core/theme';
 
 export interface GlassProps {
   level?: GlassLevel;
@@ -64,8 +64,11 @@ export const Glass = memo(function Glass({ level = 'regular', backdrop, radius =
           bezel={g.bezel}
           dispersion={g.dispersion}
           saturation={g.saturation}
+          lift={g.lift}
           specular={g.specular}
+          rimWidth={g.rimWidth}
           tint={glassTint[level]}
+          base={glassBase}
           style={StyleSheet.absoluteFill}
           pointerEvents="none"
         />

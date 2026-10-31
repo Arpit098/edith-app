@@ -1,7 +1,7 @@
 // Liquid motion: only new things animate, nothing does under "Remove animations", presses still work.
 
 import { act, create } from 'react-test-renderer';
-import { Text } from 'react-native';
+import { AppState, Text, type AppStateStatus } from 'react-native';
 import Animated from 'react-native-reanimated';
 
 import { GlassContext, type GlassSettings } from '../../core/theme';
@@ -20,6 +20,16 @@ function render(node: React.ReactElement, reduceMotion = false) {
 }
 
 describe('SettleIn', () => {
+  const appState = AppState as { currentState: string };
+  const was = appState.currentState;
+  beforeEach(() => {
+    appState.currentState = 'active'; // EDITH on screen
+  });
+  afterEach(() => {
+    appState.currentState = was;
+    jest.restoreAllMocks();
+  });
+
   it('wraps a new message in an animated view', () => {
     const r = render(
       <SettleIn animate>
@@ -43,6 +53,40 @@ describe('SettleIn', () => {
       expect(r.root.findAllByType(Animated.View)).toHaveLength(0);
       expect(r.root.findByType(Text).props.children).toBe('hi');
     }
+  });
+
+  // A reply that came in while EDITH was in the background (Arpit on a call) mounted at opacity 0 and
+  // its spring never ran: the row was there, selectable, but invisible.
+  describe('in the background', () => {
+    it("doesn't animate a message that arrives while the app is in the background", () => {
+      appState.currentState = 'background';
+      const r = render(
+        <SettleIn animate>
+          <Text>reply</Text>
+        </SettleIn>,
+      );
+      expect(r.root.findAllByType(Animated.View)).toHaveLength(0);
+      expect(r.root.findByType(Text).props.children).toBe('reply');
+    });
+
+    it('shows a message still settling as it is once the app leaves or comes back', () => {
+      const listeners: ((s: AppStateStatus) => void)[] = [];
+      const remove = jest.fn();
+      jest.spyOn(AppState, 'addEventListener').mockImplementation((_type, fn) => {
+        listeners.push(fn);
+        return { remove } as unknown as ReturnType<typeof AppState.addEventListener>;
+      });
+      const r = render(
+        <SettleIn animate>
+          <Text>reply</Text>
+        </SettleIn>,
+      );
+      expect(r.root.findAllByType(Animated.View)).toHaveLength(1);
+      act(() => listeners.forEach((fn) => fn('background')));
+      expect(r.root.findAllByType(Animated.View)).toHaveLength(0);
+      expect(r.root.findByType(Text).props.children).toBe('reply');
+      expect(remove).toHaveBeenCalledTimes(1); // no listener left behind
+    });
   });
 });
 
