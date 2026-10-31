@@ -54,6 +54,8 @@ MAX_REFS = 500          # run id -> ref of delivered messages, so the live view 
 MID_TURN = "The user sent a new message while you were working"
 COMPACT_ERROR = re.compile(r"Error (?:during compaction|compacting conversation)[^\n]*")
 PANE_CHECK = 5.0        # seconds; /compact errors appear only on screen, which can't be watched
+MAX_TYPED = 16          # slash commands typed for frontends, remembered to skip their transcript echo
+ECHO_WINDOW = 30.0      # seconds: a matching bare "/…" transcript entry later than this was typed in tmux
 MAX_HISTORY = 500       # events per history page
 SESSION_ID = re.compile(r"[A-Za-z0-9-]{1,64}")
 STOPPED_CODES = (-signal.SIGTERM, -signal.SIGKILL, 143, 137)
@@ -130,6 +132,9 @@ class ClaudeTmux:
         self._perm_watch = None
         self._session_cache = (None, {})
         self._refs: collections.OrderedDict[str, str] = collections.OrderedDict()
+        # Slash commands the bridge typed for a frontend (/compact, /clear) and when: Claude writes each
+        # to the transcript as a bare "/…" entry, which the live view skips instead of showing as Terminal.
+        self._typed: collections.deque[tuple[str, float]] = collections.deque(maxlen=MAX_TYPED)
 
     # Read on first use, so building the adapter (e.g. `make check`) touches no file.
     @functools.cached_property
@@ -167,7 +172,7 @@ class ClaudeTmux:
         workers = [("main", self._main_worker)] + [(f"side{i}", self._side_worker) for i in range(self.max_side)]
         workers += [("perms", self._perm_watcher)]
         if self.live_view:
-            self._live = LiveView(self.paths, self._tmux_session, self._publish_live, self._origin_of, self._known)
+            self._live = LiveView(self.paths, self._tmux_session, self._publish_live, self._origin_of, self._known, self._typed_echo)
             workers.append(("live", lambda: self._live.run(self._stopping)))
         for name, target in workers:
             t = threading.Thread(target=target, name=f"claude_tmux:{name}", daemon=True)
@@ -234,6 +239,37 @@ class ClaudeTmux:
         """Whether a [tg-ref <rid>] belongs to a message a frontend handed over (its message.user is sent)."""
         with self._lock:
             return rid in self._refs or any(r.rid == rid for r in self._runs.values())
+
+    def _type_command(self, command):
+        """Type a slash command into the tmux Claude for a frontend, remembering it (see _typed_echo)."""
+        with self._lock:
+            self._typed.append([" ".join(command.split()), time.monotonic()])
+        self.tmux.command(command)
+
+    def _rearm(self, command):
+        """Restart a typed command's ECHO_WINDOW from now: /compact's transcript entry is written only
+        once compaction is over, which can take minutes. A no-op once its echo was matched."""
+        text, now = " ".join(command.split()), time.monotonic()
+        with self._lock:
+            for entry in self._typed:
+                if entry[0] == text:
+                    entry[1] = now
+                    return
+
+    def _typed_echo(self, text):
+        """Whether a bare "/…" transcript entry is the echo of a command typed by _type_command (or
+        rearmed) in the last ECHO_WINDOW seconds. Each typed command matches once; the same command
+        typed in tmux by hand (no match, or later) still shows, as Terminal."""
+        text, now = " ".join(text.split()), time.monotonic()
+        with self._lock:
+            fresh = [e for e in self._typed if now - e[1] <= ECHO_WINDOW]
+            if len(fresh) != len(self._typed):
+                self._typed = collections.deque(fresh, maxlen=MAX_TYPED)
+            for i, (typed, _) in enumerate(self._typed):
+                if typed == text:
+                    del self._typed[i]
+                    return True
+        return False
 
     # ---- dispatch ----
 
@@ -662,19 +698,22 @@ class ClaudeTmux:
             command = " ".join(f"/compact {instructions}".split())  # one line: a newline would submit early
             with Watch(self.paths.state_dir, self.paths.transcripts) as watch:
                 self.tmux.clear_input()
-                self.tmux.command(command)
-                deadline = time.monotonic() + self.compact_timeout
-                while True:
-                    session = self._tmux_session()
-                    if session.get("source") == "compact" and session.get("ts", 0) >= started:
-                        return "ok", ""
-                    error = COMPACT_ERROR.search(self.tmux.pane())
-                    if error:
-                        return "failed", error.group(0).strip()
-                    left = deadline - time.monotonic()
-                    if left <= 0:
-                        return "failed", f"no answer from Claude in {int(self.compact_timeout)} s"
-                    watch.wait(min(left, PANE_CHECK))
+                self._type_command(command)
+                try:
+                    deadline = time.monotonic() + self.compact_timeout
+                    while True:
+                        session = self._tmux_session()
+                        if session.get("source") == "compact" and session.get("ts", 0) >= started:
+                            return "ok", ""
+                        error = COMPACT_ERROR.search(self.tmux.pane())
+                        if error:
+                            return "failed", error.group(0).strip()
+                        left = deadline - time.monotonic()
+                        if left <= 0:
+                            return "failed", f"no answer from Claude in {int(self.compact_timeout)} s"
+                        watch.wait(min(left, PANE_CHECK))
+                finally:
+                    self._rearm(command)  # its transcript entry comes after compaction, minutes after typing
         finally:
             with self._lock:
                 if self._main.empty():
@@ -690,7 +729,7 @@ class ClaudeTmux:
         if self.main_busy.is_set() or self.held():
             return "busy"
         if self.tmux.wait_ready(10):
-            self.tmux.command("/clear")
+            self._type_command("/clear")
 
         def cleared(state):
             state.get("sessions", {}).pop(self.key, None)

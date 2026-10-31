@@ -14,6 +14,7 @@ import unittest
 from unittest import mock
 
 from edith.adapters.agents.claude_tmux.backend import NOTES_HEADER, ClaudeTmux
+from edith.adapters.agents.claude_tmux.live import events_of
 from edith.adapters.agents.claude_tmux.tmux import Tmux
 from edith.core import EventBus
 from tests.fakes import FAKE_CLAUDE, FakeTmux
@@ -362,6 +363,73 @@ class LiveViewTest(unittest.TestCase):
         ends = [sum(map(len, lines[:i + 1])) for i in range(len(lines))]
         self.assertEqual(cursors, [f"s1:{ends[i]}" for i in (0, 3, 4, 4, 4, 5)])
         self.assertEqual([e["data"]["cursor"] for e in h.agent.history(limit=50)["events"]], cursors)
+
+    def test_a_command_typed_for_a_frontend_is_not_echoed_as_terminal(self):
+        h = Harness(self)
+        self.assertTrue(h.agent._live.ready.wait(5))
+        h.agent._type_command("/compact keep  the plan")  # as compact() does for the app's /compact
+        self.assertEqual(h.fake.typed[-1], "/compact keep  the plan")
+        h.transcript_line({"type": "user", "message": {"content": "<command-name>/compact</command-name>"}})
+        h.transcript_line({"type": "user", "message": {"content": "/compact keep the plan"}})  # Claude's bare copy
+        h.transcript_line({"type": "user", "message": {"content": "/compact keep the plan"}})  # then typed in tmux by hand
+        h.transcript_line({"type": "user", "message": {"content": "after"}})
+        with h.cond:
+            h.cond.wait_for(lambda: any(e.data.get("text") == "after" for e in h.events), 5)
+        users = [(e.origin, e.data["text"]) for e in h.events if e.type == "message.user"]
+        self.assertEqual(users, [("terminal", "/compact keep the plan"), ("terminal", "after")])  # each typed command matches once
+
+    def test_compacts_echo_is_skipped_even_when_it_comes_minutes_after_typing(self):
+        h = Harness(self)
+        self.assertTrue(h.agent._live.ready.wait(5))
+        clock, result = [1000.0], []
+        with mock.patch("edith.adapters.agents.claude_tmux.backend.time.monotonic", lambda: clock[0]):
+            t = threading.Thread(target=lambda: result.append(h.agent.compact("keep the plan")))
+            t.start()
+            deadline = time.monotonic() + 5  # (the real clock) until compact() has typed it
+            while not any(k.startswith("/compact") for k in h.fake.typed) and time.monotonic() < deadline:
+                time.sleep(0.01)
+            clock[0] += 120  # compaction takes two minutes
+            h.set_session("s1", ts=time.time() + 1, source="compact")  # the SessionStart hook: done
+            t.join(5)
+            self.assertEqual(result, [("ok", "")])
+            clock[0] += 5  # Claude writes its bare "/compact …" entry after compacting
+            h.transcript_line({"type": "user", "message": {"content": "/compact keep the plan"}})
+            h.transcript_line({"type": "user", "message": {"content": "after"}})
+            with h.cond:
+                h.cond.wait_for(lambda: any(e.data.get("text") == "after" for e in h.events), 5)
+        users = [e.data["text"] for e in h.events if e.type == "message.user"]
+        self.assertEqual(users, ["after"])  # not a "Terminal" /compact
+
+    def test_a_typed_command_is_remembered_for_30_seconds_only(self):
+        h = Harness(self)
+        clock = [1000.0]
+        with mock.patch("edith.adapters.agents.claude_tmux.backend.time.monotonic", lambda: clock[0]):
+            h.agent._type_command("/clear")
+            clock[0] += 29
+            self.assertTrue(h.agent._typed_echo("/clear"))
+            self.assertFalse(h.agent._typed_echo("/clear"))  # used up
+            h.agent._type_command("/clear")
+            clock[0] += 31
+            self.assertFalse(h.agent._typed_echo("/clear"))  # too late: typed in tmux
+            self.assertFalse(h.agent._typed_echo("/compact"))
+            for i in range(40):  # bounded, whatever is typed
+                h.agent._type_command(f"/x{i}")
+            self.assertEqual(len(h.agent._typed), 16)
+
+    def test_only_a_bare_slash_entry_is_checked_against_typed_commands(self):
+        asked = []
+
+        def echo(text):
+            asked.append(text)
+            return True
+
+        def entry(text):
+            return {"type": "user", "message": {"content": text}}
+        self.assertEqual(events_of(entry("/compact\n"), {}, typed_echo=echo), [])
+        self.assertEqual(asked, ["/compact"])
+        for text in ("hello", "[App message from Arpit, x]\n/compact\n[tg-ref ab12]", "/compact\n[tg-ref cd34]"):
+            self.assertEqual(events_of(entry(text), {}, typed_echo=echo)[0][0], "message.user")
+        self.assertEqual(asked, ["/compact"])  # never asked about a message with a header or a ref
 
     def test_follows_a_new_transcript_without_replaying_a_resumed_one(self):
         h = Harness(self)
