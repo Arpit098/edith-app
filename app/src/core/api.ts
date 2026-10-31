@@ -271,9 +271,18 @@ type Obj = Record<string, unknown>;
 export function createApi(t: Transport) {
   return {
     /** Send text to the main lane (or a side lane when busy). The turn's events arrive with `ref`. */
-    async send(text: string, opts: { voice?: boolean; queue?: boolean; attachments?: string[] } = {}): Promise<{ ref: string; lane: string }> {
-      const { attachments, ...rest } = opts;
-      const r = await t.request<Obj>('POST', '/v1/messages', { text, ...rest, ...(attachments?.length ? { attachments } : {}) });
+    async send(
+      text: string,
+      opts: { voice?: boolean; queue?: boolean; attachments?: string[]; replyingTo?: { text: string; from: 'edith' | 'arpit' | null } } = {},
+    ): Promise<{ ref: string; lane: string }> {
+      const { attachments, replyingTo, ...rest } = opts;
+      const r = await t.request<Obj>('POST', '/v1/messages', {
+        text,
+        ...rest,
+        ...(attachments?.length ? { attachments } : {}),
+        // The message Arpit swiped to reply to: the server quotes it in Claude's prompt (contracts/events.md).
+        ...(replyingTo ? { replying_to: { text: replyingTo.text, ...(replyingTo.from ? { from: replyingTo.from } : {}) } } : {}),
+      });
       return { ref: str(r.ref), lane: str(r.lane) };
     },
 

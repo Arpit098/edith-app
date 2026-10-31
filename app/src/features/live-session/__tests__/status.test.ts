@@ -2,7 +2,7 @@ import { statusDetailsFrom, type StatusDetails } from '../../../core/api';
 import { ev, fakeContext } from '../../../testing/fakes';
 import { initialLive, reduce, type LiveState } from '../model';
 import { DETAILS } from './details';
-import { barSummary, detailsLabel, formatElapsed, formatTokens, formatUptime, pollDetails, sinceFrom, toolName } from '../status';
+import { barSummary, detailsLabel, formatElapsed, formatTokens, formatUptime, mainRun, pollDetails, toolName, turnSince } from '../status';
 
 
 const run = (events: Parameters<typeof reduce>[1][], from: LiveState = initialLive) => events.reduce(reduce, from);
@@ -86,15 +86,16 @@ describe('statusDetailsFrom', () => {
   });
 });
 
-describe('sinceFrom', () => {
-  const d = statusDetailsFrom(DETAILS) as StatusDetails;
-  it("uses the server's since for the same state, on the phone's clock", () => {
-    // The server says the tool started 42 s before it answered; the answer arrived at phone time 5000.
-    expect(sinceFrom('tool', 4990, d, 5000)).toBe(4958);
+describe("mainRun and turnSince (the header chip's timer)", () => {
+  it('takes the main run and its elapsed seconds', () => {
+    expect(mainRun(initialLive)).toEqual({ ref: null, elapsed: null });
+    const s = run([ev('turn.started', { ref: 's1', lane: 'side' }), ev('turn.progress', { ref: 'r1', lane: 'main', steps: 2, step: '$ ls', elapsed: 42 })]);
+    expect(mainRun(s)).toEqual({ ref: 'r1', elapsed: 42 });
   });
-  it('uses the local change time otherwise', () => {
-    expect(sinceFrom('thinking', 4990, d, 5000)).toBe(4990);
-    expect(sinceFrom('tool', 4990, null, 0)).toBe(4990);
+  it("counts back from the server's elapsed, else from when work began here", () => {
+    expect(turnSince(42, 5000, 4990)).toBe(4958); // opened mid-turn: the whole turn so far, not since the app saw it
+    expect(turnSince(0, 5000, 4990)).toBe(4990); // turn.started carries no elapsed
+    expect(turnSince(null, 5000, 4990)).toBe(4990);
   });
 });
 

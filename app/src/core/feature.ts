@@ -34,12 +34,24 @@ export interface Tool {
   screen: string; // the Screen.name it opens; must be one of this feature's screens
 }
 
-/** Where a panel shows. "banner": above every screen (e.g. pending approvals). */
-export type PanelSlot = 'banner';
+/**
+ * Where a panel shows. "banner": above every screen (e.g. pending approvals). "header": the
+ * header's left side (the live session's status chip); the first one loaded is shown, and the
+ * shell's connection dot only when there's none.
+ */
+export type PanelSlot = 'banner' | 'header';
+
+/** What the shell hands a panel: where its popup goes (just under the header) and what its glass bends. */
+export interface PanelProps {
+  top: number;
+  backdrop: number | null;
+}
 
 export interface Panel {
   slot: PanelSlot;
-  component: ComponentType;
+  component: ComponentType<PanelProps>;
+  /** Drawn over the screen (under the navigation menu): the panel's popup, e.g. the status card. */
+  overlay?: ComponentType<PanelProps>;
 }
 
 export interface FeatureModule {

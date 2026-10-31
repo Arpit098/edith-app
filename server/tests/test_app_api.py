@@ -311,6 +311,19 @@ class RoutesTest(unittest.TestCase):
         self.assertEqual(self.a.agent.sent[-1], ("[App message from Arpit, 2026-11-02 10:43 IST] [voice]\ncheck the disk",
                                                  "app", body["ref"], False))
         self.assertEqual(self.a.call("POST", "/v1/messages", {"text": "  "}), (400, {"error": "text is required"}))
+        self.assertEqual(self.a.call("POST", "/v1/messages", {"text": "hi", "replying_to": "x"})[0], 400)
+
+    def test_message_replying_to_quotes_it_in_the_prompt(self):
+        """Swipe to reply: the quote goes in the prompt as Telegram's replies do, so the server's
+        message.user (clean_prompt) carries it back as replying_to."""
+        with mock.patch("time.strftime", return_value="2026-11-02 10:43 IST"):
+            status, body = self.a.call("POST", "/v1/messages", {"text": "and now?", "replying_to": {"text": "Disk is\n40% full", "from": "edith"}})
+        self.assertEqual(status, 200)
+        self.assertEqual(self.a.agent.sent[-1][0], "[App message from Arpit, 2026-11-02 10:43 IST]\nand now?\n"
+                                                   "[Arpit is replying to EDITH's message: Disk is 40% full]")
+        with mock.patch("time.strftime", return_value="2026-11-02 10:43 IST"):
+            self.a.call("POST", "/v1/messages", {"text": "no quote", "replying_to": None})
+        self.assertEqual(self.a.agent.sent[-1][0], "[App message from Arpit, 2026-11-02 10:43 IST]\nno quote")
         self.assertEqual(self.a.call("POST", "/v1/messages", raw=b"{not json")[0], 400)
 
     def _typed(self, text):

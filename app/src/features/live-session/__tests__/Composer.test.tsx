@@ -13,6 +13,7 @@ import { CLOSE_LABEL, MENU_LABEL } from '../ComposerMenu';
 import { toast } from '../../../ui/toast';
 import { LiveScreen } from '../LiveScreen';
 import { initialLive, type LiveModel } from '../model';
+import type { Quote } from '../reply';
 import type { VoiceModel, VoiceState } from '../voice';
 
 jest.setTimeout(30_000); // the first run transforms all of React Native: slow on a cold cache
@@ -40,7 +41,8 @@ function fakes({ canTalk = true }: { canTalk?: boolean } = {}) {
   const attachStore = createStore<DraftsState>({ drafts: [], picking: false, error: null });
   const attach = { store: attachStore, add: jest.fn().mockResolvedValue(undefined), retry: jest.fn(), remove: jest.fn(), take: jest.fn(() => []), busy: () => false, dispose: jest.fn() };
   const menu = createStore(false);
-  return { model, voice, attach, voiceStore, menu };
+  const reply = createStore<Quote | null>(null);
+  return { model, voice, attach, voiceStore, menu, reply };
 }
 
 let backHandlers: (() => boolean)[] = [];
@@ -51,7 +53,7 @@ function render(f: ReturnType<typeof fakes>): ReactTestRenderer {
     r = create(
       // Remove animations on: the menu opens and closes at once (the springs are tested in ui/motion).
       <GlassContext.Provider value={{ mode: 'flat', View: null, reduceMotion: true }}>
-        <LiveScreen model={f.model as unknown as LiveModel} voice={f.voice as unknown as VoiceModel} attach={f.attach as unknown as AttachmentsModel} menu={f.menu} />
+        <LiveScreen model={f.model as unknown as LiveModel} voice={f.voice as unknown as VoiceModel} attach={f.attach as unknown as AttachmentsModel} menu={f.menu} reply={f.reply} />
       </GlassContext.Provider>,
     );
   });
@@ -121,7 +123,7 @@ describe('Composer', () => {
     act(() => input(r).props.onChangeText('run the tests'));
     expect(byLabel(r, 'Send')[0]!.props.accessibilityState).toMatchObject({ disabled: false });
     press(r, 'Send');
-    expect(f.model.send).toHaveBeenCalledWith('run the tests', { voice: false, attachments: [] });
+    expect(f.model.send).toHaveBeenCalledWith('run the tests', { voice: false, attachments: [], replyTo: null });
     expect(input(r).props.value).toBe('');
     press(r, 'Talk to EDITH');
     expect(f.voice.start).toHaveBeenCalled();
@@ -146,7 +148,7 @@ describe('Composer and the keyboard', () => {
     const screen = (bottom: number) => (
       <GlassContext.Provider value={{ mode: 'flat', View: null, reduceMotion: true }}>
         <ChromeContext.Provider value={{ top: 52, bottom }}>
-          <LiveScreen model={f.model as unknown as LiveModel} voice={f.voice as unknown as VoiceModel} attach={f.attach as unknown as AttachmentsModel} menu={f.menu} />
+          <LiveScreen model={f.model as unknown as LiveModel} voice={f.voice as unknown as VoiceModel} attach={f.attach as unknown as AttachmentsModel} menu={f.menu} reply={f.reply} />
         </ChromeContext.Provider>
       </GlassContext.Provider>
     );

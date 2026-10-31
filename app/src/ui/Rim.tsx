@@ -35,7 +35,7 @@ function stopsOf(r: RimStyle): Stops {
 }
 
 const STOPS: Record<Scheme, Stops> = { dark: stopsOf(rims.dark), light: stopsOf(rims.light) };
-const SHADE_WIDTH = 1.5;
+const SHADE_WIDTH = 1; // the inner shadow: as thin as the rim it sits under
 
 /** The rim's three strokes (outermost first), each centred on its rect: [inset, stroke width]. */
 export function rimInsets(r: RimStyle): { rim: [number, number]; glow: [number, number]; shade: [number, number] } {

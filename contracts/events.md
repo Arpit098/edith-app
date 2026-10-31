@@ -193,7 +193,7 @@ Base `http://<edith's Tailscale IP>:8787`, reachable over Tailscale only. Every 
 
 | Method | Path | Body | Answer |
 |---|---|---|---|
-| POST | `/v1/messages` | `{text, voice?: bool, queue?: bool, attachments?: [id]}` | `{ref, lane}`; the turn's events then arrive on the stream with this `ref`. A typed command answers `lane: "command"` and its replies come as `command.reply` (see "Typed commands"). `attachments`: ids from `POST /v1/attachments` (contracts/attachments.md) |
+| POST | `/v1/messages` | `{text, voice?: bool, queue?: bool, attachments?: [id], replying_to?: {text, from?: "edith" \| "arpit"}}` | `{ref, lane}`; the turn's events then arrive on the stream with this `ref`. A typed command answers `lane: "command"` and its replies come as `command.reply` (see "Typed commands"). `attachments`: ids from `POST /v1/attachments` (contracts/attachments.md). `replying_to`: the message Arpit swiped to reply to (see below); anything but an object with a string `text` (or `null`) is a 400 |
 | POST | `/v1/attachments` | the raw file (image or audio), `x-filename?` | `{id, name, type, size, sha256}` (contracts/attachments.md) |
 | GET | `/v1/stream` | WebSocket | every event above as one JSON text message `{type, ts, session_id, origin, data}`; the server pings every 25 s (protocol ping) when the line is quiet. The app connects as `/v1/stream?client=app` (the push decision counts only those, contracts/push.md). The app may send `{"type": "ping", "id"?: any}`; the answer is `{"type": "pong", "ts", "session_id": null, "origin": "system", "data": {"id"?}}` (`id` echoed). Any frame from the app counts as alive; two quiet periods without one (a ping left unanswered for 25 s) and the server drops it. Other text from the app is ignored |
 | POST | `/v1/stop` | | `{running, dropped: [ref]}` |
@@ -223,6 +223,13 @@ length), e.g. a runaway decode; not retried) and 502 (whisper failed).
 
 App messages reach Claude as `[App message from Arpit, <time>]` (plus ` [voice]` for speech) and
 the text on the next line.
+
+**Replies (swipe to reply).** With `replying_to`, the prompt also gets the line Telegram's replies
+use, after the text: `[Arpit is replying to EDITH's message: <quote>]` (`from: "edith"`) or
+`[Arpit is replying to an earlier message: <quote>]` (otherwise). The quote is the text on one line
+(whitespace collapsed), at most 300 characters, cut with `…`. The server's `message.user` then
+carries that quote as `replying_to` (unchanged meaning: the quoted text, or `null`). The app finds
+the original by it: the newest loaded message older than the reply whose own quote starts the same.
 
 ## Voice
 

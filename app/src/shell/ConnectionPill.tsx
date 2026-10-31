@@ -1,37 +1,14 @@
+// The connection dot in the header, used only when no feature puts its own chip there (the live
+// session's status chip carries the same dot).
+
 import { memo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import type { Connection, ConnectionState, LinkState } from '../core/connection';
+import { describeLink, LINK_TONE, type Connection, type ConnectionState } from '../core/connection';
 import { shallowEqual, useStore } from '../core/store';
 import { colors, space } from '../core/theme';
 
-const DOT: Record<LinkState, string> = {
-  loading: colors.textDim,
-  unconfigured: colors.textDim,
-  connecting: colors.warn,
-  open: colors.ok,
-  offline: colors.danger,
-  unauthorized: colors.danger,
-};
-
-export function describeLink(s: Pick<ConnectionState, 'link' | 'error' | 'retryInMs'>): string {
-  switch (s.link) {
-    case 'open':
-      return 'Connected';
-    case 'connecting':
-      return 'Connecting…';
-    case 'offline': {
-      const retry = s.retryInMs ? ` · retrying in ${Math.ceil(s.retryInMs / 1000)}s` : '';
-      return `Offline${s.error ? ` (${s.error})` : ''}${retry}`;
-    }
-    case 'unauthorized':
-      return 'The server rejected the token. Change server to enter a new one.';
-    case 'loading':
-      return 'Loading…';
-    case 'unconfigured':
-      return 'Not set up';
-  }
-}
+export { describeLink };
 
 const selectPill = (s: ConnectionState) => ({ link: s.link, error: s.error, retryInMs: s.retryInMs });
 
@@ -41,7 +18,7 @@ export const ConnectionPill = memo(function ConnectionPill({ connection, onUnaut
   const press = () => (s.link === 'unauthorized' ? onUnauthorized() : s.link !== 'open' ? connection.retry() : undefined);
   return (
     <Pressable onPress={press} hitSlop={8} accessibilityRole="button" accessibilityLabel={describeLink(s)} style={styles.pill}>
-      <View style={[styles.dot, { backgroundColor: DOT[s.link] }]} />
+      <View style={[styles.dot, { backgroundColor: colors[LINK_TONE[s.link]] }]} />
       {s.link !== 'open' ? <Text style={styles.text}>{s.link === 'unauthorized' ? 'Bad token' : s.link === 'offline' ? 'Offline' : 'Connecting'}</Text> : null}
     </Pressable>
   );
