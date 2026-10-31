@@ -4,16 +4,17 @@
 // into it, closes on a tap outside or Android's back (back on the commands page goes to the first
 // page), and is unmounted once closed, so a closed menu costs nothing.
 
-import { memo, useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, BackHandler, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { memo, useCallback, useEffect, useRef, useState, type Ref, type RefObject } from 'react';
+import { AccessibilityInfo, ActivityIndicator, BackHandler, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import type { Command } from '../../core/api';
 import { useStore, type Store } from '../../core/store';
-import { colors, radius, space, type } from '../../core/theme';
+import { colors, legibleText, radius, space, type } from '../../core/theme';
 import { Glass } from '../../ui/Glass';
 import { Icon } from '../../ui/Icon';
 import { GrowSheet, Squish } from '../../ui/motion';
 import type { AttachmentsModel, DraftsState } from './attachments';
+import { needsArgs } from './model';
 import type { VoiceModel, VoiceState } from './voice';
 
 export const MENU_LABEL = 'Composer menu';
@@ -87,13 +88,14 @@ const MainPage = memo(function MainPage({ attach, voice, onClose, onCommands }: 
   const picking = useStore(attach.store, selectPicking);
   const canTalk = useStore(voice.store, selectCanTalk);
   const idle = useStore(voice.store, selectIdle);
+  const first = useFocusOnMount();
   const add = (source: 'camera' | 'library' | 'audio') => {
     onClose();
     void attach.add(source);
   };
   return (
     <View accessibilityRole="menu" style={styles.list}>
-      <Row icon="camera-outline" label="Camera" onPress={() => add('camera')} disabled={picking} />
+      <Row ref={first} icon="camera-outline" label="Camera" onPress={() => add('camera')} disabled={picking} />
       <Row icon="image-outline" label="Gallery" onPress={() => add('library')} disabled={picking} />
       <Row icon="file-music-outline" label="Audio file" onPress={() => add('audio')} disabled={picking} />
       {canTalk ? (
@@ -128,9 +130,10 @@ function CommandsPage({ load, onBack, onPick }: { load: () => Promise<Command[]>
       live = false;
     };
   }, [load, attempt]);
+  const first = useFocusOnMount();
   return (
     <View style={styles.list}>
-      <Row icon="chevron-left" label="Commands" a11yLabel="Back to the menu" onPress={onBack} header />
+      <Row ref={first} icon="chevron-left" label="Commands" a11yLabel="Back to the menu" onPress={onBack} header />
       {list ? (
         <ScrollView style={styles.commands} keyboardShouldPersistTaps="handled" accessibilityRole="menu">
           {list.length ? (
@@ -158,7 +161,7 @@ const CommandRow = memo(function CommandRow({ command: c, onPick }: { command: C
       style={styles.command}
       accessibilityRole="menuitem"
       accessibilityLabel={`/${c.name}`}
-      accessibilityHint={c.usage ? `${c.description}. Puts it in the message box to finish` : c.description || undefined}
+      accessibilityHint={needsArgs(c) ? `${c.description}. Puts it in the message box to finish` : c.description || undefined}
     >
       <Text style={styles.commandName}>/{c.name}</Text>
       {c.description ? (
@@ -170,7 +173,17 @@ const CommandRow = memo(function CommandRow({ command: c, onPick }: { command: C
   );
 });
 
+/** TalkBack's focus goes to the page's first row when it opens (a ref for that row). */
+function useFocusOnMount(): RefObject<View | null> {
+  const first = useRef<View>(null);
+  useEffect(() => {
+    if (first.current) AccessibilityInfo.sendAccessibilityEvent(first.current, 'focus');
+  }, []);
+  return first;
+}
+
 function Row({
+  ref,
   icon,
   label,
   a11yLabel,
@@ -180,6 +193,7 @@ function Row({
   more,
   header,
 }: {
+  ref?: Ref<View>;
   icon: string;
   label: string;
   a11yLabel?: string;
@@ -191,6 +205,7 @@ function Row({
 }) {
   return (
     <Squish
+      ref={ref}
       onPress={onPress}
       disabled={disabled}
       style={[styles.row, header && styles.header, disabled && styles.disabled]}
@@ -201,7 +216,7 @@ function Row({
     >
       <Icon name={icon} size={24} color={colors.text} />
       <Text style={[styles.label, header && styles.headerLabel]}>{label}</Text>
-      {more ? <Icon name="chevron-right" size={20} color={colors.textFaint} /> : null}
+      {more ? <Icon name="chevron-right" size={20} color={colors.textSecondary} /> : null}
     </Squish>
   );
 }
@@ -215,12 +230,14 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', gap: space.l, minHeight: ROW, paddingHorizontal: space.m, borderRadius: radius.m },
   header: { minHeight: ROW - space.s },
   disabled: { opacity: 0.45 },
-  label: { color: colors.text, fontSize: type.size.title, fontWeight: '500', flex: 1 },
+  // Text and icons at full opacity, in colours that keep 4.5:1 over any backdrop on the popup glass
+  // (core/theme/__tests__/contrast.test.ts), plus a soft shadow under the glyphs.
+  label: { color: colors.text, fontSize: type.size.title, fontWeight: '500', flex: 1, ...legibleText },
   headerLabel: { fontWeight: '600' },
   commands: { maxHeight: 6 * ROW },
   command: { minHeight: ROW, justifyContent: 'center', paddingHorizontal: space.m, borderRadius: radius.m },
-  commandName: { color: colors.text, fontSize: type.size.body, fontWeight: '600', fontFamily: type.mono },
-  commandText: { color: colors.textDim, fontSize: type.size.small },
-  note: { color: colors.textDim, fontSize: type.size.small, paddingHorizontal: space.m, paddingVertical: space.s },
+  commandName: { color: colors.text, fontSize: type.size.body, fontWeight: '600', fontFamily: type.mono, ...legibleText },
+  commandText: { color: colors.textSecondary, fontSize: type.size.small, ...legibleText },
+  note: { color: colors.textSecondary, fontSize: type.size.small, paddingHorizontal: space.m, paddingVertical: space.s },
   center: { paddingVertical: space.l },
 });

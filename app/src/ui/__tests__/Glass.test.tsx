@@ -5,7 +5,7 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { StyleSheet, View } from 'react-native';
 import { LinearGradient, Rect, Stop } from 'react-native-svg';
 
-import { GlassContext, rims, stopOf, type GlassSettings, type NativeGlassProps, type Scheme } from '../../core/theme';
+import { glass, GlassContext, rims, stopOf, type GlassSettings, type NativeGlassProps, type Scheme } from '../../core/theme';
 import { Glass } from '../Glass';
 import { Rim, rimInsets } from '../Rim';
 
@@ -124,5 +124,41 @@ describe('Rim', () => {
 
   it('draws nothing at zero size', () => {
     expect(rects(0, 48, 24)).toEqual([]);
+  });
+});
+
+describe('Glass popup legibility (the panel level)', () => {
+  const real = { mode: 'shader' as const, View: FakeNative };
+  const scrimOf = (r: ReactTestRenderer) => r.root.findAll((n) => n.props.testID === 'glass-scrim', { deep: false });
+
+  it('a popup gets a harder-blurred content area and a scrim over it, inside the rim', () => {
+    const r = render(<Glass level="panel" backdrop={7} radius={30} rim />, real);
+    const views = r.root.findAllByType(FakeNative);
+    expect(views).toHaveLength(2);
+    const [rimView, centre] = views.map((v) => v.props);
+    expect(rimView!.refraction).toBeGreaterThan(0); // the rim bends the backdrop
+    expect(centre!.refraction).toBe(0); // the content area doesn't swim
+    expect(centre!.dispersion).toBe(0);
+    expect(centre!.blur).toBeGreaterThan(rimView!.blur); // stronger blur in the centre than at the edge
+    const legibility = glass.panel.legibility!;
+    expect(centre!.cornerRadius).toBe(30 - legibility.inset);
+    const scrim = StyleSheet.flatten(scrimOf(r)[0]!.props.style);
+    expect(scrim).toMatchObject({ margin: legibility.inset, backgroundColor: legibility.scrim, borderRadius: 30 - legibility.inset });
+  });
+
+  it('the scrim is there in the flat fallback and blur-only modes too (it is what guarantees the contrast)', () => {
+    for (const settings of [{}, { mode: 'blur' as const, View: FakeNative }]) {
+      const r = render(<Glass level="panel" backdrop={7} />, settings);
+      expect(scrimOf(r)).toHaveLength(1);
+    }
+    expect(render(<Glass level="panel" />).root.findAllByType(FakeNative)).toHaveLength(0); // no backdrop: flat, one layer
+  });
+
+  it('chrome levels get neither (the composer stays light)', () => {
+    for (const level of ['thin', 'regular', 'thick', 'control'] as const) {
+      const r = render(<Glass level={level} backdrop={7} />, real);
+      expect(scrimOf(r)).toHaveLength(0);
+      expect(r.root.findAllByType(FakeNative)).toHaveLength(1);
+    }
   });
 });

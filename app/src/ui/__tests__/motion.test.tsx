@@ -2,6 +2,7 @@
 
 import { act, create } from 'react-test-renderer';
 import { AppState, Text, type AppStateStatus } from 'react-native';
+import * as Reanimated from 'react-native-reanimated';
 import Animated from 'react-native-reanimated';
 
 import { GlassContext, type GlassSettings } from '../../core/theme';
@@ -145,5 +146,25 @@ describe('GrowSheet', () => {
     const closing = r.root.findAllByType(Animated.View);
     // Shrinking (still mounted, untouchable) or already gone once the spring settled.
     expect(closing.every((v) => v.props.pointerEvents === 'none')).toBe(true);
+  });
+
+  it('opened again while shrinking, it stays (the closing spring ending late unmounts nothing)', async () => {
+    // Hold the closing spring's end until we say so.
+    let finish: ((done: boolean) => void) | undefined;
+    const spring = jest.spyOn(Reanimated, 'withSpring').mockImplementation(((to: number, _c: unknown, cb?: (done: boolean) => void) => {
+      if (to === 0) finish = cb;
+      return to;
+    }) as unknown as typeof Reanimated.withSpring);
+    const r = render(sheet(true));
+    act(() => r.update(<GlassContext.Provider value={settings(false)}>{sheet(false)}</GlassContext.Provider>)); // closing...
+    act(() => r.update(<GlassContext.Provider value={settings(false)}>{sheet(true)}</GlassContext.Provider>)); // ...and open again
+    await act(async () => finish?.(true)); // its end reaches JS in a microtask // the old spring ends now
+    expect(r.root.findAllByType(Text)).toHaveLength(1);
+    // Closed for real: it unmounts when its spring ends.
+    finish = undefined;
+    act(() => r.update(<GlassContext.Provider value={settings(false)}>{sheet(false)}</GlassContext.Provider>));
+    await act(async () => finish?.(true)); // its end reaches JS in a microtask
+    expect(r.root.findAllByType(Text)).toHaveLength(0);
+    spring.mockRestore();
   });
 });

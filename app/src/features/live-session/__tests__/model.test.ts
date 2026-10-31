@@ -1,7 +1,7 @@
 import type { HistoryPage } from '../../../core/api';
 import { localEvent, type EdithEvent } from '../../../core/events';
 import { ev, fakeContext, flush } from '../../../testing/fakes';
-import { applyStatus, createLiveModel, fromHistory, initialLive, MAX_ITEMS, reduce, summarize, withOlder, type LiveState } from '../model';
+import { applyStatus, createLiveModel, needsArgs, fromHistory, initialLive, MAX_ITEMS, reduce, summarize, withOlder, type LiveState } from '../model';
 
 function run(events: EdithEvent[], from: LiveState = initialLive): LiveState {
   return events.reduce(reduce, from);
@@ -254,6 +254,7 @@ describe('createLiveModel', () => {
         commands: [
           { name: 'compact', description: 'Compact the context', usage: '', help: '' },
           { name: 'stop', description: 'Stop', usage: '', help: '' },
+          { name: 'restart', description: 'Restart EDITH', usage: '', help: '' }, // too drastic for one tap
           { name: 'remind', description: 'Set a reminder', usage: '<when> <what>', help: '' },
         ],
       };
@@ -265,5 +266,15 @@ describe('createLiveModel', () => {
     await m.commands();
     expect(ctx.transport.calls.filter((c) => c.path === '/v1/commands')).toHaveLength(2); // the failure and one success
     m.dispose();
+  });
+});
+
+describe('needsArgs', () => {
+  it('asks for arguments only when the usage names required ones', () => {
+    expect(needsArgs({ usage: '' })).toBe(false);
+    expect(needsArgs({ usage: '[instructions]' })).toBe(false); // /compact: optional, runs at once
+    expect(needsArgs({ usage: '  [n]' })).toBe(false);
+    expect(needsArgs({ usage: '<when> <what>' })).toBe(true);
+    expect(needsArgs({ usage: 'text' })).toBe(true);
   });
 });

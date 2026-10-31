@@ -15,6 +15,9 @@ export const colors = {
   text: '#F2F4F7',
   textDim: 'rgba(235, 240, 245, 0.62)',
   textFaint: 'rgba(235, 240, 245, 0.38)',
+  // Secondary text on popup glass: opaque, so it keeps 4.5:1 over the worst backdrop (__tests__/contrast).
+  textSecondary: '#D5DCE4',
+  textShadow: 'rgba(0, 0, 0, 0.45)', // a soft shadow under popup labels
   accent: brand.blue,
   accentText: '#04121F', // text on an accent fill
   accentSoft: 'rgba(124, 174, 220, 0.20)',
@@ -41,8 +44,27 @@ export const colors = {
   overlayStrong: 'rgba(5, 7, 10, 0.8)', // small controls on a thumbnail (remove)
 } as const;
 
-/** thin/regular/thick: chrome (the full frost and lens); panel: glass with text on it (heavy frost, dark tint). */
-export type GlassLevel = 'thin' | 'regular' | 'thick' | 'panel';
+/**
+ * thin/regular/thick: chrome (the full frost and lens); control: the composer's pieces (a light
+ * frost, as in Arpit's reference); panel: popups with text on them (menus, the status card).
+ */
+export type GlassLevel = 'thin' | 'regular' | 'thick' | 'control' | 'panel';
+
+/**
+ * Popup legibility (iOS 26 Liquid Glass and good glassmorphism): the rim stays lively (light frost,
+ * a strong lens) while the content area gets more blur and a scrim, and the labels sit on it at full
+ * opacity. All of it is JS over the existing native view (no native change):
+ * - `centreBlur`: a second glass view over the content area, blurred harder than the rim;
+ * - `scrim`: a tinted pane over the content area, its edge feathered by a soft shadow. Its colour
+ *   and alpha are chosen so popup text keeps WCAG 4.5:1 even over a pure white backdrop, in every
+ *   mode (lens, blur only, flat): src/core/theme/__tests__/contrast.test.ts checks it.
+ */
+export interface Legibility {
+  centreBlur: number; // dp: the content area's blur (the rim keeps `blur`)
+  scrim: string; // laid over the content area
+  inset: number; // dp from the edge where the content area starts; popup text stays inside it
+  feather: number; // dp: the scrim's soft edge, reaching outwards towards the rim
+}
 
 export interface GlassStyle {
   blur: number; // blur radius, dp (the frost: strong enough that text behind can't be read)
@@ -58,6 +80,7 @@ export interface GlassStyle {
   lift: number; // added brightness, 0..1: the frost's slight glow
   specular: number; // the thin highlight along the edge (brightest on top), 0..1
   rimWidth: number; // that highlight's width, dp
+  legibility?: Legibility; // popups with text: see Legibility
 }
 
 /** Glass surfaces, from the lightest (small pills) to the heaviest (the header). */
@@ -104,24 +127,48 @@ export const glass: Record<GlassLevel, GlassStyle> = {
     specular: 0.4,
     rimWidth: 1.2,
   },
+  control: {
+    // The composer's pieces (Arpit's reference): a light, slightly blue frost, clearly lighter than
+    // the background, with the rim on top.
+    blur: 24,
+    tint: 'rgba(170, 190, 225, 0.20)',
+    flat: 'rgba(40, 46, 58, 0.96)',
+    edge: ['rgba(255, 255, 255, 0.26)', 'rgba(255, 255, 255, 0.05)'],
+    highlight: 'rgba(255, 255, 255, 0.07)',
+    refraction: 10,
+    bezel: 16,
+    dispersion: 0.6,
+    saturation: 1.7,
+    lift: 0.02,
+    specular: 0.45,
+    rimWidth: 1.2,
+  },
   panel: {
-    // Glass carrying text (the status card, the navigation menu): the same frost, but a dark tint
-    // at 0.8, so whatever is behind reads only as soft colour and never competes with the text;
-    // a gentle lens, so text near the rim doesn't swim.
-    blur: 32,
-    tint: 'rgba(14, 17, 22, 0.80)',
-    flat: 'rgba(18, 21, 26, 0.96)',
+    // Popups carrying text (the menus, the status card). The rim is real Liquid Glass: a light
+    // tint, a strong lens and colour split, so the backdrop visibly bends at the edge. The content
+    // area is blurred harder and has the scrim, so the text reads over anything (Legibility).
+    blur: 24,
+    tint: 'rgba(40, 50, 70, 0.30)',
+    flat: 'rgba(30, 37, 50, 0.97)',
     edge: ['rgba(255, 255, 255, 0.24)', 'rgba(255, 255, 255, 0.05)'],
     highlight: 'rgba(255, 255, 255, 0.06)',
-    refraction: 6,
-    bezel: 14,
-    dispersion: 0.4,
-    saturation: 1.4,
+    refraction: 14,
+    bezel: 22,
+    dispersion: 0.6,
+    saturation: 1.6,
     lift: 0.02,
     specular: 0.4,
     rimWidth: 1.2,
+    legibility: { centreBlur: 40, scrim: 'rgba(40, 50, 70, 0.80)', inset: 10, feather: 8 },
   },
 };
+
+/** A soft shadow under popup labels (the scrim does the contrast; this just lifts the glyphs). */
+export const legibleText = {
+  textShadowColor: colors.textShadow,
+  textShadowOffset: { width: 0, height: 1 },
+  textShadowRadius: 3,
+} as const;
 
 /** The colour scheme a surface sits in. The app is dark today; the rim is ready for both. */
 export type Scheme = 'dark' | 'light';
@@ -195,6 +242,7 @@ export const glassTint: Record<GlassLevel, number[]> = {
   thin: rgbaOf(glass.thin.tint),
   regular: rgbaOf(glass.regular.tint),
   thick: rgbaOf(glass.thick.tint),
+  control: rgbaOf(glass.control.tint),
   panel: rgbaOf(glass.panel.tint),
 };
 

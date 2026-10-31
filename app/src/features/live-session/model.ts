@@ -567,8 +567,15 @@ export interface LiveModel {
 
 // ---- the outbox: messages this app sent, kept across restarts until the server has them ----
 
-// Commands the composer's menu leaves out: the app has its own controls for them (Stop, Sessions).
-export const CHAT_HIDDEN_COMMANDS = new Set(['start', 'help', 'sessions', 'resume', 'name', 'new', 'stop']);
+// Commands the composer's menu leaves out: the app has its own controls for them (Stop, Sessions),
+// or they're too drastic to be one tap away (/restart restarts EDITH).
+export const CHAT_HIDDEN_COMMANDS = new Set(['start', 'help', 'sessions', 'resume', 'name', 'new', 'stop', 'restart']);
+
+/** Whether a command needs arguments typed first: its usage names some ("<when> <what>"), not only optional ones ("[instructions]"). */
+export function needsArgs(c: Pick<Command, 'usage'>): boolean {
+  const usage = c.usage.trim();
+  return usage !== '' && !usage.startsWith('[');
+}
 
 export const OUTBOX_KEY = 'edith.outbox';
 const MAX_OUTBOX = 50;

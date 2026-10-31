@@ -4,6 +4,7 @@ import { createContext, useContext, type ComponentType } from 'react';
 
 import type { Scheme } from './tokens';
 
+export * from './contrast';
 export * from './tokens';
 
 /**

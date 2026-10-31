@@ -1,8 +1,8 @@
 // Liquid motion (PLAN.md §4.11): springs on the UI thread (Reanimated worklets: no JS per frame).
 // With Android's "Remove animations" on (GlassSettings.reduceMotion) everything is at its end state.
 
-import { memo, useEffect, useState, type ReactNode } from 'react';
-import { AppState, Pressable, type PressableProps, type StyleProp, type ViewStyle } from 'react-native';
+import { memo, useCallback, useEffect, useRef, useState, type ReactNode, type Ref } from 'react';
+import { AppState, Pressable, type PressableProps, type StyleProp, type View, type ViewStyle } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
 
@@ -20,7 +20,7 @@ export const Squish = memo(function Squish({
   onPressIn,
   onPressOut,
   ...rest
-}: Omit<PressableProps, 'style' | 'children'> & { style?: StyleProp<ViewStyle>; outerStyle?: StyleProp<ViewStyle>; children?: ReactNode }) {
+}: Omit<PressableProps, 'style' | 'children'> & { style?: StyleProp<ViewStyle>; outerStyle?: StyleProp<ViewStyle>; children?: ReactNode; ref?: Ref<View> }) {
   const reduce = useReduceMotion();
   const scale = useSharedValue(1);
   const animated = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
@@ -65,6 +65,12 @@ export function GrowSheet({ open, origin, style, children }: { open: boolean; or
   const reduce = useReduceMotion();
   const [mounted, setMounted] = useState(open);
   const p = useSharedValue(0);
+  // Read when the closing spring ends: if it was opened again meanwhile, it stays mounted.
+  const openNow = useRef(open);
+  openNow.current = open;
+  const unmountIfClosed = useCallback(() => {
+    if (!openNow.current) setMounted(false);
+  }, []);
 
   useEffect(() => {
     if (open) setMounted(true);
@@ -79,10 +85,10 @@ export function GrowSheet({ open, origin, style, children }: { open: boolean; or
       setMounted(false);
     } else {
       p.value = withSpring(0, motion.press, (finished) => {
-        if (finished) scheduleOnRN(setMounted, false);
+        if (finished) scheduleOnRN(unmountIfClosed);
       });
     }
-  }, [open, mounted, reduce, p]);
+  }, [open, mounted, reduce, p, unmountIfClosed]);
 
   const animated = useAnimatedStyle(() => ({
     opacity: Math.min(1, p.value * 1.5),

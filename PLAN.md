@@ -287,6 +287,10 @@ show in the phone's "dynamic island".
     dots), the message pill (mic inside) and a round send button; the menu button's frosted panel
     (Camera, Gallery, Audio file, Record, Commands) grows out of it. Glass can carry a specular rim
     (bright top-left and bottom-right), used by the composer and its menu for now;
+  - popups (menus, the status card, asked for 2026-10-31) refract at the rim like Liquid Glass while
+    their text stays at WCAG 4.5:1 over any backdrop: a harder-blurred content area and a scrim over
+    it, all from JS (OTA). A per-pixel luminance cap and a true centre-weighted blur in the AGSL
+    shader would need a native release: a later follow-up;
   - new bubbles settle in on a spring;
   - the "working" indicator is a morphing glass blob.
   - With Android's "Remove animations" setting on, everything jumps straight to its end state.

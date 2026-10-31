@@ -2,7 +2,7 @@ import { memo, useCallback, useImperativeHandle, useMemo, useRef, useState, type
 import { ActivityIndicator, FlatList, StyleSheet, Text, TextInput, View, type LayoutChangeEvent } from 'react-native';
 
 import type { Command } from '../../core/api';
-import { createStore, useStore, type Store } from '../../core/store';
+import { useStore, type Store } from '../../core/store';
 import { colors, radius, space, type, useChrome } from '../../core/theme';
 import { Empty } from '../../ui/Empty';
 import { Glass, useBackdrop } from '../../ui/Glass';
@@ -10,7 +10,7 @@ import { Icon } from '../../ui/Icon';
 import { SettleIn, Squish } from '../../ui/motion';
 import { toast } from '../../ui/toast';
 import { ItemView } from './ItemView';
-import { sendStatus, summarize, tickOf, type Item, type LiveModel, type LiveState } from './model';
+import { needsArgs, sendStatus, summarize, tickOf, type Item, type LiveModel, type LiveState } from './model';
 import { StatusPanel } from './StatusPanel';
 import { WorkingRow } from './WorkingRow';
 import { AttachmentBar } from './AttachmentBar';
@@ -23,7 +23,15 @@ const selectItems = (s: LiveState) => s.items;
 const selectTurns = (s: LiveState) => s.turns;
 const keyOf = (item: Item) => String(item.id);
 
-export function LiveScreen({ model, voice, attach }: { model: LiveModel; voice: VoiceModel; attach: AttachmentsModel }) {
+export interface LiveScreenProps {
+  model: LiveModel;
+  voice: VoiceModel;
+  attach: AttachmentsModel;
+  /** Whether the composer's menu is open: its button and panel share it, and the feature closes it when another screen comes up. */
+  menu: Store<boolean>;
+}
+
+export function LiveScreen({ model, voice, attach, menu }: LiveScreenProps) {
   const items = useStore(model.store, selectItems);
   const onPress = useCallback(
     (id: number, action: string) =>
@@ -55,21 +63,21 @@ export function LiveScreen({ model, voice, attach }: { model: LiveModel; voice: 
   const onComposerLayout = useCallback((e: LayoutChangeEvent) => setComposerHeight(Math.round(e.nativeEvent.layout.height)), []);
   const below = chromeInsets.bottom + composerHeight;
   const listInsets = useMemo(() => ({ paddingBottom: chromeInsets.top + TURN_BAR_SPACE, paddingTop: below + space.s }), [chromeInsets.top, below]);
-  // The composer's menu: its button (in the composer) and its panel (over the whole screen, so a
-  // tap anywhere outside closes it) share this; toggling it re-renders only those two.
-  const [menu] = useState(() => createStore(false));
+  // The composer's menu (`menu`): its button (in the composer) and its panel (over the whole
+  // screen, so a tap anywhere outside closes it) share it; toggling it re-renders only those two
+  // and the transcript's wrapper (hidden from TalkBack while the menu is open).
   const draft = useRef<DraftHandle>(null);
   const loadCommands = useCallback(() => model.commands(), [model]);
   const onCommand = useCallback(
     (c: Command) => {
-      if (c.usage) draft.current?.insert(`/${c.name} `); // needs arguments: finish it in the box
-      else void model.send(`/${c.name}`);
+      if (needsArgs(c)) draft.current?.insert(`/${c.name} `); // finish its arguments in the box
+      else void model.send(`/${c.name}`); // none, or only optional ones ("[instructions]"): run it
     },
     [model],
   );
   return (
     <View style={styles.screen}>
-      <View ref={backdrop.ref} collapsable={false} style={styles.screen}>
+      <Transcript menu={menu} viewRef={backdrop.ref}>
         {items.length ? (
           <FlatList
             data={items}
@@ -93,7 +101,7 @@ export function LiveScreen({ model, voice, attach }: { model: LiveModel; voice: 
             <Empty icon="message-processing-outline" title="Nothing yet" detail="EDITH's live session shows up here as it happens, from the app, Telegram or the terminal." />
           </View>
         )}
-      </View>
+      </Transcript>
       <ComposerMenu open={menu} bottom={below + space.xs} backdrop={backdrop.tag} attach={attach} voice={voice} loadCommands={loadCommands} onCommand={onCommand} />
       <View style={[styles.composerSlot, { bottom: chromeInsets.bottom }]} onLayout={onComposerLayout} pointerEvents="box-none">
         <Composer model={model} voice={voice} attach={attach} backdrop={backdrop.tag} menu={menu} handle={draft} />
@@ -106,10 +114,24 @@ export function LiveScreen({ model, voice, attach }: { model: LiveModel; voice: 
 }
 
 const TURN_BAR_SPACE = 52; // the floating status pill plus its margins
-const COMPOSER_HEIGHT = 56; // until the composer has measured itself
+const COMPOSER_HEIGHT = 60; // until the composer has measured itself
 const FRESH_S = 4; // a message this new (by its timestamp) arrived just now
 
 const selectLoadingOlder = (s: LiveState) => s.loadingOlder;
+
+/**
+ * The transcript's view (the glass's backdrop). While the composer's menu is open TalkBack skips it,
+ * so swiping stays in the menu. Only this re-renders when the menu toggles: `children` is the same
+ * element, so the list itself doesn't.
+ */
+function Transcript({ menu, viewRef, children }: { menu: Store<boolean>; viewRef: (v: View | null) => void; children: ReactNode }) {
+  const open = useStore(menu, selectOpen);
+  return (
+    <View ref={viewRef} collapsable={false} style={styles.screen} importantForAccessibility={open ? 'no-hide-descendants' : 'auto'}>
+      {children}
+    </View>
+  );
+}
 
 const OlderSpinner = memo(function OlderSpinner({ model }: { model: LiveModel }) {
   const loading = useStore(model.store, selectLoadingOlder);
@@ -125,7 +147,7 @@ const selectVoiceAvailable = (s: VoiceState) => s.available;
 const selectDrafts = (s: DraftsState) => s.drafts;
 const selectAttachError = (s: DraftsState) => s.error;
 const selectPicking = (s: DraftsState) => s.picking;
-const selectOpen = (s: boolean) => s;
+const selectOpen = (s: boolean) => s; // the composer menu's store
 
 /** What the composer's menu can do to the message box. */
 export interface DraftHandle {
@@ -178,12 +200,13 @@ const Composer = memo(function Composer({ model, voice, attach, backdrop, menu, 
   // Text, ready attachments or both; never while an upload runs or one failed (retry or remove it first).
   const canSend = (!!text.trim() || attachmentsReady) && (drafts.length === 0 || attachmentsReady);
 
-  const closeMenu = () => menu.set(false);
+  const closeMenu = useCallback(() => menu.set(false), [menu]);
+  const toggleMenu = useCallback(() => menu.set((o) => !o), [menu]);
   const edit = (t: string) => {
     setText(t);
     if (!t.trim()) setFromVoice(false);
   };
-  const send = () => {
+  const send = useCallback(() => {
     closeMenu();
     if (!canSend) return;
     // The model decides, not the button: an attachment still uploading (or failed) keeps the whole
@@ -198,7 +221,7 @@ const Composer = memo(function Composer({ model, voice, attach, backdrop, menu, 
     setText('');
     setFromVoice(false);
     void model.send(t, { voice: fromVoice, attachments });
-  };
+  }, [closeMenu, canSend, attach, text, fromVoice, model]);
   const stop = () => {
     setStopping(true);
     model.stop().then(toast, (e: unknown) => toast(`Couldn't stop: ${e instanceof Error ? e.message : String(e)}`)).finally(() => setStopping(false));
@@ -219,16 +242,14 @@ const Composer = memo(function Composer({ model, voice, attach, backdrop, menu, 
   return (
     <View style={styles.composer}>
       {extras ? (
-        <Glass level="regular" backdrop={backdrop} radius={radius.l} rim style={styles.extras}>
+        <Glass level="control" backdrop={backdrop} radius={radius.l} rim style={styles.extras}>
           {voiceError && !talking ? <Text style={styles.voiceError}>{voiceError}</Text> : null}
           <AttachmentBar attach={attach} />
         </Glass>
       ) : null}
       <View style={styles.row}>
-        <RoundButton backdrop={backdrop} onPress={() => menu.set((o) => !o)} disabled={talking} label={menuOpen ? CLOSE_LABEL : MENU_LABEL} expanded={menuOpen}>
-          <DotGrid />
-        </RoundButton>
-        <Glass level="regular" backdrop={backdrop} radius={ROUND / 2} rim style={styles.pill}>
+        <RoundButton icon="dots" onPress={toggleMenu} disabled={talking} label={menuOpen ? CLOSE_LABEL : MENU_LABEL} expanded={menuOpen} />
+        <Glass level="control" backdrop={backdrop} radius={ROUND / 2} rim style={styles.pill}>
           {talking ? (
             <VoiceBar voice={voice} onStop={stopTalking} />
           ) : (
@@ -250,31 +271,32 @@ const Composer = memo(function Composer({ model, voice, attach, backdrop, menu, 
             </View>
           )}
         </Glass>
-        <RoundButton backdrop={backdrop} onPress={send} disabled={talking || !canSend} busy={uploading} label={uploading ? 'Send (waiting for the upload)' : 'Send'}>
-          <Icon name="send-outline" size={22} color={canSend && !talking ? colors.text : colors.textFaint} />
-        </RoundButton>
+        <RoundButton icon="send" onPress={send} disabled={talking || !canSend} busy={uploading} label={uploading ? 'Send (waiting for the upload)' : 'Send'} />
       </View>
     </View>
   );
 });
 
-/** A round glass button (the menu and send): the whole piece squishes when pressed. */
+/**
+ * A round glass button (the menu and send): the whole piece squishes when pressed. Flat glass with
+ * the rim (no live backdrop): two fewer real-glass views moving while the keyboard animates; the
+ * control level's flat colour matches the pill's frost. Its icon is drawn here, so its props are
+ * plain values and the memo holds.
+ */
 const RoundButton = memo(function RoundButton({
-  backdrop,
+  icon,
   onPress,
   disabled,
   busy,
   label,
   expanded,
-  children,
 }: {
-  backdrop: number | null;
+  icon: 'dots' | 'send';
   onPress: () => void;
   disabled?: boolean;
   busy?: boolean;
   label: string;
   expanded?: boolean;
-  children: ReactNode;
 }) {
   const off = !!disabled || !!busy;
   return (
@@ -286,8 +308,14 @@ const RoundButton = memo(function RoundButton({
       accessibilityLabel={label}
       accessibilityState={{ disabled: off, busy: !!busy, expanded }}
     >
-      <Glass level="regular" backdrop={backdrop} radius={ROUND / 2} rim style={styles.roundGlass}>
-        {busy ? <ActivityIndicator color={colors.textDim} /> : children}
+      <Glass level="control" backdrop={null} radius={ROUND / 2} rim style={styles.roundGlass}>
+        {busy ? (
+          <ActivityIndicator color={colors.textDim} />
+        ) : icon === 'dots' ? (
+          <DotGrid />
+        ) : (
+          <Icon name="send-outline" size={SEND_ICON} color={disabled ? colors.textFaint : colors.text} />
+        )}
       </Glass>
     </Squish>
   );
@@ -297,7 +325,7 @@ const RoundButton = memo(function RoundButton({
 function InlineButton({ icon, color, onPress, busy, label }: { icon: string; color: string; onPress: () => void; busy?: boolean; label: string }) {
   return (
     <Squish onPress={onPress} disabled={busy} style={styles.inline} accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ busy: !!busy }}>
-      {busy ? <ActivityIndicator color={color} /> : <Icon name={icon} size={24} color={color} />}
+      {busy ? <ActivityIndicator color={color} /> : <Icon name={icon} size={PILL_ICON} color={color} />}
     </Squish>
   );
 }
@@ -314,8 +342,15 @@ function DotGrid() {
   );
 }
 
-const ROUND = 48; // the round buttons, and the pill's height on one line
-const DOT = 7;
+// Proportions measured from Arpit's reference (an 82 px button): the pill is exactly as tall as the
+// round buttons, the gaps are 0.18 of that height, the 2×2 dots are 0.15 of it with 0.12 between,
+// the text is about 0.33 of it and the icons about half.
+const ROUND = 52; // the round buttons, and the pill's height on one line
+const GAP = 10;
+const DOT = 8;
+const DOT_GAP = 6;
+const PILL_ICON = 28;
+const SEND_ICON = 26;
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
@@ -323,16 +358,16 @@ const styles = StyleSheet.create({
   older: { padding: space.m },
   barSlot: { position: 'absolute', left: space.l, right: space.l },
   composerSlot: { position: 'absolute', left: 0, right: 0 },
-  composer: { marginHorizontal: space.m, marginBottom: space.s, gap: space.s },
+  composer: { marginHorizontal: space.m, marginBottom: space.s, gap: GAP },
   extras: { paddingBottom: space.s },
-  row: { flexDirection: 'row', alignItems: 'flex-end', gap: space.s },
+  row: { flexDirection: 'row', alignItems: 'flex-end', gap: GAP },
   round: { width: ROUND, height: ROUND },
   roundGlass: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   pill: { flex: 1, minHeight: ROUND, justifyContent: 'center' },
-  pillRow: { flexDirection: 'row', alignItems: 'flex-end', paddingRight: space.xs },
-  inline: { width: 40, height: ROUND, alignItems: 'center', justifyContent: 'center' },
+  pillRow: { flexDirection: 'row', alignItems: 'flex-end', paddingRight: space.s },
+  inline: { width: 44, height: ROUND, alignItems: 'center', justifyContent: 'center' },
   voiceError: { color: colors.danger, fontSize: type.size.small, paddingHorizontal: space.m, paddingTop: space.s },
-  input: { flex: 1, color: colors.text, paddingLeft: space.l, paddingRight: space.s, paddingVertical: space.m, fontSize: type.size.body, maxHeight: 140, minHeight: ROUND },
-  dots: { width: 2 * DOT + 5, flexDirection: 'row', flexWrap: 'wrap', gap: 5 },
+  input: { flex: 1, color: colors.text, paddingLeft: space.l, paddingRight: space.s, paddingVertical: 14, fontSize: type.size.title, fontWeight: '500', maxHeight: 140, minHeight: ROUND },
+  dots: { width: 2 * DOT + DOT_GAP, flexDirection: 'row', flexWrap: 'wrap', gap: DOT_GAP },
   dot: { width: DOT, height: DOT, borderRadius: DOT / 2, backgroundColor: colors.text },
 });

@@ -3,7 +3,7 @@
 // the server's commands), which closes on a tap outside and on back.
 
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
-import { BackHandler, Text, TextInput } from 'react-native';
+import { AccessibilityInfo, BackHandler, Text, TextInput } from 'react-native';
 
 import type { Command } from '../../../core/api';
 import { createStore } from '../../../core/store';
@@ -19,7 +19,7 @@ jest.setTimeout(30_000); // the first run transforms all of React Native: slow o
 jest.mock('../../../ui/toast', () => ({ toast: jest.fn() }));
 
 const COMMANDS: Command[] = [
-  { name: 'compact', description: 'Compact the context', usage: '', help: '' },
+  { name: 'compact', description: 'Compact the context', usage: '[instructions]', help: '' }, // optional: runs at once
   { name: 'remind', description: 'Set a reminder', usage: '<when> <what>', help: '' },
 ];
 
@@ -39,7 +39,8 @@ function fakes({ canTalk = true }: { canTalk?: boolean } = {}) {
   const voice = { store: voiceStore, start: jest.fn().mockResolvedValue(undefined), stop: jest.fn().mockResolvedValue(null), cancel: jest.fn() };
   const attachStore = createStore<DraftsState>({ drafts: [], picking: false, error: null });
   const attach = { store: attachStore, add: jest.fn().mockResolvedValue(undefined), retry: jest.fn(), remove: jest.fn(), take: jest.fn(() => []), busy: () => false, dispose: jest.fn() };
-  return { model, voice, attach, voiceStore };
+  const menu = createStore(false);
+  return { model, voice, attach, voiceStore, menu };
 }
 
 let backHandlers: (() => boolean)[] = [];
@@ -50,7 +51,7 @@ function render(f: ReturnType<typeof fakes>): ReactTestRenderer {
     r = create(
       // Remove animations on: the menu opens and closes at once (the springs are tested in ui/motion).
       <GlassContext.Provider value={{ mode: 'flat', View: null, reduceMotion: true }}>
-        <LiveScreen model={f.model as unknown as LiveModel} voice={f.voice as unknown as VoiceModel} attach={f.attach as unknown as AttachmentsModel} />
+        <LiveScreen model={f.model as unknown as LiveModel} voice={f.voice as unknown as VoiceModel} attach={f.attach as unknown as AttachmentsModel} menu={f.menu} />
       </GlassContext.Provider>,
     );
   });
@@ -77,8 +78,11 @@ const texts = (r: ReactTestRenderer) =>
 const input = (r: ReactTestRenderer) => r.root.findByType(TextInput);
 const menuOpen = (r: ReactTestRenderer) => labels(r, 'menuitem').length > 0;
 
+let focus: jest.SpyInstance;
+
 beforeEach(() => {
   jest.useFakeTimers(); // the status pill's clock
+  focus = jest.spyOn(AccessibilityInfo, 'sendAccessibilityEvent').mockImplementation(() => {});
   jest.spyOn(console, 'error').mockImplementation(() => {}); // react-test-renderer is deprecated in React 19
   backHandlers = [];
   jest.spyOn(BackHandler, 'addEventListener').mockImplementation((_, h) => {
@@ -96,7 +100,12 @@ describe('Composer', () => {
     const r = render(fakes());
     const pieces = glassIn(r).filter((g) => g.props.rim);
     expect(pieces).toHaveLength(3);
-    expect(pieces.map((g) => g.props.radius)).toEqual([24, 24, 24]); // round, round-ended pill, round
+    // As in Arpit's reference: the pill exactly as tall as the round buttons, all fully round.
+    expect(pieces.map((g) => g.props.radius)).toEqual([26, 26, 26]);
+    expect(pieces.map((g) => g.props.level)).toEqual(['control', 'control', 'control']);
+    // The round buttons are flat glass (no live backdrop: fewer real-glass views move with the keyboard).
+    expect([pieces[0]!.props.backdrop, pieces[2]!.props.backdrop]).toEqual([null, null]);
+    expect('backdrop' in pieces[1]!.props).toBe(true);
     expect(byLabel(r, MENU_LABEL)).toHaveLength(1);
     expect(byLabel(r, 'Talk to EDITH')).toHaveLength(1);
     expect(byLabel(r, 'Send')[0]!.props.accessibilityState).toMatchObject({ disabled: true }); // nothing to send yet
@@ -137,7 +146,7 @@ describe('Composer and the keyboard', () => {
     const screen = (bottom: number) => (
       <GlassContext.Provider value={{ mode: 'flat', View: null, reduceMotion: true }}>
         <ChromeContext.Provider value={{ top: 52, bottom }}>
-          <LiveScreen model={f.model as unknown as LiveModel} voice={f.voice as unknown as VoiceModel} attach={f.attach as unknown as AttachmentsModel} />
+          <LiveScreen model={f.model as unknown as LiveModel} voice={f.voice as unknown as VoiceModel} attach={f.attach as unknown as AttachmentsModel} menu={f.menu} />
         </ChromeContext.Provider>
       </GlassContext.Provider>
     );
@@ -155,11 +164,18 @@ describe('Composer and the keyboard', () => {
 
 describe('Composer menu', () => {
   it('opens above the button with labelled menu items, and says it is expanded', () => {
-    const r = render(fakes());
+    const f = fakes();
+    const r = render(f);
+    const hidden = () => r.root.findAll((n) => n.props.importantForAccessibility === 'no-hide-descendants', { deep: false }).length > 0;
+    expect(hidden()).toBe(false);
     expect(menuOpen(r)).toBe(false);
     press(r, MENU_LABEL);
     expect(labels(r, 'menuitem')).toEqual(['Camera', 'Gallery', 'Audio file', 'Record', 'Commands']);
     expect(r.root.findAll((n) => n.props.accessibilityRole === 'menu')).not.toHaveLength(0);
+    expect(hidden()).toBe(true); // TalkBack skips the transcript while the menu is open
+    expect(focus).toHaveBeenCalledTimes(1); // and lands on the first row
+    expect(focus.mock.calls[0]![0].props.accessibilityLabel).toBe('Camera');
+    expect(focus.mock.calls[0]![1]).toBe('focus');
     const button = byLabel(r, CLOSE_LABEL).find((n) => n.props.accessibilityRole === 'button')!;
     expect(button.props.accessibilityState).toMatchObject({ expanded: true });
     // The panel is frosted glass with the rim.
@@ -216,7 +232,17 @@ describe('Composer menu', () => {
     expect(menuOpen(r)).toBe(false);
   });
 
-  it("lists the server's commands: one without arguments runs, one with arguments goes into the box", async () => {
+  it('closes when another screen comes up (the feature listens for app.screen)', () => {
+    const f = fakes();
+    const r = render(f);
+    press(r, MENU_LABEL);
+    expect(menuOpen(r)).toBe(true);
+    act(() => f.menu.set(false)); // what live-session's setup does on app.screen ≠ live (tested in Feature)
+    expect(menuOpen(r)).toBe(false);
+    expect(backHandlers).toHaveLength(0); // back on the other screen isn't eaten
+  });
+
+  it("lists the server's commands: one with optional arguments runs, one with required arguments goes into the box", async () => {
     const f = fakes();
     const r = render(f);
     press(r, MENU_LABEL);
