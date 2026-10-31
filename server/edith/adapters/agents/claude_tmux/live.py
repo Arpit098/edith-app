@@ -42,11 +42,13 @@ def text_of(content):
 
 
 class LiveView:
-    def __init__(self, paths, session, publish, origin_of, known=lambda rid: False):
+    def __init__(self, paths, session, publish, origin_of, known=lambda rid: False, typed_echo=lambda text: False):
         """session() -> tmux-session.json as a dict; publish(type, origin, session_id, data);
         origin_of(run_id) -> "telegram" | "app" | None; known(run_id): the message was accepted from a
-        frontend, so its message.user is already out."""
+        frontend, so its message.user is already out; typed_echo(text): a bare "/…" entry is the echo
+        of a slash command the bridge typed for a frontend (shown there already, not as Terminal)."""
         self.paths, self.session, self.publish, self.origin_of, self.known = paths, session, publish, origin_of, known
+        self.typed_echo = typed_echo
         self._tools: dict[str, str] = {}
         self.watch = None
         self.ready = threading.Event()  # set once it is watching: nothing written after that is missed
@@ -81,7 +83,7 @@ class LiveView:
     def entry(self, e, cursor=None):
         """Publish the events of one transcript entry; `cursor` (see history()) goes in their data."""
         sid = e.get("sessionId") or self.session().get("session_id")
-        for type, origin, data in events_of(e, self._tools, self.origin_of, self.known):
+        for type, origin, data in events_of(e, self._tools, self.origin_of, self.known, self.typed_echo):
             if cursor:
                 data["cursor"] = cursor
             self.publish(type, origin, sid, data)
@@ -103,9 +105,10 @@ def remember(tools, tool_id, name):
         tools.pop(next(iter(tools)))
 
 
-def events_of(e, tools, origin_of=lambda ref: None, known=lambda rid: False):
+def events_of(e, tools, origin_of=lambda ref: None, known=lambda rid: False, typed_echo=lambda text: False):
     """[(type, origin, data)] for one transcript entry. `tools` maps tool_use ids to names (for
-    naming results) and is updated; it is bounded to MAX_TOOL_IDS."""
+    naming results) and is updated; it is bounded to MAX_TOOL_IDS. `typed_echo` is asked only about
+    a bare "/…" entry (no ref, no header) and consumes the match: see LiveView."""
     if e.get("isSidechain") or e.get("isMeta"):
         return []
     out = []
@@ -127,6 +130,8 @@ def events_of(e, tools, origin_of=lambda ref: None, known=lambda rid: False):
         rid = m.group(1) if m else None
         if rid and known(rid):
             return []  # a frontend's message: its message.user went out when it was accepted
+        if not rid and stripped.startswith("/") and not HEADER_LINE.search(text) and typed_echo(stripped.rstrip()):
+            return []  # Claude's copy of a command the bridge typed for the app or Telegram (/compact)
         clean = clean_prompt(text)
         if not clean["text"] and not clean["attachments"]:
             return []
