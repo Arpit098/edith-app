@@ -287,10 +287,10 @@ show in the phone's "dynamic island".
     dots), the message pill (mic inside) and a round send button; the menu button's frosted panel
     (Camera, Gallery, Audio file, Record, Commands) grows out of it. Glass can carry a specular rim
     (bright top-left and bottom-right), used by the composer and its menu for now;
-  - popups (menus, the status card, asked for 2026-10-31) refract at the rim like Liquid Glass while
-    their text stays at WCAG 4.5:1 over any backdrop: a harder-blurred content area and a scrim over
-    it, all from JS (OTA). A per-pixel luminance cap and a true centre-weighted blur in the AGSL
-    shader would need a native release: a later follow-up;
+  - popups (menus, the status card, asked for 2026-10-31) are clear Liquid Glass with no background
+    of their own: a light blur, a very faint tint and a thin bend at the edge (6–8 dp, like all
+    glass). Their labels and icons carry a dark halo and a heavier weight instead of a scrim; only
+    the flat fallback keeps a tinted pane. All from JS (OTA);
   - new bubbles settle in on a spring;
   - the "working" indicator is a morphing glass blob;
   - the header (asked for 2026-10-31, plans/ui-next.md): "E.D.I.T.H" in the centre with a soft

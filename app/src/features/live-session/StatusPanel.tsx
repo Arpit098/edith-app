@@ -10,7 +10,7 @@ import type { StatusDetails } from '../../core/api';
 import { describeLink, LINK_TONE, type Connection, type ConnectionState } from '../../core/connection';
 import { shallowEqual, useStore, type Store } from '../../core/store';
 import { clockIST, formatIST } from '../../common/format';
-import { colors, radius, space, type } from '../../core/theme';
+import { colors, legibleText, radius, space, type } from '../../core/theme';
 import { Glass } from '../../ui/Glass';
 import { GrowSheet, Squish } from '../../ui/motion';
 import { ThinkingBubble } from '../../ui/ThinkingBubble';
@@ -258,25 +258,27 @@ const styles = StyleSheet.create({
   dot: { width: 8, height: 8, borderRadius: 4 },
   elapsed: { color: colors.text, fontSize: type.size.small, fontVariant: ['tabular-nums'], minWidth: 30 },
   popup: { position: 'absolute', left: space.m, right: space.m, maxWidth: 420 },
-  cardDim: { color: colors.textSecondary }, // on the popup glass: 4.5:1 over any backdrop
+  // The card is clear glass with no pane behind its text: every line carries the dark halo
+  // (legibleText) and a slightly heavier weight (core/theme/__tests__/contrast.test.ts).
+  cardDim: { color: colors.textSecondary, fontWeight: '500', ...legibleText },
   card: { padding: space.m },
   scroll: { maxHeight: 460 },
-  error: { color: colors.danger, fontSize: type.size.small, marginBottom: space.s },
+  error: { color: colors.danger, fontSize: type.size.small, fontWeight: '500', marginBottom: space.s, ...legibleText },
   section: { marginBottom: space.m },
-  sectionTitle: { color: colors.textSecondary, fontSize: type.size.caption, fontWeight: '600', letterSpacing: 0.8, textTransform: 'uppercase', marginBottom: space.xs },
+  sectionTitle: { color: colors.textSecondary, fontSize: type.size.caption, fontWeight: '700', letterSpacing: 0.8, textTransform: 'uppercase', marginBottom: space.xs, ...legibleText },
   row: { flexDirection: 'row', gap: space.s, paddingVertical: 2 },
-  label: { color: colors.textSecondary, fontSize: type.size.small, width: 84 },
-  value: { color: colors.text, fontSize: type.size.small, flex: 1 },
+  label: { color: colors.textSecondary, fontSize: type.size.small, fontWeight: '500', width: 84, ...legibleText },
+  value: { color: colors.text, fontSize: type.size.small, fontWeight: '500', flex: 1, ...legibleText },
   mono: { fontFamily: type.mono },
   warn: { color: colors.warn },
   cardButton: { alignSelf: 'flex-start', marginTop: space.xs, marginLeft: 84 + space.s, paddingHorizontal: space.m, paddingVertical: space.xs, borderRadius: radius.pill, backgroundColor: colors.accentSoft },
-  cardButtonText: { color: colors.text, fontSize: type.size.small, fontWeight: '600' },
+  cardButtonText: { color: colors.text, fontSize: type.size.small, fontWeight: '600', ...legibleText },
   agent: { paddingVertical: space.xs },
   agentHead: { flexDirection: 'row', alignItems: 'center', gap: space.s },
   smallDot: { width: 8, height: 8, borderRadius: 4 },
-  agentName: { color: colors.text, fontSize: type.size.small, fontWeight: '600', flexShrink: 1 },
-  agentBranch: { color: colors.textSecondary, fontSize: type.size.caption, flex: 1 },
-  agentState: { color: colors.textSecondary, fontSize: type.size.caption },
-  agentLast: { color: colors.textSecondary, fontSize: type.size.caption, marginLeft: 16, marginTop: 2 },
-  footer: { color: colors.textSecondary, fontSize: type.size.caption, textAlign: 'center' },
+  agentName: { color: colors.text, fontSize: type.size.small, fontWeight: '700', flexShrink: 1, ...legibleText },
+  agentBranch: { color: colors.textSecondary, fontSize: type.size.caption, fontWeight: '500', flex: 1, ...legibleText },
+  agentState: { color: colors.textSecondary, fontSize: type.size.caption, fontWeight: '500', ...legibleText },
+  agentLast: { color: colors.textSecondary, fontSize: type.size.caption, fontWeight: '500', marginLeft: 16, marginTop: 2, ...legibleText },
+  footer: { color: colors.textSecondary, fontSize: type.size.caption, fontWeight: '500', textAlign: 'center', ...legibleText },
 });

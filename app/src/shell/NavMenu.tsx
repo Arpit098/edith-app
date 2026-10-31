@@ -113,9 +113,9 @@ export function NavMenu({ open, items, current, top, backdrop, onSelect, onClose
                   accessibilityLabel={on ? `${item.title}, current screen` : item.title}
                   accessibilityState={{ selected: on }}
                 >
-                  <Icon name={item.icon} size={22} color={colors.text} />
+                  <Icon name={item.icon} size={22} color={colors.text} halo />
                   <Text style={[styles.itemText, on && styles.itemTextOn]}>{item.title}</Text>
-                  {on ? <Icon name="check" size={18} color={colors.text} /> : null}
+                  {on ? <Icon name="check" size={18} color={colors.text} halo /> : null}
                 </Squish>
               );
             })}
@@ -133,8 +133,8 @@ const styles = StyleSheet.create({
   sheet: { paddingVertical: space.xs },
   item: { flexDirection: 'row', alignItems: 'center', gap: space.m, minHeight: TOUCH + space.s, paddingHorizontal: space.l, marginHorizontal: space.xs, borderRadius: radius.m },
   itemOn: { backgroundColor: colors.accentSoft },
-  // Labels and icons at full opacity in the text colour: 4.5:1 over any backdrop on the panel glass
-  // (core/theme contrast test); the current screen is marked by the row's tint, weight and check.
-  itemText: { color: colors.text, fontSize: type.size.body, flex: 1, ...legibleText },
+  // Labels and icons at full opacity, a little heavier, each with the dark halo: the popup is clear
+  // glass with no pane behind them. The current screen is marked by the row's tint, weight and check.
+  itemText: { color: colors.text, fontSize: type.size.body, fontWeight: '600', flex: 1, ...legibleText },
   itemTextOn: { fontWeight: '700' },
 });

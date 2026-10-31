@@ -6,11 +6,15 @@ Presentational components used by several features (buttons, chat bubble, diff v
   rim (`Rim.tsx`): a gradient stroke bright at the top-left and bottom-right, an inner highlight and
   a faint inner shadow, drawn as SVG so it's the same on real glass, blur only and the flat
   fallback, in the scheme's colours (`rims` in the theme, `GlassSettings.scheme`, dark by default).
-- **Popup legibility** (the `panel` level's `legibility` token): the rim is real Liquid Glass (light
-  tint, strong lens) and the content area gets a second, harder-blurred glass view plus a feathered
-  scrim, so popup text keeps WCAG 4.5:1 over any backdrop in every mode. The check is
-  `core/theme/__tests__/contrast.test.ts` (helpers in `core/theme/contrast.ts`); popup text uses
-  `colors.text` or `colors.textSecondary` only, at full opacity, with `legibleText`'s soft shadow.
+- **Popups are clear glass** (Arpit, 31 Oct; the `panel` level): the menus and the status card have
+  no background of their own. What's behind shows through with a light blur (14 dp), a very faint
+  tint and a thin bend at the edge, like iOS 26 menus. Labels and icons stay readable by themselves:
+  a dark soft halo (`legibleText`, `Icon halo`), weight 500 and up, full-opacity `colors.text` or
+  `colors.textSecondary`. The trade-off: on real glass no WCAG ratio is promised (over a white photo
+  the halo does the work); only the flat fallback keeps a tinted pane, at 4.5:1. The check is
+  `core/theme/__tests__/contrast.test.ts`.
+- **The bend is thin** (Arpit, 31 Oct): the lens bends the backdrop in a 6–8 dp band at the edge
+  (`bezel`, was 14–22 dp), pulling in 4–5 dp at the very edge (`refraction`).
 - **GrowSheet** (`motion.tsx`): a sheet that grows out of its trigger and shrinks back, unmounted once closed.
 - **The rim is thin** (Arpit, 31 Oct): about a hairline (0.5 dp) and about as bright as the thin
   glass edge, still lit at the top-left and bottom-right, with a 1 dp inner glow.

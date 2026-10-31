@@ -15,9 +15,8 @@ export const colors = {
   text: '#F2F4F7',
   textDim: 'rgba(235, 240, 245, 0.62)',
   textFaint: 'rgba(235, 240, 245, 0.38)',
-  // Secondary text on popup glass: opaque, so it keeps 4.5:1 over the worst backdrop (__tests__/contrast).
-  textSecondary: '#D5DCE4',
-  textShadow: 'rgba(0, 0, 0, 0.45)', // a soft shadow under popup labels
+  textSecondary: '#D5DCE4', // secondary text on popup glass: opaque, never faded
+  textShadow: 'rgba(0, 0, 0, 0.85)', // the dark halo under popup labels and icons (legibleText)
   accent: brand.blue,
   accentText: '#04121F', // text on an accent fill
   accentSoft: 'rgba(124, 174, 220, 0.20)',
@@ -50,37 +49,20 @@ export const colors = {
  */
 export type GlassLevel = 'thin' | 'regular' | 'thick' | 'control' | 'panel';
 
-/**
- * Popup legibility (iOS 26 Liquid Glass and good glassmorphism): the rim stays lively (light frost,
- * a strong lens) while the content area gets more blur and a scrim, and the labels sit on it at full
- * opacity. All of it is JS over the existing native view (no native change):
- * - `centreBlur`: a second glass view over the content area, blurred harder than the rim;
- * - `scrim`: a tinted pane over the content area, its edge feathered by a soft shadow. Its colour
- *   and alpha are chosen so popup text keeps WCAG 4.5:1 even over a pure white backdrop, in every
- *   mode (lens, blur only, flat): src/core/theme/__tests__/contrast.test.ts checks it.
- */
-export interface Legibility {
-  centreBlur: number; // dp: the content area's blur (the rim keeps `blur`)
-  scrim: string; // laid over the content area
-  inset: number; // dp from the edge where the content area starts; popup text stays inside it
-  feather: number; // dp: the scrim's soft edge, reaching outwards towards the rim
-}
-
 export interface GlassStyle {
   blur: number; // blur radius, dp (the frost: strong enough that text behind can't be read)
   tint: string; // laid over the frost
-  flat: string; // the fallback without blur (battery saver, before Android 12): nearly opaque
+  flat: string; // the fallback without blur (battery saver, before Android 12): a tinted pane
   edge: readonly [string, string]; // the gradient light edge, top-left → bottom-right
   highlight: string; // the inner glow along the top
   // The lens (Android 13+, edith-glass's AGSL shader):
-  refraction: number; // how far the rim bends the backdrop, dp (grows towards the edge)
-  bezel: number; // how wide the refracting rim is, dp
+  refraction: number; // how far the very edge bends the backdrop, dp (grows towards the edge)
+  bezel: number; // how wide the bending band at the edge is, dp (Arpit, 31 Oct: thin, a few dp)
   dispersion: number; // red/blue split at the rim, dp (about 2 px on a 3x screen)
   saturation: number; // 1 = unchanged; the frost lets colours glow through
   lift: number; // added brightness, 0..1: the frost's slight glow
   specular: number; // the thin highlight along the edge (brightest on top), 0..1
   rimWidth: number; // that highlight's width, dp
-  legibility?: Legibility; // popups with text: see Legibility
 }
 
 /** Glass surfaces, from the lightest (small pills) to the heaviest (the header). */
@@ -91,8 +73,8 @@ export const glass: Record<GlassLevel, GlassStyle> = {
     flat: 'rgba(30, 34, 40, 0.92)',
     edge: ['rgba(255, 255, 255, 0.22)', 'rgba(255, 255, 255, 0.04)'],
     highlight: 'rgba(255, 255, 255, 0.06)',
-    refraction: 8,
-    bezel: 14,
+    refraction: 4,
+    bezel: 6,
     dispersion: 0.6,
     saturation: 1.6,
     lift: 0.03,
@@ -105,8 +87,8 @@ export const glass: Record<GlassLevel, GlassStyle> = {
     flat: 'rgba(26, 30, 36, 0.94)',
     edge: ['rgba(255, 255, 255, 0.26)', 'rgba(255, 255, 255, 0.05)'],
     highlight: 'rgba(255, 255, 255, 0.08)',
-    refraction: 12,
-    bezel: 18,
+    refraction: 5,
+    bezel: 7,
     dispersion: 0.6,
     saturation: 1.7,
     lift: 0.04,
@@ -119,8 +101,8 @@ export const glass: Record<GlassLevel, GlassStyle> = {
     flat: 'rgba(20, 23, 28, 0.96)',
     edge: ['rgba(255, 255, 255, 0.30)', 'rgba(255, 255, 255, 0.06)'],
     highlight: 'rgba(255, 255, 255, 0.10)',
-    refraction: 10,
-    bezel: 20,
+    refraction: 5,
+    bezel: 8,
     dispersion: 0.5,
     saturation: 1.5,
     lift: 0.03,
@@ -135,8 +117,8 @@ export const glass: Record<GlassLevel, GlassStyle> = {
     flat: 'rgba(40, 46, 58, 0.96)',
     edge: ['rgba(255, 255, 255, 0.26)', 'rgba(255, 255, 255, 0.05)'],
     highlight: 'rgba(255, 255, 255, 0.07)',
-    refraction: 10,
-    bezel: 16,
+    refraction: 4,
+    bezel: 6,
     dispersion: 0.6,
     saturation: 1.7,
     lift: 0.02,
@@ -144,30 +126,35 @@ export const glass: Record<GlassLevel, GlassStyle> = {
     rimWidth: 1.2,
   },
   panel: {
-    // Popups carrying text (the menus, the status card). The rim is real Liquid Glass: a light
-    // tint, a strong lens and colour split, so the backdrop visibly bends at the edge. The content
-    // area is blurred harder and has the scrim, so the text reads over anything (Legibility).
-    blur: 24,
-    tint: 'rgba(40, 50, 70, 0.30)',
-    flat: 'rgba(30, 37, 50, 0.97)',
+    // Popups carrying text (the menus, the status card): clear Liquid Glass with no pane of their own
+    // (Arpit, 31 Oct). What's behind shows through, lightly blurred and only faintly tinted, and bends
+    // in a thin band at the edge. The labels carry their own dark halo (legibleText) and a heavier
+    // weight instead of sitting on a scrim. The flat fallback (no blur to calm what's behind) keeps a
+    // tinted pane, so it still reads.
+    blur: 14, // just enough that what's behind turns to colour and shapes, not competing text
+    tint: 'rgba(16, 20, 28, 0.14)',
+    flat: 'rgba(24, 30, 42, 0.90)',
     edge: ['rgba(255, 255, 255, 0.24)', 'rgba(255, 255, 255, 0.05)'],
-    highlight: 'rgba(255, 255, 255, 0.06)',
-    refraction: 14,
-    bezel: 22,
-    dispersion: 0.6,
-    saturation: 1.6,
-    lift: 0.02,
+    highlight: 'rgba(255, 255, 255, 0.04)',
+    refraction: 4,
+    bezel: 6,
+    dispersion: 0.5,
+    saturation: 1.4,
+    lift: 0,
     specular: 0.4,
     rimWidth: 1.2,
-    legibility: { centreBlur: 40, scrim: 'rgba(40, 50, 70, 0.80)', inset: 10, feather: 8 },
   },
 };
 
-/** A soft shadow under popup labels (the scrim does the contrast; this just lifts the glyphs). */
+/**
+ * The halo under popup text and icons: popups are clear glass with no pane behind the labels, so
+ * each glyph carries its own dark, soft shadow (centred, a little low) that separates white text from
+ * a bright backdrop. Android draws one shadow per Text, so it's strong and wide rather than stacked.
+ */
 export const legibleText = {
   textShadowColor: colors.textShadow,
-  textShadowOffset: { width: 0, height: 1 },
-  textShadowRadius: 3,
+  textShadowOffset: { width: 0, height: 0.5 },
+  textShadowRadius: 6,
 } as const;
 
 /** The colour scheme a surface sits in. The app is dark today; the rim is ready for both. */

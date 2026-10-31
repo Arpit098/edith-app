@@ -36,11 +36,16 @@ describe('the frost (Arpit, 13R: text showed through the glass sharp)', () => {
     expect(glassBase[3]).toBe(1);
   });
 
-  it('blurs 24–32 dp, lifts saturation 1.4–1.8x, splits RGB by under a dp, and the fallback is nearly opaque', () => {
+  it('chrome blurs 24–32 dp, lifts saturation 1.4–1.8x, splits RGB by under a dp, and the fallback is nearly opaque', () => {
     for (const level of ['thin', 'regular', 'thick', 'control', 'panel'] as const) {
       const g = glass[level];
-      expect(g.blur).toBeGreaterThanOrEqual(24);
-      expect(g.blur).toBeLessThanOrEqual(32);
+      if (level === 'panel') {
+        expect(g.blur).toBeGreaterThanOrEqual(10); // popups: a light blur, they're clear glass
+        expect(g.blur).toBeLessThanOrEqual(16);
+      } else {
+        expect(g.blur).toBeGreaterThanOrEqual(24);
+        expect(g.blur).toBeLessThanOrEqual(32);
+      }
       expect(g.saturation).toBeGreaterThanOrEqual(1.4);
       expect(g.saturation).toBeLessThanOrEqual(1.8);
       expect(g.dispersion).toBeGreaterThan(0);
@@ -50,17 +55,17 @@ describe('the frost (Arpit, 13R: text showed through the glass sharp)', () => {
   });
 });
 
-describe('text panels (status card, menus)', () => {
-  it('a dark scrim at 0.75–0.85 over the content area, so what is behind reads only as colour', () => {
-    const [r, g, b, a] = rgbaOf(glass.panel.legibility!.scrim);
-    expect(a).toBeGreaterThanOrEqual(0.75);
-    expect(a).toBeLessThanOrEqual(0.85);
-    expect(Math.max(r!, g!, b!)).toBeLessThan(0.3); // dark
+describe('the bend at the edge (Arpit, 31 Oct: "the bending on the border is thick")', () => {
+  it('a thin band, at most 8 dp on every level (it was 14–22), still bending visibly', () => {
+    for (const level of ['thin', 'regular', 'thick', 'control', 'panel'] as const) {
+      const g = glass[level];
+      expect(g.bezel).toBeLessThanOrEqual(8);
+      expect(g.refraction).toBeGreaterThanOrEqual(3); // a clearly visible bend at the very edge
+      expect(g.refraction).toBeLessThan(g.bezel); // never pulling from further in than the band is wide
+    }
   });
 
-  it('a light tint and a strong lens on the rim, so the backdrop visibly bends there (Liquid Glass)', () => {
-    expect(rgbaOf(glass.panel.tint)[3]).toBeLessThanOrEqual(0.4);
-    expect(glass.panel.refraction).toBeGreaterThanOrEqual(glass.regular.refraction);
-    expect(glass.panel.legibility!.centreBlur).toBeGreaterThan(glass.panel.blur);
+  it('popups are as thin as the thinnest chrome', () => {
+    expect(glass.panel.bezel).toBeLessThanOrEqual(Math.min(glass.thin.bezel, glass.regular.bezel, glass.thick.bezel, glass.control.bezel));
   });
 });
