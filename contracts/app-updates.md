@@ -115,6 +115,28 @@ dist/…               the `npx expo export --platform android` output (bundle, 
   `update.json` `files[].sha256`. `key` is the asset's MD5 (the name `expo export` gives it, which is how
   the bundle refers to it).
 
+### Local builds (OTA only, built on edith without CI)
+
+`python3 -m edith.features.app_updates.local_build [--ref origin/main]` (in `server/`) makes the same
+`edith-ota` artifact on edith, for JS-only changes when CI can't run. APKs still come only from CI.
+
+- From a clean checkout of the ref in its own clone (`<state_dir>/ota-build/src`): `npm ci` (skipped while
+  the lockfile and Node are unchanged), the runtimeVersion resolved as CI does (§4), `expo export`, then
+  `scripts/ota.js`. The release notes cover the PRs merged since the newest build the server holds for
+  that runtimeVersion.
+- The key is a file, by default `~/.config/edith-signing/ota/private-key.pem`. It must be the owner's and
+  mode 600, or the build refuses. Only `ota.js` reads it, which also checks it against
+  `app/certs/updates-certificate.pem`.
+- It refuses when the runtimeVersion matches no APK the server offers: the native side changed, so a new APK
+  is needed. It also refuses when that commit is already the newest bundle for the runtimeVersion.
+- The artifact goes into `<state_dir>/app-updates/inbox/<id>/`: it is copied in under a dot name, then renamed.
+  The collect job imports it before its GitHub pass, with the same checks as a CI artifact, and the record
+  gets `"source": "local"` and `run_id` 0. CI records have `"source": "ci"`. The newest update for a
+  runtimeVersion is served, whichever built it.
+- Hermes: npm's `hermesc` is x86-64 only, so on edith (ARM64) the build needs `--hermes-dir` (a `hermesc` built
+  from the same Hermes release) or `--no-bytecode`. With `--no-bytecode`, the bundle is plain JS, which Hermes
+  also runs but starts a little slower.
+
 ## 3. Server routes
 
 ### OTA (Expo Updates protocol v1)

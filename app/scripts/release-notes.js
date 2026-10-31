@@ -4,7 +4,7 @@
 // commit subjects as technical details. A PR without a block falls back to its title under
 // "changes"; "Internal:" lines are left out.
 //
-//   node scripts/release-notes.js --repo owner/name --sha <this build's commit> --out <file>
+//   node scripts/release-notes.js --repo owner/name --sha <this build's commit> [--since <commit>] --out <file>
 //   node scripts/release-notes.js --empty --out <file>          (PR builds: no notes)
 //
 // Three GitHub calls, whatever the size of the release (previous build, compare, merged PRs), each
@@ -78,13 +78,19 @@ function gh(args) {
   return execFileSync('gh', args, { encoding: 'utf8', timeout: 30_000, stdio: ['ignore', 'pipe', 'pipe'] });
 }
 
-/** What GitHub knows about this build: the PRs and commit subjects since the previous main build. */
-function fromGitHub(repo, sha) {
-  const runs = JSON.parse(
-    gh(['run', 'list', '--repo', repo, '--workflow', 'build-apk.yml', '--branch', 'main', '--event', 'push',
-      '--status', 'success', '--limit', '10', '--json', 'headSha']),
-  );
-  const previous = runs.map((r) => r.headSha).find((s) => s !== sha);
+/**
+ * What GitHub knows about this build: the PRs and commit subjects since the previous main build, or
+ * since `since` (a build on edith passes the commit of the newest build it holds; one call fewer).
+ */
+function fromGitHub(repo, sha, since) {
+  let previous = since;
+  if (!previous) {
+    const runs = JSON.parse(
+      gh(['run', 'list', '--repo', repo, '--workflow', 'build-apk.yml', '--branch', 'main', '--event', 'push',
+        '--status', 'success', '--limit', '10', '--json', 'headSha']),
+    );
+    previous = runs.map((r) => r.headSha).find((s) => s !== sha);
+  }
   let commits;
   if (previous) {
     commits = JSON.parse(gh(['api', `repos/${repo}/compare/${previous}...${sha}`,
@@ -117,7 +123,7 @@ if (require.main === module) {
   let notes = empty();
   if (!a.empty) {
     try {
-      notes = fromGitHub(a.repo, a.sha);
+      notes = fromGitHub(a.repo, a.sha, a.since);
     } catch (e) {
       console.log(`::warning::release notes skipped: ${String(e.message || e).split('\n')[0]}`);
     }
