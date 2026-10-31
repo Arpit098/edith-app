@@ -18,10 +18,11 @@ with it. Tokens are copied file to file only; they never reach the API, logs, th
 | POST | `/v1/accounts/login` | | `{id, url}`: a sign-in started (any earlier unfinished one is cancelled). 502 `{error}` if Claude's login gave no link |
 | POST | `/v1/accounts/login/{login}` | `{code, label?}` | `{account}`, the saved account (the same account signed in again updates its profile). 400 `{error}` with Claude's own message for a wrong or expired code (the sign-in is then over; a code that doesn't even look like one keeps it open), 404 if it has expired |
 | DELETE | `/v1/accounts/login/{login}` | | `{cancelled: bool}` |
+| PATCH | `/v1/accounts/{id}` | `{label}` | `{account}`, renamed. `label` is trimmed and must then be 1–40 characters on one line, else 400 `{error}`; 404 for an unknown id. Any account, the active one included, and also while a switch runs: only the label in the profile's `account.json` changes (rewritten atomically, mode 600); its credentials are never opened |
 | DELETE | `/v1/accounts/{id}` | | `{removed: id}`; 409 for the account in use or while a switch runs, 404 for an unknown id |
 
 `account`: `{id, label, email, plan, active}`. `id` is 8 hex characters; `label` is what Arpit typed
-when adding it, else the account's name; `plan` is Claude's subscription type (`pro`, `max`, …) or
+when adding or renaming it (trimmed, at most 40 characters), else the account's name; `plan` is Claude's subscription type (`pro`, `max`, …) or
 `null`; exactly one account is `active` when Claude is logged in. The login in use the first time the
 list is read is saved as an account, so there is always one to switch back to. Sorted: the active one
 first, then by label.

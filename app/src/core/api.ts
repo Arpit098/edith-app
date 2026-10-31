@@ -362,6 +362,12 @@ export function createApi(t: Transport) {
       await t.request<Obj>('DELETE', `/v1/accounts/login/${seg(loginId)}`);
     },
 
+    /** Renames a saved account (its label only; 1–40 characters after trimming). The account as saved. */
+    async renameAccount(id: string, label: string): Promise<ClaudeAccount | null> {
+      const r = await t.request<Obj>('PATCH', `/v1/accounts/${seg(id)}`, { label });
+      return r.account && typeof r.account === 'object' ? accountFrom(r.account as Obj) : null;
+    },
+
     async removeAccount(id: string): Promise<void> {
       await t.request<Obj>('DELETE', `/v1/accounts/${seg(id)}`);
     },
