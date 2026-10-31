@@ -63,7 +63,14 @@ export interface StatusDetails {
     tmux: 'running' | 'down';
   };
   lanes: { side: { ref: string; seconds: number; step: string | null; summary: string | null }[]; max_side: number; queued: number; approvals: number };
-  session: { id: string; title: string | null; started: number | null; messages: number | null; context_tokens: number | null } | null;
+  session: {
+    id: string;
+    title: string | null;
+    started: number | null;
+    messages: number | null;
+    context_tokens: number | null;
+    context_max?: number | null; // optional: the context window's size, when the server sends it
+  } | null;
   agents: { name: string; dir: string; branch: string | null; state: 'busy' | 'idle' | 'blocked'; blocked: 'permission' | 'usage_limit' | null; last: string | null }[];
   server: { tag: string | null; started: number; uptime: number };
 }
@@ -192,7 +199,7 @@ export function statusDetailsFrom(r: Obj): StatusDetails {
       approvals: num(lanes.approvals),
     },
     session: session
-      ? { id: str(session.id), title: strOrNull(session.title), started: numOrNull(session.started), messages: numOrNull(session.messages), context_tokens: numOrNull(session.context_tokens) }
+      ? { id: str(session.id), title: strOrNull(session.title), started: numOrNull(session.started), messages: numOrNull(session.messages), context_tokens: numOrNull(session.context_tokens), context_max: numOrNull(session.context_max) }
       : null,
     agents: list(r.agents).map((a) => ({
       name: str(a.name),

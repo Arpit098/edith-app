@@ -24,7 +24,7 @@ const read = (rel: string) => fs.readFileSync(path.join(SRC, rel), 'utf8');
 const POPUP_TEXT_STYLES: Record<string, string[]> = {
   'shell/NavMenu.tsx': ['itemText'],
   'features/live-session/ComposerMenu.tsx': ['label', 'commandName', 'commandText', 'note'],
-  'features/live-session/StatusPanel.tsx': ['cardDim', 'error', 'sectionTitle', 'label', 'value', 'cardButtonText', 'agentName', 'agentBranch', 'agentState', 'agentLast', 'footer'],
+  'features/live-session/StatusPanel.tsx': ['cardDim', 'error', 'state', 'bigElapsed', 'doing', 'summaryMeta', 'sectionTitle', 'label', 'value', 'cardButtonText', 'agentName', 'agentState', 'agentBranch', 'agentLast'],
 };
 
 /** A style's one-line definition in the file's StyleSheet.create block. */

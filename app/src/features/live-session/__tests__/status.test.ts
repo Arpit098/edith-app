@@ -2,7 +2,7 @@ import { statusDetailsFrom, type StatusDetails } from '../../../core/api';
 import { ev, fakeContext } from '../../../testing/fakes';
 import { initialLive, reduce, type LiveState } from '../model';
 import { DETAILS } from './details';
-import { barSummary, detailsLabel, formatElapsed, formatTokens, formatUptime, mainRun, pollDetails, toolName, turnSince } from '../status';
+import { ago, barSummary, contextShare, detailsLabel, formatElapsed, formatTokens, formatUptime, mainRun, pollDetails, toolName, turnSince } from '../status';
 
 
 const run = (events: Parameters<typeof reduce>[1][], from: LiveState = initialLive) => events.reduce(reduce, from);
@@ -68,6 +68,8 @@ describe('statusDetailsFrom', () => {
     expect(d.lanes.side[0]).toEqual({ ref: 's9', seconds: 12, step: null, summary: 'check the disk' });
     expect(d.agents[1]).toMatchObject({ state: 'blocked', blocked: 'permission', last: null });
     expect(d.session?.context_tokens).toBe(320_562);
+    expect(d.session?.context_max).toBeNull(); // optional: not sent today
+    expect(statusDetailsFrom({ ...DETAILS, session: { ...DETAILS.session, context_max: 1_000_000 } }).session?.context_max).toBe(1_000_000);
   });
 
   it('tolerates missing and odd fields', () => {
@@ -136,5 +138,24 @@ describe('pollDetails', () => {
     await jest.advanceTimersByTimeAsync(0);
     expect(errors).toEqual([{ error: 'offline' }]);
     stop2();
+  });
+});
+
+describe('ago and contextShare', () => {
+  it('says how long ago in words', () => {
+    expect(ago(-5)).toBe('just now'); // clock skew
+    expect(ago(59)).toBe('just now');
+    expect(ago(180)).toBe('3 min ago');
+    expect(ago(2 * 3600 + 100)).toBe('2 h ago');
+    expect(ago(4 * 86400)).toBe('4 d ago');
+  });
+
+  it('is a share of the context only when its size is known', () => {
+    expect(contextShare(320_562, null)).toBeNull();
+    expect(contextShare(320_562, undefined)).toBeNull();
+    expect(contextShare(320_562, 0)).toBeNull();
+    expect(contextShare(null, 1_000_000)).toBeNull();
+    expect(contextShare(250_000, 1_000_000)).toBe(0.25);
+    expect(contextShare(2_000_000, 1_000_000)).toBe(1);
   });
 });

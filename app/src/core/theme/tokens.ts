@@ -22,6 +22,8 @@ export const colors = {
   accentSoft: 'rgba(124, 174, 220, 0.20)',
   ok: '#8BD3A6',
   warn: '#E8C27A',
+  warnSoft: 'rgba(232, 194, 122, 0.20)',
+  track: 'rgba(255, 255, 255, 0.18)', // the empty part of a thin meter
   danger: '#F08A8A',
   dangerSoft: 'rgba(240, 138, 138, 0.18)',
   hairline: 'rgba(255, 255, 255, 0.10)',
@@ -260,7 +262,7 @@ export const motion = {
   grow: { damping: 17, stiffness: 260, mass: 0.9 }, // a sheet growing out of its trigger
   pressScale: 0.95,
   blobMs: 2400, // one breath of the working blob
-  bubbleMs: 4200, // one cycle of the thinking bubble's wobble and swirl
+  bubbleMs: 4200, // one cycle of the thinking bubble's rim wobble
   swipe: { damping: 20, stiffness: 320, mass: 0.7 }, // a swiped message springing back
 } as const;
 
@@ -278,18 +280,18 @@ export const titleGlow = {
 } as const;
 
 /**
- * The thinking bubble (ui/ThinkingBubble): an orb like Arpit's reference, in the app icon's
- * colours (app/assets/icon.png): silver-white bands, the rings' soft blue and a deeper rim blue,
- * with a faint lavender sheen for the soap-bubble shimmer.
+ * The thinking bubble (ui/ThinkingBubble): a soap bubble at icon size, in the app icon's colours
+ * (app/assets/icon.png) and Arpit's reference: silver-white, the rings' soft blue, a deeper rim blue
+ * and a lavender shimmer. Nearly clear in the middle; the colour lives in the thin rim.
  */
 export const bubble = {
-  core: 'rgba(16, 23, 29, 0.55)', // the icon's ink, see-through: the middle of the orb
-  body: 'rgba(124, 174, 220, 0.30)', // the soft blue the body fades to at the edge
+  centre: 'rgba(124, 174, 220, 0.04)', // the middle: almost clear, a faint blue tint
+  inner: 'rgba(124, 174, 220, 0.12)', // just inside the rim, where the film starts to show
+  edge: 'rgba(176, 164, 236, 0.42)', // the lavender band at the rim's inner edge
   rimLit: '#E8EEF6', // the silver catching light (top-left)
   rimMid: brand.blue,
   rimDeep: '#4F7FD0', // the icon's deeper blue on the rim's far side
-  sheen: 'rgba(176, 164, 236, 0.60)', // a lavender shimmer on the rim
-  bandSilver: 'rgba(232, 238, 246, 0.85)',
-  bandBlue: 'rgba(124, 174, 220, 0.85)',
-  bandDeep: 'rgba(96, 140, 222, 0.80)',
+  sheen: 'rgba(176, 164, 236, 0.85)', // the lavender shimmer in the rim's colour shift
+  glint: 'rgba(255, 255, 255, 0.95)', // the crisp highlights
+  reflection: 'rgba(232, 238, 246, 0.30)', // the faint inner reflection
 } as const;

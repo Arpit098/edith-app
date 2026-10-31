@@ -51,7 +51,9 @@ main lane; `approvals` the pending permission prompts (all lanes).
 **`session`**: the current conversation, or `null` if there is none. `started` is its first entry's
 time, `messages` the user prompts plus replies with text (tool calls and results not counted), and
 `context_tokens` the size of the latest prompt (input plus cached tokens), which is how full the
-context is. `started`, `messages` and `context_tokens` may be `null`.
+context is. `started`, `messages` and `context_tokens` may be `null`. Optional, not sent yet:
+`context_max`, the context window's size in tokens; when present the app draws a thin fill bar under
+the context size.
 
 **`agents`**: the coding agents, one per tmux session on the server's default tmux socket, sorted by
 name (`[]` when tmux isn't running or the list is turned off). Read from each session's active pane,

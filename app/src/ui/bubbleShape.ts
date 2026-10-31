@@ -1,6 +1,7 @@
-// The thinking bubble's geometry (ui/ThinkingBubble draws it): SVG path strings computed in
-// worklets on the UI thread, once per frame while it animates. `t` is the cycle's phase, 0..1; every
-// shape is periodic in it (whole multiples of 2π), so a repeating 0 → 1 loops with no jump.
+// The thinking bubble's geometry (ui/ThinkingBubble draws it): the rim's SVG path, computed in a
+// worklet on the UI thread once per frame while it animates, and the static highlights. `t` is the
+// cycle's phase, 0..1; the rim is periodic in it (whole multiples of 2π), so a repeating 0 → 1 loops
+// with no jump.
 
 const TAU = Math.PI * 2;
 const RIM_POINTS = 16;
@@ -44,30 +45,27 @@ export function rimPath(cx: number, cy: number, r: number, t: number, amp: numbe
   return `${d}Z`;
 }
 
-/** The inner swirl bands: long thin loops at different tilts, each turning its own way. */
-export const BANDS = [
-  { length: 0.78, width: 0.3, tilt: 0.4, turns: 1, drift: 0 },
-  { length: 0.66, width: 0.42, tilt: 2.2, turns: -1, drift: 2.1 },
-  { length: 0.52, width: 0.22, tilt: 4.1, turns: 2, drift: 4.2 },
-] as const;
+/**
+ * A circular arc from angle `from` to `to` (radians, y down, so increasing angles turn clockwise on
+ * screen) of radius r about (cx, cy): the bubble's glints and reflection. Static, drawn once.
+ */
+export function arcPath(cx: number, cy: number, r: number, from: number, to: number): string {
+  const large = to - from > Math.PI ? 1 : 0;
+  const x0 = cx + r * Math.cos(from);
+  const y0 = cy + r * Math.sin(from);
+  const x1 = cx + r * Math.cos(to);
+  const y1 = cy + r * Math.sin(to);
+  return `M${f(x0)} ${f(y0)}A${f(r)} ${f(r)} 0 ${large} 1 ${f(x1)} ${f(y1)}`;
+}
+
+const DEG = Math.PI / 180;
 
 /**
- * Band `i` as an ellipse (two SVG arcs), slightly off-centre and breathing, turned by `t`: the
- * swirl inside the orb. Its outer edge stays within r of the centre.
+ * Where the highlights sit, as shares of the radius and angles in degrees (y down: 225° is the
+ * top-left). All well inside the rim's smallest radius, so the wobble never crosses them.
  */
-export function bandPath(cx: number, cy: number, r: number, t: number, i: number): string {
-  'worklet';
-  const b = BANDS[i]!;
-  const phase = TAU * t;
-  const angle = b.tilt + b.turns * phase;
-  const off = r * 0.1;
-  const ox = cx + off * Math.cos(phase + b.drift);
-  const oy = cy + off * Math.sin(phase + b.drift);
-  const rx = r * b.length * (1 + 0.08 * Math.sin(phase + b.drift)); // ≤ 0.78·1.08 + 0.1 < 1
-  const ry = r * b.width * (1 + 0.15 * Math.sin(2 * phase + b.drift));
-  const dx = rx * Math.cos(angle);
-  const dy = rx * Math.sin(angle);
-  const deg = f(((((angle * 180) / Math.PI) % 180) + 180) % 180); // an ellipse repeats every half turn
-  const arc = `A${f(rx)} ${f(ry)} ${deg} 1 0`;
-  return `M${f(ox + dx)} ${f(oy + dy)}${arc} ${f(ox - dx)} ${f(oy - dy)}${arc} ${f(ox + dx)} ${f(oy + dy)}Z`;
-}
+export const GLINTS = {
+  main: { r: 0.74, from: 196 * DEG, to: 252 * DEG }, // the crisp curved glint, top-left
+  tiny: { r: 0.76, at: 42 * DEG, size: 0.065 }, // a dot of light, bottom-right
+  reflection: { r: 0.6, from: 105 * DEG, to: 160 * DEG }, // the faint inner reflection, lower left
+} as const;

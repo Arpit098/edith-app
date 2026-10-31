@@ -120,10 +120,14 @@ describe('StatusChip and StatusPopup', () => {
     await act(async () => toggle(r));
     expect(f.details).toHaveBeenCalledTimes(1);
     const shown = texts(r);
-    for (const part of ['Now', 'Running Bash · 2 queued', '$ npm test', 'Connected', 'Lanes', 'Session', 'Agents', 'Running Bash · 0:42', '321k tokens', 'edith-dev', 'needs approval', 'Live p1-live-7']) {
-      expect(shown).toContain(part);
-    }
+    // The summary first: the state, the turn's time (larger), what it's doing and the counts.
+    expect(shown).toMatch(/^0:40 \| Running Bash \| 0:40 \| \$ npm test \| 2 queued \| /);
+    for (const part of ['Lanes', 'Parallel | check the disk · 0:12', 'In use | 1 of 2', 'Queued | 2', 'Approvals | 1']) expect(shown).toContain(part);
+    for (const part of ['Session', 'Name | Phase 2 app', 'Started | 3 min ago', 'Messages | 157', 'Context | 321k tokens |']) expect(shown).toContain(part);
+    for (const part of ['Agents', 'edith-dev | busy | edith-app · release-notes | Running the tests', 'edith-app | needs approval | edith-app-ui · phase-2b']) expect(shown).toContain(part);
+    for (const part of ['Server', 'Connection | Connected', 'Version | p1-live-7', 'Up | 14h 13m', 'Claude | running', 'Updated | just now']) expect(shown).toContain(part);
     expect(shown).not.toContain('Retry now');
+    expect(r.root.findAll((n) => typeof n.props?.accessibilityLabel === 'string' && n.props.accessibilityLabel.startsWith('Context '))).toHaveLength(0); // no size: no bar
 
     await act(async () => {
       await jest.advanceTimersByTimeAsync(10_000);
@@ -142,6 +146,28 @@ describe('StatusChip and StatusPopup', () => {
     });
     expect(bubbleActive(r)).toBe(false);
     expect(texts(r)).toBe(''); // idle again: the timer goes
+    act(() => r.unmount());
+  });
+
+  it('hides zero and empty rows; shows a context bar when the size is known', async () => {
+    const f = fakes();
+    f.details.mockResolvedValue(
+      statusDetailsFrom({
+        ...DETAILS,
+        edith: { ...DETAILS.edith, state: 'idle', tool: null, step: null, ref: null, since: 820 },
+        lanes: { side: [], max_side: 2, queued: 0, approvals: 0 },
+        session: { ...DETAILS.session, messages: 0, context_tokens: 250_000, context_max: 1_000_000 },
+        agents: [],
+        server: { ...DETAILS.server, tag: null },
+      }),
+    );
+    const r = await mount(f);
+    await act(async () => toggle(r));
+    const shown = texts(r);
+    expect(shown).toMatch(/^Idle \| Last active 3 min ago \| /);
+    for (const gone of ['Lanes', 'Queued', 'Approvals', 'Messages', 'Agents', 'Version']) expect(shown).not.toContain(gone);
+    expect(shown).toContain('Context | 250k tokens of 1M');
+    expect(r.root.findAll((n) => n.props?.accessibilityLabel === 'Context 25% full').length).toBeGreaterThan(0);
     act(() => r.unmount());
   });
 

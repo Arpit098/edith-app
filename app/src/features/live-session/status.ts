@@ -60,6 +60,21 @@ export function formatUptime(seconds: number): string {
   return s >= 60 ? `${Math.floor(s / 60)}m` : `${s}s`;
 }
 
+/** How long ago, in words: "just now", "3 min ago", "2 h ago", "4 d ago". */
+export function ago(seconds: number): string {
+  const s = Math.max(0, Math.floor(seconds));
+  if (s < 60) return 'just now';
+  if (s < 3600) return `${Math.floor(s / 60)} min ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)} h ago`;
+  return `${Math.floor(s / 86400)} d ago`;
+}
+
+/** How full the context is, 0..1, or null when the server didn't say how big it is (context_max). */
+export function contextShare(tokens: number | null, max: number | null | undefined): number | null {
+  if (tokens == null || max == null || !(max > 0)) return null;
+  return Math.min(1, Math.max(0, tokens / max));
+}
+
 /** 320562 -> "321k", 1_250_000 -> "1.25M" */
 export function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2).replace(/\.?0+$/, '')}M`;
