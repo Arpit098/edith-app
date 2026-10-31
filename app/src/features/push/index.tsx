@@ -15,11 +15,12 @@ function Settings() {
 const push: FeatureModule = {
   id: 'push',
   settings: [{ title: 'Push', component: Settings }],
-  setup: ({ ports, connection }) => {
+  setup: ({ ports, api, connection }) => {
     if (!ports.push) return;
     const mine = {
       model: createPushModel({
         push: ports.push,
+        api,
         transport: ports.transport,
         connection,
         visibility: ports.visibility,

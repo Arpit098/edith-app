@@ -199,6 +199,7 @@ Base `http://<edith's Tailscale IP>:8787`, reachable over Tailscale only. Every 
 | POST | `/v1/stop` | | `{running, dropped: [ref]}` |
 | GET | `/v1/status` | | `{main: busy/idle, queued, runs: [{ref, lane, seconds, step}], tmux: running/down, conversation: bool, session: {id, title} \| null}` |
 | GET | `/v1/status/details` | | `{ts, edith, lanes, session, agents, server}`: the status panel (contracts/status.md) |
+| GET | `/v1/push/config` | | `{url, topic, token}`: edith's ntfy and the phone's read-only token, for turning push on (contracts/push.md, "Turning it on"). 404 when push isn't set up, 503 when the phone token file is unusable |
 | GET | `/v1/accounts` | | `{accounts, switch, login}`; also `PATCH /v1/accounts/{id}` (rename), `POST /v1/accounts/{id}/switch`, `POST /v1/accounts/login`, `POST`/`DELETE /v1/accounts/login/{login}`, `DELETE /v1/accounts/{id}` (contracts/accounts.md) |
 | GET | `/v1/sessions` | | `{sessions: [{session_id, title, updated, current}]}` |
 | POST | `/v1/sessions/{id}/resume` | | `{status: "switching", ref}`; the messages come as `command.reply`, then `session.changed` (if it switched) and last `session.switched {ref, result}` |

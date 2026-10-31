@@ -1,3 +1,4 @@
+import { ApiError, type PushConfig } from '../../../core/api';
 import type { PushMode, PushReceiver, PushSetup, PushStatus } from '../../../core/ports';
 import { fakeContext } from '../../../testing/fakes';
 import { createPushModel, defaultNtfyUrl } from '../model';
@@ -53,7 +54,7 @@ function setup(configured = true) {
   const push = new FakePush();
   let asked = 0;
   const ensurePermission = async () => (asked++, true);
-  const model = createPushModel({ push, transport: ctx.transport, connection: ctx.connection, ensurePermission });
+  const model = createPushModel({ push, api: ctx.api, transport: ctx.transport, connection: ctx.connection, ensurePermission });
   const open = () => ctx.connection.store.set((s) => ({ ...s, link: 'open' }));
   return { ctx, push, model, open, asked: () => asked };
 }
@@ -114,6 +115,41 @@ describe('push model', () => {
     expect(model.enable('http://edith:2586', TOKEN)).toBe(false);
     expect(model.store.get().error).toContain('Android');
     expect(setup(false).model.enable('http://edith:2586', TOKEN)).toBe(false);
+    model.dispose();
+  });
+
+  it('turns on with the config edith hands over: nothing pasted', async () => {
+    jest.useFakeTimers();
+    const { ctx, push, model } = setup();
+    const config: PushConfig = { url: 'http://100.78.124.98:2586', topic: 'edith-phone', token: TOKEN };
+    ctx.transport.on('GET /v1/push/config', config);
+    const done = model.turnOn('poll');
+    expect(model.store.get().fetching).toBe(true);
+    expect(await done).toBe(true);
+    expect(push.setup).toEqual({ ntfyUrl: 'http://100.78.124.98:2586', topic: 'edith-phone', ntfyToken: TOKEN, apiUrl: 'http://100.78.124.98:8787', apiToken: 'app-token', mode: 'poll' });
+    expect(model.store.get()).toMatchObject({ fetching: false, error: null });
+    expect(JSON.stringify(model.store.get())).not.toContain(TOKEN); // handed to the service, never kept in the store
+    model.dispose();
+  });
+
+  it('says why edith gave no config, and offers Advanced', async () => {
+    const { ctx, push, model } = setup();
+    const cases: [ApiError, string][] = [
+      [new ApiError(404, 'unknown route'), 'Use Advanced'],
+      [new ApiError(503, 'not usable'), 'ntfy-phone-token'],
+      [new ApiError(0, 'timeout'), 'Tailscale'],
+    ];
+    for (const [error, says] of cases) {
+      ctx.transport.on('GET /v1/push/config', () => {
+        throw error;
+      });
+      expect(await model.turnOn()).toBe(false);
+      expect(model.store.get()).toMatchObject({ fetching: false });
+      expect(model.store.get().error).toContain(says);
+    }
+    ctx.transport.on('GET /v1/push/config', { url: 'http://edith:2586', topic: 'edith', token: 'not-a-token' });
+    expect(await model.turnOn()).toBe(false); // a malformed answer is refused like a pasted one
+    expect(push.setup).toBeNull();
     model.dispose();
   });
 

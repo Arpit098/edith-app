@@ -191,6 +191,7 @@ LEAKS = [  # (text, the secret part that must not survive)
     ("xoxb-1234567890-abcdef", "1234567890-abcdef"),
     ("AIza" + "B" * 35, "B" * 35),
     ("a" * 20 + "1" * 20, "a" * 20),
+    ("tk_" + "abcdefghij" * 2 + "klmnopqrs", "abcdefghijabcdefghij"),  # ntfy token, letters only
 ]
 
 

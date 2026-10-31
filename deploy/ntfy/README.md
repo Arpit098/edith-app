@@ -62,7 +62,8 @@ stat -c '%a %s %n' ~/.config/edith/ntfy-publish-token ~/.config/edith/ntfy-phone
 )
 ```
 
-The phone token is given to the app once (Settings → Push), the same way as the App API token.
+The app fetches the phone token from edith itself (Settings → Push → Turn on: `GET /v1/push/config`,
+contracts/push.md), so nothing is pasted. Settings → Push → Advanced still takes it by hand.
 
 ## 3. Start ntfy
 
@@ -98,6 +99,7 @@ notifiers` (keep whatever is there: `[]` becomes `["ntfy"]`), `"notifications"` 
 url = "http://100.78.124.98:2586"
 topic = "edith"
 token_file = "~/.config/edith/ntfy-publish-token"
+phone_token_file = "~/.config/edith/ntfy-phone-token"   # handed to the app (read-only)
 ```
 
 then `systemctl --user restart edith-bridge` (a few seconds of downtime for Telegram and the app).
