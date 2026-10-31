@@ -8,10 +8,12 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import {
   BACKGROUNDS,
+  backgroundLook,
   colors,
   DEFAULT_APPEARANCE,
   DEFAULT_GLASS,
   INK_LIGHT,
+  inkOn,
   PRESETS,
   radius,
   resolveTheme,
@@ -101,7 +103,7 @@ function Heading({ children }: { children: string }) {
 }
 
 // Each theme's tile: its own background (with its glow) and accent, drawn once.
-const TILE_LOOKS = new Map(PRESETS.map((p) => [p.id, resolveTheme({ ...DEFAULT_APPEARANCE, theme: p.id }).background]));
+const TILE_LOOKS = new Map(PRESETS.map((p) => [p.id, backgroundLook(p, DEFAULT_APPEARANCE.background)]));
 
 const ThemeTile = memo(function ThemeTile({ preset: p, on, onPress }: { preset: ThemePreset; on: boolean; onPress: () => void }) {
   return (
@@ -119,21 +121,23 @@ const ThemeTile = memo(function ThemeTile({ preset: p, on, onPress }: { preset: 
 });
 
 function Swatches({ value, themeDefault, onPick, who }: { value: string | null; themeDefault: string; onPick: (id: string | null) => void; who: string }) {
+  const { bg } = useTheme(); // what a translucent swatch sits on
   return (
     <View style={styles.swatches} accessibilityRole="radiogroup">
-      <Swatch color={withAlpha(themeDefault, 0.35)} on={value === null} onPress={() => onPick(null)} label={`Theme default for ${who}`} auto />
+      <Swatch color={withAlpha(themeDefault, 0.35)} ground={bg} on={value === null} onPress={() => onPick(null)} label={`Theme default for ${who}`} auto />
       {SWATCHES.map((s) => (
-        <Swatch key={s.id} color={s.color} on={value === s.id} onPress={() => onPick(s.id)} label={`${s.name} for ${who}`} />
+        <Swatch key={s.id} color={s.color} ground={bg} on={value === s.id} onPress={() => onPick(s.id)} label={`${s.name} for ${who}`} />
       ))}
     </View>
   );
 }
 
-const Swatch = memo(function Swatch({ color, on, onPress, label, auto }: { color: string; on: boolean; onPress: () => void; label: string; auto?: boolean }) {
+const Swatch = memo(function Swatch({ color, ground, on, onPress, label, auto }: { color: string; ground: string; on: boolean; onPress: () => void; label: string; auto?: boolean }) {
+  const mark = inkOn(color, ground); // black on yellow, white on blue: whichever reads best
   return (
     <Pressable onPress={onPress} hitSlop={4} accessibilityRole="radio" accessibilityState={{ selected: on }} accessibilityLabel={label} style={[styles.ring, on && styles.ringOn]}>
       <View style={[styles.swatch, { backgroundColor: color }]}>
-        {auto ? <Icon name="auto-fix" size={14} color={colors.text} /> : on ? <Icon name="check" size={14} color={colors.text} /> : null}
+        {auto ? <Icon name="auto-fix" size={14} color={mark} /> : on ? <Icon name="check" size={14} color={mark} /> : null}
       </View>
     </Pressable>
   );
@@ -141,7 +145,8 @@ const Swatch = memo(function Swatch({ color, on, onPress, label, auto }: { color
 
 function Backgrounds({ appearance, onPick }: { appearance: Appearance; onPick: (id: BackgroundId) => void }) {
   // Each choice drawn in the current theme's colours (the same Ambient the app draws).
-  const looks = useMemo(() => BACKGROUNDS.map((b) => ({ ...b, look: resolveTheme({ ...appearance, background: b.id }).background })), [appearance]);
+  const { preset } = useTheme();
+  const looks = useMemo(() => BACKGROUNDS.map((b) => ({ ...b, look: backgroundLook(preset, b.id) })), [preset]);
   return (
     <View style={styles.tiles} accessibilityRole="radiogroup">
       {looks.map((b) => {

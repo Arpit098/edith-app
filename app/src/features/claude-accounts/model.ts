@@ -47,7 +47,7 @@ export function switchLine(sw: AccountSwitch, accounts: ClaudeAccount[]): string
     case 'running':
       return `${STEPS[sw.step ?? ''] ?? 'Switching'}…`;
     case 'done':
-      return `Switched to ${name(sw.target)}.`;
+      return `Switched to ${name(sw.target)}.${sw.detail ? ` ${sw.detail}.` : ''}`; // e.g. who was at the limit
     case 'rolled_back':
       return `Couldn’t switch, so it went back to ${name(sw.previous)}${sw.detail ? `: ${sw.detail}` : '.'}`;
     default:

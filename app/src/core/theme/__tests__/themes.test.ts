@@ -12,21 +12,24 @@ import {
   glassAt,
   INK_DARK,
   INK_LIGHT,
+  inkOn,
   normalizeAppearance,
   PRESETS,
   resolveTheme,
   rgbOf,
   rimStrength,
   SWATCHES,
+  withAlpha,
 } from '../themes';
 
 const AMOUNTS = [0, 15, 30, 45, 60, 75, 90, 100];
 const BUBBLES = [null, ...SWATCHES.map((s) => s.id)];
 
 describe('chat text on every bubble', () => {
-  it('reads at 4.5:1 or more: every preset × background × colour × glass amount, both sides', () => {
+  it('reads at 4.5:1 or more: every preset × background × colour × glass amount, both sides, quotes included', () => {
     const failures: string[] = [];
     let checked = 0;
+    const worst = (css: string, grounds: readonly (readonly [number, number, number])[]) => Math.min(...grounds.map((u) => contrast(composite(css, u), u)));
     for (const p of PRESETS) {
       for (const b of BACKGROUNDS) {
         for (const id of BUBBLES) {
@@ -34,14 +37,18 @@ describe('chat text on every bubble', () => {
             const t = resolveTheme({ theme: p.id, background: b.id, myBubble: id, edithBubble: id, glass: glassAmount });
             for (const [side, look] of [['mine', t.my], ['edith', t.edith]] as const) {
               checked++;
-              // Recomputed here, independently: the ink over the bubble over every backdrop colour.
-              const under = backdropSamples(t.background).flatMap((u) => {
-                const on = composite(look.fill, u);
-                return [on, composite(look.highlight, on)];
-              });
-              const text = Math.min(...under.map((u) => contrast(rgbOf(look.ink), u)));
-              const dim = Math.min(...under.map((u) => contrast(composite(look.inkDim, u), u)));
-              if (text < 4.5 || dim < 4.5) failures.push(`${p.id}/${b.id}/${id ?? 'default'}/${glassAmount}%/${side}: text ${text.toFixed(2)}, captions ${dim.toFixed(2)}`);
+              // Recomputed here, independently: the ink over the bubble over every backdrop colour…
+              const under = backdropSamples(t.background).map((u) => composite(look.fill, u));
+              // …and over the quote's pane on top of that.
+              const pane = under.map((u) => composite(look.inkSoft, u));
+              const scores = {
+                text: worst(look.ink, under),
+                captions: worst(look.inkDim, under),
+                quoteFrom: worst(look.ink, pane), // the quote's "EDITH"/"You": the full ink
+                quote: worst(look.quoteDim, pane),
+              };
+              const low = Object.entries(scores).filter(([, v]) => v < 4.5);
+              if (low.length) failures.push(`${p.id}/${b.id}/${id ?? 'default'}/${glassAmount}%/${side}: ${low.map(([k, v]) => `${k} ${v.toFixed(2)}`).join(', ')}`);
             }
           }
         }
@@ -117,6 +124,21 @@ describe('the themes', () => {
     expect([t.bg, t.accent, t.glass]).toEqual(['#05070A', '#7CAEDC', 60]);
     expect(t.my.fill).toBe('rgba(124, 174, 220, 0.24)');
     expect(t.edith.fill).toBe('rgba(255, 255, 255, 0.07)');
+  });
+
+  it('a swatch’s check mark reads at 3:1 or more on every swatch, the theme-default ones included', () => {
+    const low: string[] = [];
+    for (const p of PRESETS) {
+      const swatches = [...SWATCHES.map((s) => s.color), withAlpha(p.accent, 0.35), withAlpha('#FFFFFF', 0.35)];
+      for (const c of swatches) {
+        const under = composite(c, rgbOf(p.bg));
+        const ratio = contrast(rgbOf(inkOn(c, p.bg)), under);
+        if (ratio < 3) low.push(`${p.id}/${c}: ${ratio.toFixed(2)}`);
+      }
+    }
+    expect(low).toEqual([]);
+    expect(inkOn('#F2C94C', '#05070A')).toBe(INK_DARK); // yellow: a black check
+    expect(inkOn(withAlpha('#7CAEDC', 0.35), '#05070A')).toBe(INK_LIGHT); // the faint theme-default swatch: a white one
   });
 
   it('text on the accent reads on every preset', () => {

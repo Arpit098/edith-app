@@ -53,6 +53,8 @@ export interface EventDataMap {
   'accounts.switch': Record<string, unknown>;
   // A new app update is offered, once per update (contracts/app-updates.md §7):
   'app.update_available': { kind: 'ota' | 'apk'; id: string; versionName: string | null; versionCode: number | null; runtimeVersion: string; sha: string | null; summary: string };
+  // EDITH's background work now, the whole list (contracts/status.md, "Background"); read it through backgroundFrom (core/api):
+  'background.changed': { jobs: unknown[] };
   // App-local events (never sent by the server):
   'app.connected': { first: boolean }; // core/connection.ts: the stream (re)opened; resync what may be missed
   'app.voice': { state: 'listening' | 'speaking' | 'idle' }; // the voice feature (Phase 3): mic or TTS active

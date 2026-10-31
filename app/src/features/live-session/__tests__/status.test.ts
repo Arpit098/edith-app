@@ -3,14 +3,48 @@ import { ev, fakeContext } from '../../../testing/fakes';
 import { createStore } from '../../../core/store';
 import { initialLive, reduce, type LiveState } from '../model';
 import { DETAILS } from './details';
-import { agentChip, barSummary, contextUsage, detailsLabel, formatAgo, formatElapsed, formatTokens, formatUptime, mainRun, pollDetails, toolName, turnSince, nextTurnStart, trackTurnStart } from '../status';
+import { agentChip, backgroundLine, backgroundStopPrompt, barSummary, contextUsage, detailsLabel, formatAgo, formatElapsed, formatRunFor, formatTokens, formatUptime, mainRun, pollDetails, toolName, turnSince, nextTurnStart, trackTurnStart } from '../status';
 
 
 const run = (events: Parameters<typeof reduce>[1][], from: LiveState = initialLive) => events.reduce(reduce, from);
 
 describe('barSummary', () => {
   it('is idle with nothing running', () => {
-    expect(barSummary(initialLive)).toEqual({ state: 'idle', tone: 'idle', label: 'Idle', counts: '', detail: null });
+    expect(barSummary(initialLive)).toEqual({ state: 'idle', tone: 'idle', label: 'Idle', counts: '', detail: null, background: 0 });
+  });
+
+  it('is waiting, not working, when the reply is done but background work runs', () => {
+    const job = { id: 'tu1', kind: 'shell', label: 'Wait for PR 41 CI', started: 100 };
+    let s = run([
+      ev('message.user', { text: 'watch the CI' }, { origin: 'app' }),
+      ev('turn.started', { ref: 'r1', lane: 'main' }),
+      ev('background.changed', { jobs: [job] }),
+    ]);
+    // While the turn runs it's still working; the job only adds to the counts.
+    expect(barSummary(s)).toMatchObject({ state: 'thinking', tone: 'busy', counts: '1 bg', background: 1 });
+    s = reduce(s, ev('turn.done', { ref: 'r1', lane: 'main', text: 'Watching it' }));
+    expect(barSummary(s)).toEqual({ state: 'waiting', tone: 'waiting', label: 'Waiting on background work', counts: '1 bg', detail: 'Wait for PR 41 CI', background: 1 });
+    s = reduce(s, ev('background.changed', { jobs: [] }));
+    expect(barSummary(s)).toMatchObject({ state: 'idle', tone: 'idle', background: 0 });
+  });
+
+  it('says what Stop does and does not cancel while only background work runs', () => {
+    const now = 1000;
+    const jobs = [
+      { id: 'a', kind: 'shell' as const, label: 'Wait for PR 41 CI', started: now - 185 },
+      { id: 'b', kind: 'agent' as const, label: 'Review PR 41', started: now - 20 },
+    ];
+    expect(backgroundLine(jobs[0]!, now)).toBe('Shell · Wait for PR 41 CI · 3 min');
+    expect(backgroundLine(jobs[1]!, now)).toBe('Agent · Review PR 41 · <1 min');
+    expect(backgroundLine({ ...jobs[1]!, started: null }, now)).toBe('Agent · Review PR 41');
+    expect(formatRunFor(3725)).toBe('1 h 2 min');
+    const p = backgroundStopPrompt(jobs, now);
+    expect(p.title).toBe('2 background jobs running');
+    expect(p.message).toBe(
+      "EDITH's reply is done, so Stop has no turn to end, and it doesn't cancel these:\n• Shell · Wait for PR 41 CI · 3 min\n• Agent · Review PR 41 · <1 min\n\nThey report back when done. Ask EDITH to cancel them?",
+    );
+    expect(p.request).toBe('Please cancel your background work: Wait for PR 41 CI; Review PR 41.');
+    expect(backgroundStopPrompt(jobs.slice(0, 1), now).title).toBe('Background work running');
   });
 
   it('follows the main lane through a turn', () => {
@@ -79,6 +113,7 @@ describe('formatting', () => {
     expect(detailsLabel(d.edith)).toBe('Running Bash');
     expect(detailsLabel({ ...d.edith, state: 'waiting_approval' })).toBe('Waiting for approval (Bash)');
     expect(detailsLabel({ ...d.edith, state: 'idle' })).toBe('Idle');
+    expect(detailsLabel({ ...d.edith, state: 'waiting' })).toBe('Reply done · waiting on background work');
   });
 });
 
@@ -88,14 +123,18 @@ describe('statusDetailsFrom', () => {
     expect(d.edith).toEqual(DETAILS.edith);
     expect(d.lanes.side[0]).toEqual({ ref: 's9', seconds: 12, step: null, summary: 'check the disk' });
     expect(d.agents[1]).toMatchObject({ state: 'blocked', blocked: 'permission', last: null });
+    expect(d.agents[2]).toMatchObject({ state: 'waiting', background: 'shell' });
     expect(d.session?.context_tokens).toBe(320_562);
+    expect(statusDetailsFrom({ ...DETAILS, edith: { ...DETAILS.edith, state: 'waiting' } }).edith.state).toBe('waiting');
   });
 
   it('tolerates missing and odd fields', () => {
-    const d = statusDetailsFrom({ edith: { state: 'dancing' }, agents: [null, { name: 'x', state: 'weird' }], session: null });
+    const d = statusDetailsFrom({ edith: { state: 'dancing', background: [null, { id: 'b', kind: 'odd', label: 'x', started: 'soon' }] }, agents: [null, { name: 'x', state: 'weird' }], session: null });
     expect(d.edith.state).toBe('idle');
     expect(d.edith.tmux).toBe('down');
-    expect(d.agents).toEqual([{ name: 'x', dir: '', branch: null, state: 'idle', blocked: null, last: null }]);
+    expect(d.edith.background).toEqual([{ id: 'b', kind: 'shell', label: 'x', started: null }]); // an older server: []
+    expect(statusDetailsFrom({}).edith.background).toEqual([]);
+    expect(d.agents).toEqual([{ name: 'x', dir: '', branch: null, state: 'idle', blocked: null, last: null, background: null }]);
     expect(d.session).toBeNull();
     expect(d.lanes).toEqual({ side: [], max_side: 0, queued: 0, approvals: 0 });
   });

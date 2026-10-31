@@ -40,7 +40,7 @@ function boot() {
   const api = createApi(transport);
   const connection = new Connection(transport, storage, bus);
   const loaded = loadFeatures(features, { bus, ports: { transport, storage, data, installer, ota, recorder, stt, media: createExpoMediaPicker(), status: system?.status, notifier: system?.notifier, push: system?.push, visibility }, api, connection });
-  return { connection, loaded, glass: createAndroidGlass(), appearance: createAppearanceStore(data) };
+  return { connection, loaded, visibility, glass: createAndroidGlass(), appearance: createAppearanceStore(data) };
 }
 
 /**
@@ -80,7 +80,12 @@ export default function App() {
   useEffect(() => {
     void app.connection.load();
     void app.appearance.load();
+    // Leaving the app: write a pending appearance change now (Android may kill the app before its timer).
+    const off = app.visibility.onChange((active) => {
+      if (!active) app.appearance.flush();
+    });
     return () => {
+      off();
       app.connection.dispose();
       app.loaded.cleanup();
       app.appearance.dispose();

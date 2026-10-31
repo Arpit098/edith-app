@@ -28,6 +28,10 @@
   "description": "Upcoming reminders"
  },
  {
+  "command": "btw",
+  "description": "Run in parallel"
+ },
+ {
   "command": "queue",
   "description": "Run after the current task"
  },

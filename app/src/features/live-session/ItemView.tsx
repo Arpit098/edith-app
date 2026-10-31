@@ -3,14 +3,13 @@
 //
 // The two sides' bubbles are glass in the chosen colours (Settings → Appearance): the colour as a
 // translucent tint that follows the glass amount, a thin light edge (bright top-left, dim
-// bottom-right) and a faint sheen along the top. List glass: no live blur per row, so a long chat
-// scrolls as cheaply as before (one gradient view per bubble, none at 0%). The text is white or
-// black per bubble colour (theme BubbleLook.ink), at 4.5:1 or more on every background.
+// bottom-right; the lit top edge is the sheen). List glass: no live blur and no extra view per row,
+// nor any clipping, so a long chat scrolls as cheaply as before. The text is white or black per
+// bubble colour (theme BubbleLook.ink), at 4.5:1 or more on every background, quotes included.
 
 import { memo, useState } from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { BubbleSheen as Sheen } from '../../ui/BubbleSheen';
 import { DiffView } from '../../ui/DiffView';
 import { Icon } from '../../ui/Icon';
 import { ReplyButtons } from '../../ui/ReplyButtons';
@@ -49,6 +48,10 @@ export interface ItemViewProps {
 }
 
 const REPLY_ACTIONS = [{ name: 'reply', label: 'Reply' }];
+// Android's default ("highQuality") line breaking can measure a short line narrower than it draws
+// with some system fonts (OnePlus's): the text then wraps where it may break ("/compact" after the
+// slash) and the bubble, sized for one line, clips the rest. "simple" measures and draws alike.
+const BREAK = 'simple';
 
 export const ItemView = memo(function ItemView({ item, onPress, tick, status, onRetry, onReply, onQuote, highlight }: ItemViewProps) {
   const theme = useTheme();
@@ -69,12 +72,11 @@ export const ItemView = memo(function ItemView({ item, onPress, tick, status, on
             accessibilityHint={retry ? 'Send again' : undefined}
             {...a11yReply}
           >
-            <Sheen look={theme.my} glass={theme.glass} />
             {from || item.voice ? <Text style={[styles.meta, ts.mineDim]}>{[from, item.voice ? '🎙 voice' : ''].filter(Boolean).join(' · ')}</Text> : null}
             {item.replyTo ? <QuoteView quote={item.replyTo} side="mine" onPress={onQuote ? () => onQuote(item.id, item.replyTo!.text) : undefined} /> : null}
             {item.attachments.length ? <SentAttachments list={item.attachments} /> : null}
             {item.text ? (
-              <Text style={[styles.text, ts.mineText]} selectable>
+              <Text style={[styles.text, ts.mineText]} selectable textBreakStrategy={BREAK}>
                 {item.text}
               </Text>
             ) : null}
@@ -99,9 +101,8 @@ export const ItemView = memo(function ItemView({ item, onPress, tick, status, on
     case 'assistant':
       return (
         <View style={[styles.bubble, styles.assistant, ts.edith, highlight && ts.highlight]} {...a11yReply}>
-          <Sheen look={theme.edith} glass={theme.glass} />
           {item.lane === 'side' ? <Text style={[styles.meta, ts.edithDim]}>⚡ Parallel answer (the main conversation was busy)</Text> : null}
-          <Text style={[styles.text, ts.edithText]} selectable>
+          <Text style={[styles.text, ts.edithText]} selectable textBreakStrategy={BREAK}>
             {item.text}
           </Text>
         </View>
@@ -113,7 +114,7 @@ export const ItemView = memo(function ItemView({ item, onPress, tick, status, on
     case 'system':
       return (
         <View style={[styles.system, ts.system, item.tone === 'error' && styles.systemError]}>
-          <Text style={styles.text} selectable>
+          <Text style={styles.text} selectable textBreakStrategy={BREAK}>
             {item.text}
           </Text>
           {item.note ? <Text style={styles.note}>{item.note}</Text> : null}
@@ -151,7 +152,7 @@ function QuoteView({ quote, side, onPress }: { quote: Quote; side: 'mine' | 'edi
       accessibilityHint="Shows the original message"
     >
       <Text style={[styles.quoteFrom, side === 'mine' ? ts.mineText : ts.edithText]}>{quoteLabel(quote.from)}</Text>
-      <Text style={[styles.quoteText, side === 'mine' ? ts.mineDim : ts.edithDim]} numberOfLines={2}>
+      <Text style={[styles.quoteText, side === 'mine' ? ts.mineQuoteText : ts.edithQuoteText]} numberOfLines={2}>
         {quote.text}
       </Text>
     </Pressable>
@@ -232,8 +233,8 @@ const styles = StyleSheet.create({
   attachmentChip: { flexDirection: 'row', alignItems: 'center', gap: space.xs, maxWidth: 220, backgroundColor: colors.cardRaised, borderRadius: radius.s, paddingHorizontal: space.s, paddingVertical: space.xs },
   attachmentName: { color: colors.text, fontSize: type.size.small, flexShrink: 1 },
   // Every bubble has a 1 dp border: its glass edge (themed), and a failed send or the jump-to mark
-  // changes only its colour, so the bubble never shifts by a pixel. The sheen is clipped to it.
-  bubble: { borderRadius: radius.l, paddingHorizontal: space.m, paddingVertical: space.s + 2, marginVertical: space.xs, maxWidth: '88%', borderWidth: 1, overflow: 'hidden' },
+  // changes only its colour, so the bubble never shifts by a pixel. Nothing inside needs clipping.
+  bubble: { borderRadius: radius.l, paddingHorizontal: space.m, paddingVertical: space.s + 2, marginVertical: space.xs, maxWidth: '88%', borderWidth: 1 },
   userWrap: { alignSelf: 'flex-end', alignItems: 'flex-end', maxWidth: '88%', marginVertical: space.xs },
   user: { borderBottomRightRadius: radius.s, maxWidth: '100%', marginVertical: 0 },
   quote: { borderLeftWidth: 3, borderRadius: radius.s, paddingHorizontal: space.s, paddingVertical: space.xs, marginBottom: space.xs },
@@ -277,6 +278,9 @@ const useBubbleStyles = themedStyles((t: Theme) =>
     edithDim: { color: t.edith.inkDim },
     mineQuote: { backgroundColor: t.my.inkSoft, borderLeftColor: t.my.ink },
     edithQuote: { backgroundColor: t.edith.inkSoft, borderLeftColor: t.accent },
+    // The quote's text sits on its pane: faded only as far as still reads at 4.5:1 there.
+    mineQuoteText: { color: t.my.quoteDim },
+    edithQuoteText: { color: t.edith.quoteDim },
     failed: ring(colors.danger),
     highlight: ring(t.accent),
     system: { borderLeftColor: t.accent },

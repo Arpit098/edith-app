@@ -29,15 +29,22 @@ class AgentBackend(Protocol):
     def start(self, bus) -> None:
         """Begin working (threads, watchers). Progress and replies arrive as events on `bus`."""
 
-    def send(self, text: str, origin: str, ref: str, force_queue: bool = False) -> TurnHandle:
-        """Start a turn: the main lane if free, else a side lane if one is free, else the queue
-        (always the queue when force_queue). Results arrive as events (contracts/events.md)."""
+    def send(self, text: str, origin: str, ref: str, force_queue: bool = False, parallel: bool = False) -> TurnHandle:
+        """Start a turn: the main lane if free. While it is busy: a side lane when `parallel` (/btw)
+        and one is free, else the queue, where the running turn reads it before its answer (delivery
+        "mid_turn"). force_queue (/queue): the queue, for a turn of its own. Results arrive as events
+        (contracts/events.md)."""
 
     def stop(self) -> StopResult:
         """Interrupt running turns and drop queued ones (each dropped one gets turn.stopped, lane "queued")."""
 
     def status(self) -> tuple[list[RunInfo], int]:
         """Running turns (oldest first) and the number of queued messages."""
+
+    def background(self) -> list[dict]:
+        """Work the main session started in the background and that still runs, after its turn may
+        have ended: [{id, kind: "shell" | "agent", label, started}] oldest first. Changes also come
+        as `background.changed` events."""
 
     def busy(self) -> bool:
         """True while the main lane is working or has messages queued."""

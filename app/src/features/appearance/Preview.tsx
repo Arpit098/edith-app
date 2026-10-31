@@ -1,6 +1,6 @@
 // The live preview at the top of Appearance: a small chat with the header, one bubble from each
 // side and the composer, drawn with the same pieces as the real screens (Ambient, Glass, the
-// bubbles' glass face and sheen) in the theme it is given, so it follows every choice, the glass
+// bubbles' glass face) in the theme it is given, so it follows every choice, the glass
 // slider while it's being dragged included. The header and composer are real glass over the
 // preview's own backdrop.
 
@@ -9,7 +9,6 @@ import { StyleSheet, Text, View } from 'react-native';
 
 import { bubbleFace, colors, radius, space, ThemeContext, type, type Theme } from '../../core/theme';
 import { Ambient } from '../../ui/Ambient';
-import { BubbleSheen } from '../../ui/BubbleSheen';
 import { Glass, useBackdrop } from '../../ui/Glass';
 import { Icon } from '../../ui/Icon';
 
@@ -31,11 +30,9 @@ function Scene({ theme: t }: { theme: Theme }) {
         <Ambient />
         <View style={styles.chat}>
           <View style={[styles.bubble, styles.edith, bubbleFace(t.edith)]} testID="preview-edith">
-            <BubbleSheen look={t.edith} glass={t.glass} />
             <Text style={[styles.text, { color: t.edith.ink }]}>Morning! The build passed and PR 41 is ready.</Text>
           </View>
           <View style={[styles.bubble, styles.mine, bubbleFace(t.my)]} testID="preview-mine">
-            <BubbleSheen look={t.my} glass={t.glass} />
             <Text style={[styles.text, { color: t.my.ink }]}>Nice, ship it</Text>
             <Text style={[styles.time, { color: t.my.inkDim }]}>09:41 ✓✓</Text>
           </View>
@@ -61,7 +58,7 @@ const styles = StyleSheet.create({
   header: { position: 'absolute', top: 0, left: 0, right: 0, height: 44, justifyContent: 'center' },
   title: { color: colors.text, textAlign: 'center', fontSize: type.size.title, fontWeight: '700', letterSpacing: 1.2, textShadowOffset: { width: 0, height: 0 }, textShadowRadius: 8 },
   chat: { flex: 1, justifyContent: 'center', paddingHorizontal: space.m, paddingTop: 44, paddingBottom: 56, gap: space.s },
-  bubble: { maxWidth: '78%', borderRadius: radius.l, borderWidth: 1, paddingHorizontal: space.m, paddingVertical: space.s, overflow: 'hidden' },
+  bubble: { maxWidth: '78%', borderRadius: radius.l, borderWidth: 1, paddingHorizontal: space.m, paddingVertical: space.s },
   edith: { alignSelf: 'flex-start', borderBottomLeftRadius: radius.s },
   mine: { alignSelf: 'flex-end', borderBottomRightRadius: radius.s },
   text: { fontSize: type.size.body, lineHeight: 20 },

@@ -95,7 +95,8 @@ class TelegramFrontend:
         if self.api is None:
             self.api = BotApi(read_token(self.paths.telegram_dir))
         for pattern, handler in (("turn.*", self._on_turn), ("permission.*", self._on_permission),
-                                 ("message.system", self._on_system), ("message.buttons_cleared", self._on_cleared)):
+                                 ("message.system", self._on_system), ("message.buttons_cleared", self._on_cleared),
+                                 ("message.delivered", self._on_delivered)):
             bus.subscribe(pattern, handler, owner="telegram")
         self._crashed = not self.state.get("clean_exit", True)
         self.state.update(lambda s: s.__setitem__("clean_exit", False))
@@ -312,8 +313,40 @@ class TelegramFrontend:
         else:
             self.send_text(turn.chat, text)
 
+    def _on_delivered(self, ev):
+        """A message read by the running task (delivery "mid_turn"): ✍ on it; that task's reply answers it."""
+        if ev.origin != "telegram" or ev.data.get("delivery") != "mid_turn":
+            return
+        chat, msg_id = self.parse_ref(ev.data.get("ref"))
+        if chat is not None:
+            self.react(chat, msg_id, "✍")
+
+    def _answer_folded(self, ev):
+        """A turn's end answers the messages it read mid-turn (`answers`) too. A Telegram one gets it
+        here unless the reply already goes to its chat (the turn was a Telegram message from there):
+        the reply, quoting it, or that the task stopped or failed."""
+        d = ev.data
+        host_chat = self.parse_ref(d.get("ref"))[0] if ev.origin == "telegram" else None
+        for ref in d.get("answers") or ():
+            chat, msg_id = self.parse_ref(ref)
+            if chat is None:
+                continue
+            if chat == host_chat:  # the reply lands in this chat anyway: just mark it answered
+                self.react(chat, msg_id, {"turn.done": "👍", "turn.stopped": "🫡"}.get(ev.type, "💔"))
+                continue
+            turn = Turn(chat, msg_id, "main")
+            if ev.type == "turn.done":
+                self._deliver(turn, d, quote=True)
+            elif ev.type == "turn.stopped":
+                self.react(chat, msg_id, "🫡")
+                self.send_text(chat, "🛑 Stopped.", reply_parameters=reply_to(msg_id))
+            else:
+                self._failed(turn, {**d, "ref": ref})
+
     def _on_turn(self, ev):
         d, kind = ev.data, ev.type
+        if kind in ("turn.done", "turn.stopped", "turn.failed") and d.get("answers"):
+            self._answer_folded(ev)
         if ev.origin != "telegram" and d.get("ref") not in self._turns:
             return
         ref = d.get("ref")
@@ -321,7 +354,10 @@ class TelegramFrontend:
             if ref in self._held_events:  # its button press hasn't been answered yet
                 self._held_events[ref].append(ev)
                 return
-        if kind == "turn.queued":
+        if kind == "turn.queued" and d.get("fold"):  # the running task reads it before it answers
+            chat, msg_id = self.parse_ref(ref)
+            self.react(chat, msg_id, "👀")
+        elif kind == "turn.queued":
             chat, msg_id = self.parse_ref(ref)
             self.react(chat, msg_id, "🥱")  # waiting in line
             self.send_text(chat, f"📥 Queued (#{d['position']}). I'll get to it after the current task. /stop to cancel.")
@@ -383,8 +419,9 @@ class TelegramFrontend:
         else:
             self._edit_or_send(turn, text)
 
-    def _deliver(self, turn, d):
-        """A finished turn's reply: strip SEND_FILE/REACT lines, react, attach files."""
+    def _deliver(self, turn, d, quote=False):
+        """A finished turn's reply: strip SEND_FILE/REACT lines, react, attach files. `quote`: reply
+        to the message (parallel answers always do)."""
         files, text = take_directives(d.get("text") or "", "SEND_FILE")
         picked, text = take_directives(text, "REACT")  # EDITH may pick a final reaction
         is_error = d.get("is_error")
@@ -398,7 +435,7 @@ class TelegramFrontend:
             self.api("editMessageText", chat_id=turn.chat, message_id=turn.status_id,
                      text=f"{turn.tag}{'❌' if is_error else '✅'} Done in {d.get('elapsed', 0)}s · {d.get('steps', 0)} steps")
         # New message so the phone pings; parallel answers quote the message they answer.
-        self.send_text(turn.chat, text, reply_parameters=reply_to(turn.msg_id) if turn.lane == "side" else None)
+        self.send_text(turn.chat, text, reply_parameters=reply_to(turn.msg_id) if quote or turn.lane == "side" else None)
         for path in files:
             if os.path.isfile(path):
                 self.api.send_file(turn.chat, path)

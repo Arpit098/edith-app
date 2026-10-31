@@ -59,4 +59,18 @@ describe('appearance store', () => {
     s.dispose();
     expect(JSON.parse(data.data.get(APPEARANCE_KEY)!)).toMatchObject({ background: 'dots' });
   });
+
+  it('flush writes a pending change at once (the app going to the background), and only once', async () => {
+    const data = new MemoryStorage();
+    const writes = jest.spyOn(data, 'set');
+    const s = createAppearanceStore(data);
+    s.flush(); // nothing pending: nothing written
+    expect(writes).not.toHaveBeenCalled();
+    s.set({ glass: 35 });
+    s.flush();
+    expect(writes).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(data.data.get(APPEARANCE_KEY)!)).toMatchObject({ glass: 35 });
+    await jest.advanceTimersByTimeAsync(1000);
+    expect(writes).toHaveBeenCalledTimes(1); // the timer it replaced doesn't write again
+  });
 });

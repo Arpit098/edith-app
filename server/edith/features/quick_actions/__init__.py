@@ -45,14 +45,14 @@ def setup(ctx: Context) -> None:
 
     def run(cmd):
         def handler(call: CommandCall):
-            agent.send(quick_prompt(cmd), call.origin, call.ref)
+            agent.send(quick_prompt(cmd), call.origin, call.ref, parallel=True)  # a lookup of its own, as before
         return handler
 
     def press(call: ActionCall):
         cmd = "/" + call.action[len("quick:"):]
         if cmd not in QUICK:
             return ActionResult()
-        agent.send(quick_prompt(cmd), call.origin, call.ref)
+        agent.send(quick_prompt(cmd), call.origin, call.ref, parallel=True)
         return ActionResult(toast="On it")
 
     ctx.add_command("menu", "Quick action buttons", lambda call: Reply("Quick actions:", menu_keyboard()),

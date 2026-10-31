@@ -14,7 +14,7 @@
   {
    "chat_id": 111,
    "method": "sendMessage",
-   "text": "I'm E.D.I.T.H. Just text me what you need.\n\nIf I'm busy, new messages run in a parallel lane straight away (up to 2).\n\n/menu – quick action buttons\n/brief /mail /today /servers /changes – quick actions\n/reminders – upcoming reminders (say \"remind me…\" to add one)\n/queue <task> – wait for the current task instead of running in parallel\n/new – start a fresh conversation\n/sessions – switch back to an earlier conversation\n/resume <n|name> – switch by number or name\n/name <title> – name the current conversation\n/compact [instructions] – compact the conversation (optional: what to keep)\n/stop – stop all running tasks\n/status – what I'm doing right now\n/restart – restart the bridge (after updates)\n/help – this message"
+   "text": "I'm E.D.I.T.H. Just text me what you need.\n\nIf I'm busy, new messages run in a parallel lane straight away (up to 2).\n\n/menu – quick action buttons\n/brief /mail /today /servers /changes – quick actions\n/reminders – upcoming reminders (say \"remind me…\" to add one)\n/btw <task> – run in parallel while I'm busy\n/queue <task> – wait for the current task instead of running in parallel\n/new – start a fresh conversation\n/sessions – switch back to an earlier conversation\n/resume <n|name> – switch by number or name\n/name <title> – name the current conversation\n/compact [instructions] – compact the conversation (optional: what to keep)\n/stop – stop all running tasks\n/status – what I'm doing right now\n/restart – restart the bridge (after updates)\n/help – this message"
   },
   {
    "chat_id": 111,

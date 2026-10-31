@@ -82,7 +82,7 @@ class NewWorld:
         self.agent = ClaudeTmux({"chat_key": "111"},
                                 tmux=Tmux(runner=self.tmux, start_service=lambda: None, settle_limit=0.2, settle_step=0.01))
         self.sent = []
-        self.agent.send = lambda text, origin, ref, force_queue=False: self.sent.append([text, force_queue])
+        self.agent.send = lambda text, origin, ref, force_queue=False, parallel=False: self.sent.append([text, force_queue])
         self.bus, self.registry = EventBus(), Registry()
         report = load_features(FEATURES, self.bus, Ports(agent=self.agent), self.registry, {})
         assert report.loaded == FEATURES, report.failed

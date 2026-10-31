@@ -87,7 +87,7 @@ All of them run in the same `edith-bridge` service, and the existing behaviour m
 
   | Method | Path | Purpose |
   |---|---|---|
-  | POST | `/v1/messages` | Send text, optionally tagged `voice`, to the main lane (or a side lane if busy) |
+  | POST | `/v1/messages` | Send text, optionally tagged `voice`, to the main lane (read by the running task if busy; `/btw <task>` for a side lane) |
   | POST | `/v1/stt` | Upload audio (16 kHz mono) → whisper.cpp → text |
   | WS | `/v1/stream` | Live events: user msg, assistant text, tool call, tool result summary, diff, status, permission request, turn done |
   | POST | `/v1/stop` | Interrupt the current task (Esc) |

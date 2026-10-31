@@ -1,5 +1,6 @@
-// The chat's bubbles in the active theme: each side's glass tint and edge, its ink for the text and
-// the captions, the sheen only above 0% glass, and a theme change re-renders them at once.
+// The chat's bubbles in the active theme: each side's glass tint and edge, its ink for the text, the
+// captions and the quote (on its own pane), no extra view and no clipping per bubble (cheap in long
+// lists), and a theme change re-renders them at once.
 
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
 import { StyleSheet, Text } from 'react-native';
@@ -9,7 +10,10 @@ import { ItemView } from '../ItemView';
 
 jest.setTimeout(30_000);
 
-const USER = { id: 1, ts: 1_800_000_000, kind: 'user', text: 'Ship it', origin: 'app', voice: true, ref: 'r', delivery: null, local: null, echoed: true, reaction: null, attachments: [], replyTo: null } as const;
+const USER = {
+  id: 1, ts: 1_800_000_000, kind: 'user', text: 'Ship it', origin: 'app', voice: true, ref: 'r', delivery: null, local: null, echoed: true, reaction: null,
+  attachments: [], replyTo: { from: 'edith', text: 'The build passed.' },
+} as const;
 const EDITH = { id: 2, ts: 1_800_000_000, kind: 'assistant', text: 'Done.', lane: null, ref: null } as const;
 
 function render(theme: Theme): ReactTestRenderer {
@@ -34,30 +38,34 @@ function bubbleAround(n: ReactTestInstance): ReactTestInstance {
   while (p && !style(p)?.backgroundColor) p = p.parent;
   return p!;
 }
-const sheens = (n: ReactTestInstance) => n.findAll((x) => Array.isArray(x.props.colors) && x.props.pointerEvents === 'none', { deep: false });
+const gradients = (n: ReactTestInstance) => n.findAll((x) => Array.isArray(x.props.colors));
 
 afterEach(() => jest.restoreAllMocks());
 
 describe('chat bubbles in the theme', () => {
-  it('take each side’s glass and ink', () => {
+  it('take each side’s glass and ink, the quote on its pane in its own fade', () => {
     const t = resolveTheme({ ...DEFAULT_APPEARANCE, theme: 'rose', myBubble: 'yellow', edithBubble: 'blue' });
     const r = render(t);
     const mine = bubbleAround(textOf(r, 'Ship it'));
     expect(style(mine)).toMatchObject({ backgroundColor: t.my.fill, borderTopColor: t.my.edgeLit, borderBottomColor: t.my.edgeDim });
     expect(style(textOf(r, 'Ship it')).color).toBe(t.my.ink);
     expect(style(textOf(r, '🎙 voice')).color).toBe(t.my.inkDim); // captions in the bubble's own ink
+    expect(style(textOf(r, 'The build passed.')).color).toBe(t.my.quoteDim);
+    expect(style(bubbleAround(textOf(r, 'The build passed.'))).backgroundColor).toBe(t.my.inkSoft);
     const hers = bubbleAround(textOf(r, 'Done.'));
     expect(style(hers).backgroundColor).toBe(t.edith.fill);
     expect(style(textOf(r, 'Done.')).color).toBe(t.edith.ink);
-    expect(sheens(mine)).toHaveLength(1);
+    // The sheen is the lit top edge: no gradient view and no clipping per bubble.
+    for (const b of [mine, hers]) {
+      expect(gradients(b)).toHaveLength(0);
+      expect(style(b).overflow).toBeUndefined();
+    }
   });
 
-  it('are solid with no sheen at 0% glass, and follow a theme change at once', () => {
+  it('are solid at 0% glass, and follow a theme change at once', () => {
     const flat = resolveTheme({ ...DEFAULT_APPEARANCE, glass: 0 });
     const r = render(flat);
-    const mine = bubbleAround(textOf(r, 'Ship it'));
-    expect(style(mine).backgroundColor).toMatch(/, 1\)$/);
-    expect(sheens(mine)).toHaveLength(0);
+    expect(style(bubbleAround(textOf(r, 'Ship it'))).backgroundColor).toMatch(/, 1\)$/);
     const ocean = resolveTheme({ ...DEFAULT_APPEARANCE, theme: 'ocean' });
     act(() =>
       r.update(

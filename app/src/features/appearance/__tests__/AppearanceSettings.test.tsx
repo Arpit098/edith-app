@@ -100,10 +100,10 @@ describe('Appearance', () => {
     act(() => slider().props.onChange(0));
     expect(a.store.get().glass).toBe(0);
     expect(preview(r)).toBe('Preview: Midnight, glass 0%');
-    // At 0% the chat's bubbles are solid (alpha 1) and have no sheen.
+    // At 0% the chat's bubbles are solid (alpha 1).
     const t = resolveTheme(a.store.get());
     expect(rgbaOf(t.my.fill)[3]).toBe(1);
-    expect(r.root.findAll((n) => n.props.testID === 'preview-mine')[0]!.findAll((n) => Array.isArray(n.props.colors)).length).toBe(0);
+    expect(previewBubble(r, 'mine').backgroundColor).toBe(t.my.fill);
     tap(r, 'Glass back to 60%');
     expect(a.store.get().glass).toBe(60);
   });

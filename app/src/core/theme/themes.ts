@@ -110,7 +110,8 @@ export interface BackgroundLook {
   pattern: { kind: 'dots' | 'grid'; color: string } | null;
 }
 
-function backgroundLook(p: ThemePreset, id: BackgroundId): BackgroundLook {
+/** A theme's background as drawn: its colour, gradient layers and pattern. */
+export function backgroundLook(p: ThemePreset, id: BackgroundId): BackgroundLook {
   const glow = withAlpha(p.glow, p.glowAlpha);
   const glow2 = withAlpha(p.glow2, p.glowAlpha * 0.6);
   const clear = withAlpha(p.glow, 0);
@@ -228,12 +229,12 @@ export const INK_DARK = '#000000';
 
 export interface BubbleLook {
   fill: string; // the bubble's glass tint at this amount (translucent above 0%)
-  edgeLit: string; // the light edge, top-left
+  edgeLit: string; // the light edge, top-left (its top is the bubble's sheen)
   edgeDim: string; // bottom-right
-  highlight: string; // the inner glow along the top
   ink: string; // the text: white or black, whichever reads best on every backdrop
   inkDim: string; // captions (time, ticks, "voice"): the ink, as faded as still reads at 4.5:1
-  inkSoft: string; // the quote's pane inside the bubble
+  inkSoft: string; // the quote's pane inside the bubble (full ink reads at 4.5:1 on it)
+  quoteDim: string; // the quote's text on that pane: as faded as still reads at 4.5:1 there
   worst: number; // the text's lowest contrast over the backdrops, for the tests
 }
 
@@ -241,7 +242,7 @@ export interface BubbleLook {
  * A bubble's glass. `color` at `alpha60` is how it looks at 60%. Below that it gets more solid
  * without changing what it looks like on the plain background (premultiplied interpolation towards
  * that composite); above, clearer. The text is white or black, picked for the worst contrast over
- * every colour the background can show under the bubble, its top highlight included.
+ * every colour the background can show under the bubble.
  */
 export function bubbleLook(color: string, alpha60: number, amount: number, look: BackgroundLook): BubbleLook {
   const a = Math.min(100, Math.max(0, amount));
@@ -256,36 +257,47 @@ export function bubbleLook(color: string, alpha60: number, amount: number, look:
   const alpha = p[3]!;
   const fill = alpha > 0 ? `rgba(${Math.round((p[0]! / alpha) * 255)}, ${Math.round((p[1]! / alpha) * 255)}, ${Math.round((p[2]! / alpha) * 255)}, ${fmt(alpha)})` : 'transparent';
   const shine = a <= DEFAULT_GLASS ? lerp(0.25, 1, t) : lerp(1, 1.3, t);
-  const highlight = `rgba(255, 255, 255, ${fmt(0.06 * shine)})`;
-  // What the text can sit on: the bubble over every backdrop colour, with and without the highlight.
-  const under = backdropSamples(look).flatMap((b) => {
-    const on = composite(fill, b);
-    return [on, composite(highlight, on)];
-  });
-  const worstFor = (ink: string) => Math.min(...under.map((u) => contrast(rgbOf(ink), u)));
-  const light = worstFor(INK_LIGHT);
-  const dark = worstFor(INK_DARK);
+  // What the text can sit on: the bubble over every backdrop colour.
+  const under = backdropSamples(look).map((b) => composite(fill, b));
+  const worstOn = (css: string, grounds: Rgb[]) => Math.min(...grounds.map((u) => contrast(composite(css, u), u)));
+  const light = worstOn(INK_LIGHT, under);
+  const dark = worstOn(INK_DARK, under);
   const ink = light >= dark ? INK_LIGHT : INK_DARK;
   const worst = Math.max(light, dark);
-  // The faintest the captions can be and still read at 4.5:1 (the ink itself when nothing fainter does).
-  let dimAlpha = 1;
-  for (const al of [0.7, 0.78, 0.86, 0.94]) {
-    const css = withAlpha(ink, al);
-    if (Math.min(...under.map((u) => contrast(composite(css, u), u))) >= 4.5) {
-      dimAlpha = al;
+  // The quote's pane inside the bubble: the ink, faintly, as strong as it can be with the full ink
+  // still at 4.5:1 on it (a white pane brightens the bubble under white text).
+  let paneAlpha = 0;
+  for (const al of [0.1, 0.08, 0.06, 0.04, 0.02]) {
+    if (worstOn(ink, under.map((u) => composite(withAlpha(ink, al), u))) >= 4.5) {
+      paneAlpha = al;
       break;
     }
   }
+  const onPane = under.map((u) => composite(withAlpha(ink, paneAlpha), u));
   return {
     fill,
     edgeLit: `rgba(255, 255, 255, ${fmt(0.22 * shine)})`,
     edgeDim: `rgba(255, 255, 255, ${fmt(0.04 * shine)})`,
-    highlight,
     ink,
-    inkDim: withAlpha(ink, dimAlpha),
-    inkSoft: withAlpha(ink, 0.1),
+    inkDim: faintest(ink, under, worstOn),
+    inkSoft: withAlpha(ink, paneAlpha),
+    quoteDim: faintest(ink, onPane, worstOn),
     worst,
   };
+}
+
+/** The ink as faded as it can be and still read at 4.5:1 on every ground (the ink itself if nothing fainter does). */
+function faintest(ink: string, grounds: Rgb[], worstOn: (css: string, g: Rgb[]) => number): string {
+  for (const al of [0.7, 0.78, 0.86, 0.94]) {
+    if (worstOn(withAlpha(ink, al), grounds) >= 4.5) return withAlpha(ink, al);
+  }
+  return ink;
+}
+
+/** White or black, whichever reads best on `css` (translucent colours laid over `ground`): marks on swatches. */
+export function inkOn(css: string, ground: string): string {
+  const under = composite(css, rgbOf(ground));
+  return contrast(rgbOf(INK_DARK), under) > contrast(rgbOf(INK_LIGHT), under) ? INK_DARK : INK_LIGHT;
 }
 
 /** A bubble's glass face as view style: its tint, and the light edge (bright top-left, dim bottom-right). */

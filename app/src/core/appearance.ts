@@ -1,7 +1,8 @@
 // The chosen appearance (Settings → Appearance): kept on the phone (the data store) and applied at
 // once, with no restart. Loaded at start; until it's read the app shows the defaults (Midnight, 60%
 // glass), which is a few milliseconds. A drag on the glass slider changes it many times a second:
-// each change shows at once, but it's written once the dragging pauses (SAVE_MS).
+// each change shows at once, but it's written once the dragging pauses (SAVE_MS), or at once when
+// the app goes to the background (flush), where Android may kill it before the timer fires.
 
 import type { KeyValueStore } from './ports';
 import { createStore, type Store } from './store';
@@ -15,6 +16,8 @@ export interface AppearanceStore {
   /** Read the saved appearance (a broken or missing one gives the defaults). */
   load(): Promise<void>;
   set(change: Partial<Appearance>): void;
+  /** Write a pending change now (the app is going to the background, where it may be killed). */
+  flush(): void;
   dispose(): void;
 }
 
@@ -26,6 +29,12 @@ export function createAppearanceStore(data: KeyValueStore | undefined): Appearan
   const save = () => {
     timer = null;
     void data?.set(APPEARANCE_KEY, JSON.stringify(store.get())).catch((e: unknown) => console.warn('[edith] appearance not saved', e));
+  };
+  const flush = () => {
+    if (timer) {
+      clearTimeout(timer);
+      save(); // don't lose the last change
+    }
   };
 
   return {
@@ -50,11 +59,7 @@ export function createAppearanceStore(data: KeyValueStore | undefined): Appearan
       if (timer) clearTimeout(timer);
       timer = setTimeout(save, SAVE_MS);
     },
-    dispose() {
-      if (timer) {
-        clearTimeout(timer);
-        save(); // don't lose the last change
-      }
-    },
+    flush,
+    dispose: flush,
   };
 }

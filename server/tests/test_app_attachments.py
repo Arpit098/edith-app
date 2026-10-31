@@ -35,7 +35,7 @@ class Agent:
     def __init__(self):
         self.sent = []
 
-    def send(self, text, origin, ref, force_queue=False):
+    def send(self, text, origin, ref, force_queue=False, parallel=False):
         self.sent.append(text)
         return TurnHandle(ref, "main")
 
