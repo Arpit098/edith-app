@@ -313,6 +313,64 @@ class RoutesTest(unittest.TestCase):
         self.assertEqual(self.a.call("POST", "/v1/messages", {"text": "  "}), (400, {"error": "text is required"}))
         self.assertEqual(self.a.call("POST", "/v1/messages", raw=b"{not json")[0], 400)
 
+    def _typed(self, text):
+        """POST a chat message and return (answer, the events it caused other than reactions)."""
+        events = []
+        for pattern in ("message.*", "command.reply"):
+            self.a.bus.subscribe(pattern, lambda ev: ev.type != "message.reaction" and events.append(ev))
+        status, body = self.a.call("POST", "/v1/messages", {"text": text})
+        self.assertEqual(status, 200)
+        return body, events
+
+    def test_typed_compact_while_busy_runs_the_command_not_a_prompt(self):
+        reactions = []
+        self.a.bus.subscribe("message.reaction", lambda ev: reactions.append(ev.data["emoji"]))
+        body, events = self._typed(" /compact ")
+        ref = body["ref"]
+        self.assertEqual(body["lane"], "command")
+        self.assertEqual(self.a.agent.sent, [])  # Claude never sees it
+        self.assertEqual([(e.type, e.origin, e.data) for e in events], [
+            ("message.user", "app", {"ref": ref, "text": "/compact", "voice": False, "delivery": "command",
+                                     "lane": "command", "attachments": [], "replying_to": None}),
+            ("message.delivered", "app", {"ref": ref, "delivery": "command", "rid": None}),
+            ("command.reply", "app", {"ref": ref, "text": "⚠️ EDITH is busy; try /compact when the task ends.", "buttons": []})])
+        self.assertEqual(reactions, ["👌"])  # as Telegram reacts to a command
+
+    def test_typed_compact_when_idle_answers_compacted_on_the_stream_and_in_history(self):
+        asked = []
+        self.a.agent.busy = lambda: False
+        self.a.agent.compact = lambda instructions: (asked.append(instructions) or ("ok", ""))
+        body, events = self._typed("/compact keep the plan")
+        run_workers(self.a.registry)  # the queued compaction, here and now
+        replies = [(e.data["ref"], e.data["text"]) for e in events if e.type == "command.reply"]
+        self.assertEqual(replies, [(body["ref"], "🗜 Compacting the conversation…"), (body["ref"], "✅ Compacted.")])
+        self.assertEqual(asked, ["keep the plan"])
+        # History holds the message, its delivery and both replies (the message log keeps them).
+        self.a.agent.history = lambda sid, after, before, limit: {
+            "session_id": "s1", "events": [], "start": "s1:0", "cursor": "s1:0", "more": False, "reset": False}
+        page = self.a.call("GET", "/v1/sessions/current/history")[1]
+        self.assertEqual([(e["type"], e["data"].get("delivery") or e["data"].get("text"))
+                          for e in page["events"] if e["type"] != "message.reaction"],
+                         [("message.user", "command"), ("message.delivered", "command"),
+                          ("command.reply", "🗜 Compacting the conversation…"), ("command.reply", "✅ Compacted.")])
+
+    def test_typed_commands_use_the_registry(self):
+        body, events = self._typed("/status")
+        self.assertEqual([e.data["text"].split("\n")[0] for e in events if e.type == "command.reply"],
+                         ["⏳ Main: 5s", "🖥 tmux session: running · First chat"])
+        self.assertEqual(self.a.agent.sent, [])
+        with mock.patch("time.strftime", return_value="2026-11-02 10:43 IST"):
+            body, _ = self._typed("/queue after this")
+        self.assertEqual(self.a.agent.sent[-1], ("[App message from Arpit, 2026-11-02 10:43 IST]\nafter this",
+                                                 "app", body["ref"], True))
+
+    def test_unknown_slash_text_still_goes_to_claude(self):
+        with mock.patch("time.strftime", return_value="2026-11-02 10:43 IST"):
+            body, events = self._typed("/foo bar")
+        self.assertEqual(body["lane"], "main")
+        self.assertEqual(self.a.agent.sent, [("[App message from Arpit, 2026-11-02 10:43 IST]\n/foo bar", "app", body["ref"], False)])
+        self.assertEqual([e.type for e in events], [])  # FakeAgent publishes nothing; no command ran
+
     def test_voice_message_announces_its_ref_before_the_send(self):
         seen = []
         self.a.bus.subscribe("voice.turn", lambda ev: seen.append((ev.data, ev.origin, len(self.a.agent.sent))))

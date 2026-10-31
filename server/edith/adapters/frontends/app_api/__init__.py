@@ -11,7 +11,8 @@ Stdlib only: ThreadingHTTPServer and the small WebSocket in ws.py. Security:
   route, a socket timeout per connection; a stream client that can't keep up is disconnected.
 
 Routes: features register theirs with ctx.add_route; this adapter adds /v1/messages, /v1/actions,
-/v1/commands and the /v1/stream WebSocket (every bus event, as JSON).
+/v1/commands and the /v1/stream WebSocket (every bus event, as JSON). A /v1/messages text that starts
+with a registered /command runs that command (registry.find_command, as Telegram does), not a turn.
 """
 import hmac
 import http.server
@@ -267,15 +268,47 @@ class AppApi:
         if not text and not files:
             raise ApiError(400, "text is required")
         ref = f"app:{secrets.token_hex(6)}"
-        if body.get("voice"):  # before send, so the voice feature knows the ref before any of its turn events
-            self.bus.publish(self._event("voice.turn", {"ref": ref}))
-        prompt = self._prompt(text, bool(body.get("voice"))) + "".join(f"\n[Attached file saved at: {f}]" for f in files)
-        handle = self.agent.send(prompt, "app", ref, force_queue=bool(body.get("queue")))
-        answer = {"ref": ref, "lane": handle.lane}
+        found = self.registry.find_command(text)
+        if found:  # a typed bridge command (/compact, /stop, …) runs as on Telegram; unknown /text goes to Claude
+            answer = self._typed_command(*found, text, files, bool(body.get("voice")), ref)
+        else:
+            if body.get("voice"):  # before send, so the voice feature knows the ref before any of its turn events
+                self.bus.publish(self._event("voice.turn", {"ref": ref}))
+            prompt = self._with_files(self._prompt(text, bool(body.get("voice"))), files)
+            handle = self.agent.send(prompt, "app", ref, force_queue=bool(body.get("queue")))
+            answer = {"ref": ref, "lane": handle.lane}
         if not files:
             return answer
         return Response(200, {"content-type": "application/json"}, json.dumps(answer).encode(),
                         audit={"attachments": [str(i) for i in ids]})
+
+    @staticmethod
+    def _with_files(prompt, files):
+        return prompt + "".join(f"\n[Attached file saved at: {f}]" for f in files)
+
+    def _typed_command(self, command, args, text, files, voice, ref):
+        """A /command typed in the chat: the registry's handler runs it, the same path as Telegram's.
+        Arpit's message still gets message.user and message.delivered (delivery "command": the bridge
+        took it, Claude never sees it), and every reply, now or later (e.g. "✅ Compacted."), goes on
+        the stream as command.reply with this ref; the message log keeps them for history."""
+        sid = self.agent.current_session() if self.agent else None
+        self.bus.publish(Event("message.user", {"ref": ref, "text": text, "voice": voice, "delivery": "command",
+                                                "lane": "command", "attachments": files, "replying_to": None},
+                               origin="app", session_id=sid))
+        # Before the handler: a command that hands its text to Claude (/queue, quick actions) then
+        # publishes its own message.user/message.delivered for this ref, which come after and win.
+        self.bus.publish(Event("message.delivered", {"ref": ref, "delivery": "command", "rid": None},
+                               origin="app", session_id=sid))
+
+        def reply(out):
+            data = out.as_data() if isinstance(out, Reply) else {"text": out, "buttons": []}
+            self.bus.publish(self._event("command.reply", {"ref": ref, **data}))
+        prompt = (self._with_files(self._prompt(args, voice), files)
+                  if command.takes_prompt and (args.strip() or files) else None)
+        out = command.handler(CommandCall(args, "app", reply, ref, prompt))
+        if out is not None:
+            reply(out)
+        return {"ref": ref, "lane": "command"}
 
     def _attach(self, req):
         h = req.get("headers") or {}

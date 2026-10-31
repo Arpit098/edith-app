@@ -4,7 +4,8 @@ so none vanishes from the app, plus the reactions Telegram shows, for app messag
 - Reactions: from the turn and permission events of app-origin messages, the same emojis the Telegram
   frontend sets (👀 🥱 👨‍💻 ⚡ 🙏, then REACT:/👍/😢/🫡/🕊/💔), published as message.reaction.
 - Log: message.user (from frontends), message.delivered, message.reaction, the side-lane
-  message.assistant and side-lane turn.started/turn.done, kept per conversation in
+  message.assistant, side-lane turn.started/turn.done and the command.reply answers to a /command
+  Arpit typed in the app, kept per conversation in
   <state_dir>/message-log/<session>.json (the newest 500, atomic writes; read once, then cached).
 - GET /v1/sessions/{id}/history: the agent's transcript page merged with the log by time, without
   the transcript's own copy of a logged message.
@@ -87,7 +88,7 @@ def merge(page, logged, lower, upper):
     """The transcript page plus the logged events with lower < ts <= upper (None: open), by ts,
     without transcript message.user copies of logged messages."""
     picked = [e for e in logged if (lower is None or e["ts"] > lower) and (upper is None or e["ts"] <= upper)]
-    rids = {e["data"].get("rid") for e in logged if e["type"] == "message.delivered"}
+    rids = {e["data"].get("rid") for e in logged if e["type"] == "message.delivered"} - {None}  # typed commands have none
     users = [e for e in logged if e["type"] == "message.user"]
 
     def duplicate(e):
@@ -141,7 +142,7 @@ def setup(ctx: Context) -> None:
                     app_refs.popitem(last=False)
         keep(ev, sid)
         if ev.origin == "app":
-            react(ref, "👀", sid)
+            react(ref, "👌" if ev.data.get("delivery") == "command" else "👀", sid)  # as Telegram reacts
 
     def react(ref, emoji, sid):
         ctx.bus.publish(Event("message.reaction", {"ref": ref, "emoji": emoji}, origin="app", session_id=sid))
@@ -150,6 +151,16 @@ def setup(ctx: Context) -> None:
         if ev.type == "message.user":
             return on_user(ev)
         keep(ev, session_for(ev))
+
+    def on_reply(ev):
+        """A command's answer to a message Arpit sent (a typed /command), kept with that message.
+        Other command.reply events (a button's, the sessions screen's) belong to no message."""
+        ref = ev.data.get("ref")
+        with lock:
+            if ref not in sessions_of:
+                return
+            sid = sessions_of[ref]
+        keep(ev, sid)
 
     def on_side(ev):
         if ev.data.get("lane") == "side" and ev.data.get("ref"):
@@ -168,6 +179,7 @@ def setup(ctx: Context) -> None:
 
     for pattern in LOGGED:
         ctx.subscribe(pattern, on_logged)
+    ctx.subscribe("command.reply", on_reply)
     ctx.subscribe("message.assistant", on_side)
     ctx.subscribe("turn.*", on_side)
     ctx.subscribe("turn.*", on_progress)

@@ -145,6 +145,14 @@ class TranscriptTest(unittest.TestCase):
                           ("message.user", 900.0)])  # 900 s later: a new message with the same words
         self.assertEqual(message_log.merge(page, logged, 100.5, None)["events"][0]["type"], "message.delivered")
 
+    def test_a_typed_commands_delivery_drops_no_transcript_message(self):
+        logged = [{"type": "message.delivered", "ts": 100.0, "origin": "app",
+                   "data": {"ref": "app:1", "delivery": "command", "rid": None}}]  # a /command: no run id
+        page = {"events": [{"type": "message.user", "ts": 101.0, "origin": "app", "data": {"text": "hi", "rid": None}}],
+                "more": False}
+        self.assertEqual([e["type"] for e in message_log.merge(page, logged, None, None)["events"]],
+                         ["message.delivered", "message.user"])
+
 
 if __name__ == "__main__":
     unittest.main()

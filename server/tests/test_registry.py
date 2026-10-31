@@ -56,6 +56,16 @@ class RegistryTest(unittest.TestCase):
         self.assertEqual(report.loaded, ["one"])
         self.assertIn("two", report.failed)
 
+    def test_find_command_parses_typed_commands_alike_for_every_frontend(self):
+        fake_feature("one", lambda ctx: ctx.add_command("compact", "", lambda c: None))
+        self.load(["one"])
+        compact = self.registry.commands["compact"]
+        for text, want in [("/compact", (compact, "")), ("/compact keep the plan", (compact, "keep the plan")),
+                           ("/Compact@edith_bot  keep\nit", (compact, "keep\nit")), ("/foo bar", None),
+                           ("compact", None), ("/", None), (" /compact", None)]:
+            with self.subTest(text):
+                self.assertEqual(self.registry.find_command(text), want)
+
     def test_template_feature_loads(self):
         report = load_features(["_template"], self.bus, Ports(), self.registry, {})
         self.assertEqual(report.loaded, ["_template"])

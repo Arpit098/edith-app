@@ -17,7 +17,7 @@ const MAX_BUFFER = 2000; // stream events held while a history request is out
 const MAX_TURNS = 200; // per-ref turn state kept for message statuses
 
 /** How the server took a message (the coming `message.user.delivery`; derived from the POST until then). */
-export type Delivery = 'main' | 'queued' | 'mid_turn' | 'side_lane';
+export type Delivery = 'main' | 'queued' | 'mid_turn' | 'side_lane' | 'command'; // command: a typed /command the bridge ran
 
 /** A message sent from this app: kept until the server's record of it is matched by ref. */
 export interface LocalSend {
@@ -57,7 +57,7 @@ export type Item =
   | { kind: 'assistant'; id: number; ts: number; text: string; lane: 'side' | null; ref: string | null }
   | { kind: 'tool'; id: number; ts: number; name: string; summary: string; status: 'running' | 'ok' | 'error'; result: string | null }
   | { kind: 'diff'; id: number; ts: number; path: string; diff: string }
-  | { kind: 'system'; id: number; ts: number; text: string; tone: 'info' | 'error'; buttons: ButtonRows; key: string | null; note: string | null }
+  | { kind: 'system'; id: number; ts: number; text: string; tone: 'info' | 'error'; buttons: ButtonRows; key: string | null; note: string | null; ref?: string } // ref: the typed /command it answers
   | { kind: 'divider'; id: number; ts: number; text: string };
 
 type NewItem = Item extends infer I ? (I extends Item ? Omit<I, 'id' | 'ts'> : never) : never;
@@ -170,11 +170,11 @@ export function stripAppHeader(text: string): string {
   return text.replace(APP_HEADER, '');
 }
 
-const DELIVERIES = new Set<Delivery>(['main', 'queued', 'mid_turn', 'side_lane']);
+const DELIVERIES = new Set<Delivery>(['main', 'queued', 'mid_turn', 'side_lane', 'command']);
 
 /** The POST /v1/messages answer's lane → how the message was delivered. */
 export function deliveryOf(lane: string): Delivery {
-  return lane === 'side' ? 'side_lane' : lane === 'queued' ? 'queued' : 'main';
+  return lane === 'side' ? 'side_lane' : lane === 'queued' ? 'queued' : lane === 'command' ? 'command' : 'main';
 }
 
 function track(s: LiveState, ref: string, change: Partial<TurnTrack>): LiveState {
@@ -236,6 +236,7 @@ export function sendStatus(item: Extract<Item, { kind: 'user' }>, turns: Record<
   if (item.local.status === 'sending' || item.local.status === 'waiting') return 'sending';
   if (item.local.status === 'failed') return 'failed';
   if (item.delivery === 'mid_turn') return 'folded'; // no turn of its own: it joined the running one
+  if (item.delivery === 'command') return 'answered'; // the bridge ran it at once; its replies follow (/queue turns 'queued')
   const t = item.ref ? turns[item.ref] : undefined;
   const side = t?.lane === 'side' || item.delivery === 'side_lane';
   if (!t) return item.delivery === 'queued' ? 'queued' : side ? 'side' : 'sent';
@@ -425,6 +426,17 @@ function apply(s: LiveState, e: EdithEvent): LiveState {
     }
     case 'message.system':
       return push(s, ts, system(str(d.text), 'info', { buttons: buttonRows(d.buttons), key: d.key ? str(d.key) : null }));
+    case 'command.reply': {
+      // The answer to a /command typed in this chat (e.g. "✅ Compacted."), live or from history: a
+      // system line under that message. Replies to other requests (a button, the commands screen)
+      // have no message here; those requesters show them. Once per ref and text: a catch-up page can
+      // hold the logged copy of a reply already shown live.
+      const ref = str(d.ref);
+      const text = str(d.text);
+      if (!ref || findUser(s, (x) => x.ref === ref) < 0) return s;
+      if (s.items.some((x) => x.kind === 'system' && x.ref === ref && x.text === text)) return s;
+      return push(s, ts, system(text, 'info', { buttons: buttonRows(d.buttons), ref }));
+    }
     case 'message.buttons_cleared': {
       const key = str(d.key);
       if (!s.items.some((x) => x.kind === 'system' && x.key === key && x.buttons.length)) return s;

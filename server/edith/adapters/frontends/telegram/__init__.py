@@ -244,12 +244,11 @@ class TelegramFrontend:
             return  # silently ignore strangers and groups
         msg_id = msg.get("message_id")
         text = (msg.get("text") or msg.get("caption") or "").strip()
-        cmd = text.split()[0].split("@")[0].lower() if text.startswith("/") else None
-        self.react(chat_id, msg_id, "👌" if cmd else "👀")
+        self.react(chat_id, msg_id, "👌" if text.startswith("/") else "👀")
         ref = self.ref(chat_id, msg_id)
-        command = self.registry.commands.get(cmd[1:]) if cmd else None
-        if command:
-            rest = text.split(None, 1)[1] if len(text.split(None, 1)) > 1 else ""
+        found = self.registry.find_command(text)
+        if found:
+            command, rest = found
             prompt = self._prompt(msg, rest) if command.takes_prompt else None
             out = command.handler(CommandCall(rest, "telegram", lambda r: self.send_reply(chat_id, r), ref, prompt))
             if out is not None:
