@@ -126,6 +126,7 @@ class ClaudeTmux:
         self._decided: dict[str, str] = {}
         self._threads: list[threading.Thread] = []
         self._stopping = threading.Event()
+        self._held: list | None = None  # while held (hold()): the messages that came in, in order
         self._perm_watch = None
         self._session_cache = (None, {})
         self._refs: collections.OrderedDict[str, str] = collections.OrderedDict()
@@ -237,22 +238,29 @@ class ClaudeTmux:
     # ---- dispatch ----
 
     def send(self, text, origin, ref, force_queue=False):
-        """Main lane if it's free; otherwise a side lane if one is free; otherwise queue."""
+        """Main lane if it's free; otherwise a side lane if one is free; otherwise queue (always while held)."""
         with self._lock:  # message.user goes out before the job is queued, so it always comes first
-            if not self.main_busy.is_set() and self._main.empty():
+            held = self._held is not None
+            if not held and not self.main_busy.is_set() and self._main.empty():
                 self.main_busy.set()
                 self._accepted(text, origin, ref, "main", "main")
                 self._main.put((text, origin, ref))
                 return TurnHandle(ref, "main")
-            if not force_queue and self._side_busy < self.max_side:
+            if not held and not force_queue and self._side_busy < self.max_side:
                 self._side_busy += 1
                 self._accepted(text, origin, ref, "side_lane", "side")
                 self._side.put((text, origin, ref))
                 return TurnHandle(ref, "side")
             self._accepted(text, origin, ref, "queued", "queued")
-            position = self._main.qsize() + 1
+            waiting = len(self._held or ())
+            position = self._main.qsize() + waiting + 1
             try:
-                self._main.put_nowait((text, origin, ref))
+                if self._main.qsize() + waiting >= MAX_QUEUE:
+                    raise queue.Full
+                if held:
+                    self._held.append((text, origin, ref))  # the main worker never sees it until release()
+                else:
+                    self._main.put_nowait((text, origin, ref))
             except queue.Full:
                 self._publish("turn.failed", origin, ref=ref, lane="main", reason="queue_full",
                               detail=f"{MAX_QUEUE} messages are already waiting")
@@ -516,6 +524,13 @@ class ClaudeTmux:
 
     def stop(self):
         dropped = []
+        with self._lock:
+            held = list(self._held or ())
+            if self._held is not None:
+                self._held.clear()
+        for job in held:
+            dropped.append(job[2])
+            self._publish("turn.stopped", job[1], ref=job[2], lane="queued")
         while True:
             try:
                 job = self._main.get_nowait()
@@ -541,10 +556,28 @@ class ClaudeTmux:
     def status(self):
         with self._lock:
             runs = sorted(self._runs.values(), key=lambda r: r.started)
-        return [RunInfo(r.ref, r.lane, r.started, r.step) for r in runs], self._main.qsize()
+            queued = self._main.qsize() + len(self._held or ())
+        return [RunInfo(r.ref, r.lane, r.started, r.step) for r in runs], queued
 
     def busy(self):
         return self.main_busy.is_set()
+
+    def hold(self):
+        """Stop starting work until release(): messages queue up (none runs, no side lane starts) and
+        the tmux Claude isn't started or switched. For a Claude account switch, which restarts it."""
+        with self._lock:
+            if self._held is None:
+                self._held = []
+
+    def release(self):
+        """End a hold: the messages that came in meanwhile run in order."""
+        with self._lock:
+            held, self._held = self._held or [], None
+            for job in held:
+                self._main.put_nowait(job)  # within MAX_QUEUE: send() counted them
+
+    def held(self):
+        return self._held is not None
 
     # ---- conversations ----
 
@@ -581,7 +614,7 @@ class ClaudeTmux:
         return sid
 
     def resume(self, session_id, before=None):
-        if self.main_busy.is_set():
+        if self.main_busy.is_set() or self.held():
             return "busy"
         if not self.sessions.exists(session_id):
             return "missing"
@@ -618,7 +651,7 @@ class ClaudeTmux:
         SessionStart hook reports source "compact" (tmux-session.json, watched with inotify); an error
         shows only on screen, so the pane is read on each wake-up, at least every PANE_CHECK seconds."""
         with self._lock:
-            if self.main_busy.is_set() or not self._main.empty() or os.path.exists(self.paths.tmux_run) \
+            if self.main_busy.is_set() or self.held() or not self._main.empty() or os.path.exists(self.paths.tmux_run) \
                     or self._perms_pending():
                 return "busy", ""
             self.main_busy.set()  # new messages go to a side lane or wait, as during a switch
@@ -654,7 +687,7 @@ class ClaudeTmux:
             return False
 
     def new_session(self):
-        if self.main_busy.is_set():
+        if self.main_busy.is_set() or self.held():
             return "busy"
         if self.tmux.wait_ready(10):
             self.tmux.command("/clear")

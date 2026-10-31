@@ -207,6 +207,58 @@ export function permissionFrom(p: Record<string, unknown>): PendingPermission {
   return { id: str(p.id), tool: str(p.tool), detail: str(p.detail), ref: p.ref == null ? null : str(p.ref), lane: lane(p.lane) };
 }
 
+/** A saved Claude login (contracts/accounts.md). Never carries a token. */
+export interface ClaudeAccount {
+  id: string;
+  label: string;
+  email: string | null;
+  plan: string | null;
+  active: boolean;
+}
+
+export type SwitchState = 'running' | 'done' | 'rolled_back' | 'failed';
+
+/** An account switch's progress: GET /v1/accounts `switch` and the `accounts.switch` event. */
+export interface AccountSwitch {
+  run: string;
+  target: string;
+  previous: string | null;
+  state: SwitchState;
+  step: string | null;
+  detail: string | null;
+  started: number | null;
+  ts: number | null;
+  agents: string[];
+}
+
+export interface AccountsList {
+  accounts: ClaudeAccount[];
+  switch: AccountSwitch | null;
+  login: { id: string; url: string } | null;
+}
+
+export function accountFrom(a: Record<string, unknown>): ClaudeAccount {
+  return { id: str(a.id), label: str(a.label) || str(a.email) || str(a.id), email: strOrNull(a.email), plan: strOrNull(a.plan), active: a.active === true };
+}
+
+export function accountSwitchFrom(v: unknown): AccountSwitch | null {
+  if (typeof v !== 'object' || v === null) return null;
+  const o = v as Record<string, unknown>;
+  const state = o.state === 'running' || o.state === 'done' || o.state === 'rolled_back' || o.state === 'failed' ? o.state : null;
+  if (!state) return null;
+  return {
+    run: str(o.run),
+    target: str(o.target),
+    previous: strOrNull(o.previous),
+    state,
+    step: strOrNull(o.step),
+    detail: strOrNull(o.detail),
+    started: numOrNull(o.started),
+    ts: numOrNull(o.ts),
+    agents: Array.isArray(o.agents) ? o.agents.filter((x): x is string => typeof x === 'string') : [],
+  };
+}
+
 type Obj = Record<string, unknown>;
 
 export function createApi(t: Transport) {
@@ -259,6 +311,43 @@ export function createApi(t: Transport) {
 
     async statusDetails(opts?: RequestOptions): Promise<StatusDetails> {
       return statusDetailsFrom(await t.request<Obj>('GET', '/v1/status/details', undefined, opts));
+    },
+
+    /** The saved Claude logins, a switch in progress (or just finished) and an open sign-in. */
+    async accounts(): Promise<AccountsList> {
+      const r = await t.request<Obj>('GET', '/v1/accounts');
+      const login = r.login as Obj | null | undefined;
+      return {
+        accounts: (Array.isArray(r.accounts) ? r.accounts : []).filter((a): a is Obj => typeof a === 'object' && a !== null).map(accountFrom),
+        switch: accountSwitchFrom(r.switch),
+        login: login && typeof login.id === 'string' && typeof login.url === 'string' ? { id: login.id, url: login.url } : null,
+      };
+    },
+
+    /** Starts a switch (409 with the reason when something is busy); progress comes as accounts.switch. */
+    async switchAccount(id: string): Promise<{ run: string }> {
+      const r = await t.request<Obj>('POST', `/v1/accounts/${seg(id)}/switch`);
+      return { run: str(r.run) };
+    },
+
+    /** Starts Claude's sign-in on the server: the link to open on the phone. */
+    async startLogin(): Promise<{ id: string; url: string }> {
+      const r = await t.request<Obj>('POST', '/v1/accounts/login', {}, { timeoutMs: 45_000 });
+      return { id: str(r.id), url: str(r.url) };
+    },
+
+    /** Pastes the code the sign-in page showed; the saved account. */
+    async finishLogin(loginId: string, code: string, label?: string): Promise<ClaudeAccount | null> {
+      const r = await t.request<Obj>('POST', `/v1/accounts/login/${seg(loginId)}`, { code, ...(label ? { label } : {}) }, { timeoutMs: 120_000 });
+      return r.account && typeof r.account === 'object' ? accountFrom(r.account as Obj) : null;
+    },
+
+    async cancelLogin(loginId: string): Promise<void> {
+      await t.request<Obj>('DELETE', `/v1/accounts/login/${seg(loginId)}`);
+    },
+
+    async removeAccount(id: string): Promise<void> {
+      await t.request<Obj>('DELETE', `/v1/accounts/${seg(id)}`);
     },
 
     async sessions(): Promise<Session[]> {

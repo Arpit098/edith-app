@@ -42,6 +42,16 @@ class AgentBackend(Protocol):
     def busy(self) -> bool:
         """True while the main lane is working or has messages queued."""
 
+    def hold(self) -> None:
+        """Start no work until release(): new messages wait in the queue (no turn and no side lane
+        starts), and the interactive session is not started, resumed or cleared. A Claude account
+        switch holds the agent while it restarts every Claude."""
+
+    def release(self) -> None:
+        """End a hold; the waiting messages run in order."""
+
+    def held(self) -> bool: ...
+
     def tmux_alive(self) -> bool:
         """Whether the main lane's interactive session is running."""
 

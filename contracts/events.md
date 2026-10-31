@@ -35,6 +35,7 @@ Every event on the bus, and on the app's `/v1/stream` WebSocket, has this shape:
 | `turn.retrying` | `{ref, lane, reason}` | A turn starts over (a side lane whose conversation is gone runs again fresh); frontends drop that turn's status message |
 | `voice.turn` | `{ref}` | The App API accepted a `POST /v1/messages` with `voice: true` (sent before the turn's own events). Origin `app` |
 | `voice.reply` | `{ref, outcome, speak}` | What the app says aloud for that voice turn (see "Voice" below). Origin `app` |
+| `accounts.switch` | `{run, target, previous, state, step, detail, started, ts, agents}` | A Claude account switch starts, moves on a step and ends (contracts/accounts.md). Origin `system` |
 
 Fields the agent adds (new fields only; existing meanings unchanged):
 - `turn.started`, `turn.progress`, `turn.done`, `turn.stopped` and `turn.failed` carry `lane` (`main`
@@ -187,6 +188,7 @@ Base `http://<edith's Tailscale IP>:8787`, reachable over Tailscale only. Every 
 | POST | `/v1/stop` | | `{running, dropped: [ref]}` |
 | GET | `/v1/status` | | `{main: busy/idle, queued, runs: [{ref, lane, seconds, step}], tmux: running/down, conversation: bool, session: {id, title} \| null}` |
 | GET | `/v1/status/details` | | `{ts, edith, lanes, session, agents, server}`: the status panel (contracts/status.md) |
+| GET | `/v1/accounts` | | `{accounts, switch, login}`; also `POST /v1/accounts/{id}/switch`, `POST /v1/accounts/login`, `POST`/`DELETE /v1/accounts/login/{login}`, `DELETE /v1/accounts/{id}` (contracts/accounts.md) |
 | GET | `/v1/sessions` | | `{sessions: [{session_id, title, updated, current}]}` |
 | POST | `/v1/sessions/{id}/resume` | | `{status: "switching", ref}`; the messages come as `command.reply`, then `session.changed` (if it switched) and last `session.switched {ref, result}` |
 | GET | `/v1/sessions/{id}/history` | `?after=&before=&limit=` | `{session_id, events, start, cursor, more, reset}` (see History) |
