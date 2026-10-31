@@ -22,8 +22,11 @@ export interface NativeGlassProps {
   bezel: number;
   dispersion: number;
   saturation: number;
+  lift: number;
   specular: number;
+  rimWidth: number;
   tint: number[];
+  base: number[]; // opaque: the app's background under the frost
   style?: object;
   pointerEvents?: 'none';
 }
@@ -52,7 +55,7 @@ export function useGlass(): GlassSettings {
   return useContext(GlassContext);
 }
 
-/** Space the floating header and tab bar take from a screen's content (set by the shell). */
+/** Space the floating header (top) and the gesture area (bottom) take from a screen's content (set by the shell). */
 export interface ChromeInsets {
   top: number;
   bottom: number;
