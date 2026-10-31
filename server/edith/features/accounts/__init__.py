@@ -209,9 +209,13 @@ def setup(ctx: Context) -> None:
         """The agents, why a switch can't start now (empty when it can), and the Claudes at their
         usage limit (which don't block: a switch is what gets them going again)."""
         why = []
+        agents, busy, at_limit = panes.blockers()
         if agent:
             runs, queued = agent.status()
-            if any(r.lane == "main" for r in runs):
+            # EDITH's screen at the limit: her open bridge turn is the one the limit cut off (no Stop
+            # hook comes, so it stays open) and a switch is what gets her going again.
+            edith_at_limit = any(c["name"] == "EDITH" for c in at_limit)
+            if any(r.lane == "main" for r in runs) and not edith_at_limit:
                 why.append("EDITH is working on a task")
             side = sum(1 for r in runs if r.lane != "main")
             if side:
@@ -220,7 +224,6 @@ def setup(ctx: Context) -> None:
                 why.append(f"{queued} message{'s' if queued > 1 else ''} queued")
         if approvals:
             why.append("an approval is waiting")
-        agents, busy, at_limit = panes.blockers()
         return agents, why + busy, at_limit
 
     # ---- routes ----

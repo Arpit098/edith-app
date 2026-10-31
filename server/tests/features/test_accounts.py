@@ -817,6 +817,15 @@ class RoutesTest(unittest.TestCase):
         self.assertEqual(plan["at_limit"], [{"name": "edith-dev", "interrupted": True}, {"name": "EDITH", "interrupted": True}])
         self.assertEqual([a["name"] for a in plan["agents"]], ["edith-dev"])  # still restarted (and resumed)
 
+    def test_edith_at_the_limit_mid_turn_doesnt_block_with_her_open_bridge_run(self):
+        target = self.second()
+        self.agent.runs = [RunInfo("r1", "main", 1.0, None)]  # agent.status(): the bridge turn the limit cut off
+        self.assertEqual(self.refused(target), "Can't switch while EDITH is working on a task")  # not at the limit: refused
+        self.tmux.edith_screen = LIMIT_MENU_SCREEN
+        session_file(self.h.claude_dir, 900, SID, "/home/x/edith", status="busy")
+        self.assertEqual(self.call("POST", "/v1/accounts/{id}/switch", {"id": target})["status"], "switching")
+        self.assertIn("status", self.agent.order)  # asked agent.status(), and the open run didn't refuse it
+
     def test_switch_holds_the_agent_and_starts_a_transient_unit(self):
         target = self.second()
         answer = self.call("POST", "/v1/accounts/{id}/switch", {"id": target})
