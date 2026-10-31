@@ -55,6 +55,27 @@ def clean_prompt(prompt: str) -> dict:
             "replying_to": quoted.group(1) if quoted else None}
 
 
+QUOTE_MAX = 300  # characters of a replied-to message that go in the prompt (app/…/live-session/reply.ts QUOTE_MAX)
+
+
+def reply_line(replying_to) -> str:
+    """The prompt line for the message Arpit replies to (the app's swipe to reply), as Telegram's
+    replies have it: "\n[Arpit is replying to EDITH's message: <quote>]", the quote on one line and
+    at most QUOTE_MAX characters; "" without one. clean_prompt takes it out again as `replying_to`.
+    `replying_to` is {text, from: "edith" | "arpit"} or None; anything else is a ValueError."""
+    if replying_to is None:
+        return ""
+    if not isinstance(replying_to, dict) or not isinstance(replying_to.get("text"), str):
+        raise ValueError("replying_to must be {text, from}")
+    quote = " ".join(replying_to["text"].split())
+    if not quote:
+        return ""
+    if len(quote) > QUOTE_MAX:
+        quote = quote[:QUOTE_MAX - 1].rstrip() + "…"
+    who = "EDITH's" if replying_to.get("from") == "edith" else "an earlier"
+    return f"\n[Arpit is replying to {who} message: {quote}]"
+
+
 def reply_parts(reply: str) -> dict:
     """A reply -> {text without REACT:/SEND_FILE: lines, files, reaction (the last REACT: pick or None)}."""
     files, text = take_directives(reply or "", "SEND_FILE")
