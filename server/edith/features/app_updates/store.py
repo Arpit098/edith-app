@@ -116,6 +116,24 @@ class Store:
             ready = [e for e in it if not e.name.startswith(".") and e.is_dir(follow_symlinks=False)]
         return [e.path for e in sorted(ready, key=lambda e: e.stat().st_mtime)]
 
+    def set_aside(self, folder):
+        """A rejected inbox build -> .rejected-<name>, dated now (sweep_rejected removes it later)."""
+        aside = os.path.join(self.inbox_dir, f".rejected-{os.path.basename(folder)}")
+        shutil.rmtree(aside, ignore_errors=True)
+        try:
+            os.replace(folder, aside)
+            os.utime(aside)
+        except OSError:
+            shutil.rmtree(folder, ignore_errors=True)
+
+    def sweep_rejected(self, max_age, now=None):
+        """Remove the rejected inbox builds set aside more than max_age seconds ago."""
+        cutoff = (now or time.time()) - max_age
+        with os.scandir(self.inbox_dir) as it:
+            old = [e.path for e in it if e.name.startswith(".rejected-") and e.stat(follow_symlinks=False).st_mtime < cutoff]
+        for path in old:
+            shutil.rmtree(path, ignore_errors=True)
+
     def update_file(self, update_id, name):
         return os.path.join(self.update_dir, update_id, name)
 

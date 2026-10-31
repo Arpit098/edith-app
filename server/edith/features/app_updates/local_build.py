@@ -127,6 +127,33 @@ def plan(index, pin, runtime, sha, is_ancestor):
     return apk, base
 
 
+def deliver(artifact, update_id, root, pin, runtime, sha, is_ancestor, out=None):
+    """Copy the signed artifact into the store's inbox (or `out`, a dry run); -> where it went.
+    plan() runs again first, on the index as it is now: a CI bundle imported during the build must
+    not be rolled back."""
+    plan(read_index(root), pin, runtime, sha, is_ancestor)
+    if out:
+        dest = os.path.join(os.path.abspath(os.path.expanduser(out)), update_id)
+        shutil.rmtree(dest, ignore_errors=True)
+        shutil.copytree(artifact, dest)
+        return f"dry run: written to {dest} (not to the store)"
+    inbox = os.path.join(root, "inbox")
+    os.makedirs(inbox, exist_ok=True)
+    partial, dest = os.path.join(inbox, f".{update_id}"), os.path.join(inbox, update_id)
+    shutil.rmtree(partial, ignore_errors=True)
+    shutil.copytree(artifact, partial)
+    os.replace(partial, dest)  # complete before the job can see it
+    return "in the store's inbox; edith imports it on its next collect pass (within 2 min)"
+
+
+def read_index(root):
+    """The store's index.json, read only (the bridge is its only writer)."""
+    try:
+        return read_json(os.path.join(root, "index.json"))
+    except FileNotFoundError:
+        return {}
+
+
 def ancestry(src):
     def is_ancestor(a, b):
         return subprocess.run(["git", "merge-base", "--is-ancestor", a, b], cwd=src, capture_output=True,
@@ -161,10 +188,7 @@ def build(a):
         config = tomllib.load(f)
     feature = config.get("features", {}).get("app_updates", {})
     root = resolve(feature).app_updates
-    try:
-        index = read_json(os.path.join(root, "index.json"))  # read only: the bridge is its only writer
-    except FileNotFoundError:
-        index = {}
+    index = read_index(root)
 
     work = os.path.expanduser(a.work) if a.work else os.path.join(resolve(feature).state_dir, "ota-build")
     os.makedirs(work, mode=0o700, exist_ok=True)
@@ -242,20 +266,7 @@ def build(a):
                                     "--run-id", "0", "--expo-config", expo_config, "--release-notes", notes],
                            app, base_env, 120)
     update = read_json(os.path.join(artifact, "update.json"))
-
-    if a.out:
-        dest = os.path.join(os.path.abspath(os.path.expanduser(a.out)), update["id"])
-        shutil.rmtree(dest, ignore_errors=True)
-        shutil.copytree(artifact, dest)
-        where = f"dry run: written to {dest} (not to the store)"
-    else:
-        inbox = os.path.join(root, "inbox")
-        os.makedirs(inbox, exist_ok=True)
-        partial, dest = os.path.join(inbox, f".{update['id']}"), os.path.join(inbox, update["id"])
-        shutil.rmtree(partial, ignore_errors=True)
-        shutil.copytree(artifact, partial)
-        os.replace(partial, dest)  # complete before the job can see it
-        where = f"in the store's inbox; edith imports it on its next collect pass (within 2 min)"
+    where = deliver(artifact, update["id"], root, feature.get("cert_sha256") or "", runtime, sha, ancestry(src), a.out)
     shutil.rmtree(tmp, ignore_errors=True)
     size = sum(f["size"] for f in update["files"])
     print(f"OTA update {update['id']} for {sha[:8]}: runtime {runtime[:12]}, APK {apk['versionCode']}, "
@@ -271,7 +282,8 @@ def main(argv=None):
     ap.add_argument("--repo-url", default=f"https://github.com/{REPO}.git")
     ap.add_argument("--work", help="build folder (default <state_dir>/ota-build)")
     ap.add_argument("--hermes-dir", help="a Hermes build for this machine (<dir>/build/bin/hermesc)")
-    ap.add_argument("--no-bytecode", action="store_true", help="a plain-JS bundle instead of Hermes bytecode")
+    ap.add_argument("--no-bytecode", action="store_true", help="a plain-JS bundle instead of Hermes bytecode: not what CI ships; "
+                                                                   "verify on a phone first")
     ap.add_argument("--out", help="dry run: write the artifact here instead of the store's inbox")
     ap.add_argument("--cert", help="dry run only: the certificate to check the signature against")
     a = ap.parse_args(argv)

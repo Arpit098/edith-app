@@ -33,6 +33,8 @@ EXPO_HEADERS = {"expo-current-update-id": "current_update_id", "expo-embedded-up
 OFFERED = ("versionName", "versionCode", "sha", "built_at", "runtimeVersion", "size", "sha256", "cert_sha256")
 NOTE_LISTS = {"new": 20, "fixes": 20, "changes": 20, "details": 30}  # list -> most items kept
 PLAIN = (("new", "New"), ("fixes", "Fix"), ("changes", "Change"))
+ARTIFACT_FILES = ("update.json", "manifest.json", "manifest.sig")  # an edith-ota artifact's own files
+REJECTED_KEEP = 7 * 86400  # seconds a rejected local build stays in the inbox for a look
 
 
 def release_notes(value):
@@ -102,22 +104,20 @@ def setup(ctx: Context) -> None:
 
     def import_local(s):
         """OTA bundles built on edith (local_build.py) waiting in the inbox: checked like a CI artifact."""
+        s.sweep_rejected(REJECTED_KEEP)
         for folder in s.inbox():
             name = os.path.basename(folder)
             try:
-                if not os.path.isfile(os.path.join(folder, "update.json")):
-                    raise Rejected("no update.json")
+                missing = [f for f in ARTIFACT_FILES if not os.path.isfile(os.path.join(folder, f))]
+                if missing:  # a complete build is renamed in, so a missing file never turns up later
+                    raise Rejected(f"no {', '.join(missing)}")
                 record = s.add_update(0, folder, source="local")
                 log.info("imported local OTA update %s (%s)", record["id"], (record["sha"] or "")[:8])
             except (Rejected, ValueError) as e:  # ValueError: a malformed JSON file
-                # Kept aside under a dot name (never imported or retried) for a look at what was wrong.
+                # Kept aside under a dot name (never imported or retried) for a look at what was wrong;
+                # removed after REJECTED_KEEP.
                 log.warning("local OTA build %s rejected: %s", name, e)
-                aside = os.path.join(s.inbox_dir, f".rejected-{name}")
-                shutil.rmtree(aside, ignore_errors=True)
-                try:
-                    os.replace(folder, aside)
-                except OSError:
-                    shutil.rmtree(folder, ignore_errors=True)
+                s.set_aside(folder)
                 continue
             except OSError as e:  # left in the inbox: the next pass tries again
                 log.warning("local OTA build %s not imported yet: %s", name, e)

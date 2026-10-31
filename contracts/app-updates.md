@@ -140,8 +140,11 @@ dist/…               the `npx expo export --platform android` output (bundle, 
   The collect job imports it before its GitHub pass, with the same checks as a CI artifact, and the record
   gets `"source": "local"` and `run_id` 0. CI records have `"source": "ci"`. The newest update for a
   runtimeVersion is served, whichever built it.
-- An inbox folder that fails a check, has malformed JSON or has no `update.json` is renamed to
-  `.rejected-<id>`. It is never retried, and it never stops CI artifacts from being collected.
+- An inbox folder that fails a check, has malformed JSON or lacks `update.json`, `manifest.json` or
+  `manifest.sig` is renamed to `.rejected-<id>`. It is never retried, and it never stops CI artifacts from
+  being collected. Rejected folders are deleted after 7 days.
+- Just before copying into the inbox, the build reads `index.json` again and repeats its checks, so a CI bundle
+  imported during the build can't be rolled back.
 - Hermes: npm's `hermesc` is x86-64 only, so on edith (ARM64) the build needs `--hermes-dir` (a `hermesc` built
   from the same Hermes release) or `--no-bytecode`. With `--no-bytecode`, the bundle is plain JS, which Hermes
   also runs but starts a little slower.

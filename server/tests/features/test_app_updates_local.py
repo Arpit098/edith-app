@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from unittest import mock
 
+from edith.features import app_updates
 from edith.features.app_updates import local_build
 from edith.features.app_updates.github import GhError
 from edith.features.app_updates.local_build import Refused, check_key, plan
@@ -93,6 +94,24 @@ class PlanTest(unittest.TestCase):
         with self.assertRaisesRegex(Refused, "doesn't contain sha2.*APK 2"):
             plan(index, PIN, "rtA", "unrelated", line)
 
+    def test_a_ci_bundle_imported_during_the_build_is_not_rolled_back(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root)
+        artifact = os.path.join(root, "built")
+        write_artifact(artifact, ota_artifact(0, "local1"))
+        index = {"apks": {"2": apk(2, "rtA")}, "updates": {}}
+        (pathlib.Path(root) / "index.json").write_text(json.dumps(index))
+        line = history("sha2", "head", "ci-newer")
+        plan(index, PIN, "rtA", "head", line)  # fine when the build starts
+        index["updates"]["ci"] = {"id": "ci", "runtimeVersion": "rtA", "createdAt": 30, "sha": "ci-newer"}
+        (pathlib.Path(root) / "index.json").write_text(json.dumps(index))  # CI's bundle arrives meanwhile
+        with self.assertRaisesRegex(Refused, "head doesn't contain ci-newer"):
+            local_build.deliver(artifact, "local1", root, PIN, "rtA", "head", line)
+        self.assertFalse(os.path.exists(os.path.join(root, "inbox")))
+        self.assertIn("inbox", local_build.deliver(artifact, "local2", root, PIN, "rtA", "ci-newer2",
+                                                   history("sha2", "ci-newer", "ci-newer2")))
+        self.assertEqual(os.listdir(os.path.join(root, "inbox")), ["local2"])
+
     def test_ancestry_is_gits(self):
         repo = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, repo)
@@ -134,12 +153,21 @@ class InboxTest(unittest.TestCase):
         self.drop("garbled", 1793280400)
         (self.inbox / "garbled" / "manifest.json").write_text("{not json")
         (self.inbox / "empty").mkdir()                   # no update.json
+        self.drop("unsigned", 1793280500)
+        (self.inbox / "unsigned" / "manifest.sig").unlink()
         self.w.collect()
         index = json.loads((self.w.root / "index.json").read_text())
         self.assertEqual(sorted(index["updates"]), ["ci1", "local1"])  # a bad local build doesn't stop CI's
         self.assertEqual((index["updates"]["local1"]["source"], index["updates"]["local1"]["run_id"]), ("local", 0))
-        self.assertEqual(sorted(os.listdir(self.inbox)),  # imported: gone; rejected: set aside, not retried
-                         [".partial", ".rejected-bad", ".rejected-empty", ".rejected-garbled"])
+        rejected = [".rejected-bad", ".rejected-empty", ".rejected-garbled", ".rejected-unsigned"]
+        self.assertEqual(sorted(os.listdir(self.inbox)), [".partial", *rejected])  # set aside, not retried
+
+        # A week later they are gone; one set aside more recently stays.
+        week_ago = os.stat(self.inbox / ".rejected-bad").st_mtime - app_updates.REJECTED_KEEP - 1
+        for name in rejected[:3]:
+            os.utime(self.inbox / name, (week_ago, week_ago))
+        self.w.collect()
+        self.assertEqual(sorted(os.listdir(self.inbox)), [".partial", ".rejected-unsigned"])
         self.assertEqual(self.served(), "local1")
 
     def test_the_newest_is_served_whether_ci_or_local(self):
