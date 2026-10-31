@@ -22,9 +22,21 @@ export interface Screen {
   icon?: string; // tab icon: a MaterialCommunityIcons name, e.g. "history"
 }
 
+/** The groups of the Settings list, in the order they show (shell/settingsGroups.ts has their titles). */
+export type SettingsGroup = 'connection' | 'notifications' | 'voice' | 'app' | 'more';
+
+/**
+ * A row in Settings that opens `component` on its own page. Only `title` and `component` are required:
+ * a section without the rest goes under "More", with a generic icon and no summary line.
+ */
 export interface SettingsSection {
-  title: string;
+  title: string; // unique: it is the page's key and its header
   component: ComponentType;
+  group?: SettingsGroup;
+  icon?: string; // an outline MaterialCommunityIcons name, e.g. "bell-outline"
+  order?: number; // within the group, lowest first (default 100; ties by title)
+  /** A React hook, called while the row renders: one short line of live state, e.g. "On · Instant". */
+  summary?: () => string | null;
 }
 
 /** A tile in the Tools launcher grid. Most features are tools; the navigation menu lists only a handful of main screens. */

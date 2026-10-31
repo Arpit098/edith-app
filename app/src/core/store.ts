@@ -59,6 +59,15 @@ export function useStore<S, T>(store: Store<S>, select: (s: S) => T, isEqual: (a
   return useSyncExternalStore(store.subscribe, getSnapshot);
 }
 
+const NOTHING = createStore<unknown>(undefined);
+const none = () => undefined;
+
+/** useStore for a store that may not exist yet (a feature not set up, e.g. in tests): `fallback` then. */
+export function useStoreOr<S, T>(store: Store<S> | null | undefined, select: (s: S) => T, fallback: T): T {
+  const value = useStore<S, T | undefined>(store ?? (NOTHING as Store<S>), store ? select : none);
+  return store ? (value as T) : fallback;
+}
+
 /** Shallow equality for arrays and plain objects (one level). */
 export function shallowEqual<T>(a: T, b: T): boolean {
   if (Object.is(a, b)) return true;

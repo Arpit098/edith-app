@@ -1,48 +1,190 @@
-// Settings: the server connection, then each feature's settings section.
+// Settings: a grouped list (like the phone's own settings), each row an icon, a title and one line of
+// live state. A row opens its section on its own page, with a back header; Android back closes it.
+// The shell adds two sections of its own: the server connection and the Developer page (frame meter).
 
-import { useState } from 'react';
-import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useMemo, useState } from 'react';
+import { Alert, BackHandler, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import type { Connection, ConnectionState } from '../core/connection';
 import type { SettingsSection } from '../core/feature';
+import { str } from '../core/guards';
 import type { FrameMeter, FrameReport } from '../core/ports';
 import { useStore } from '../core/store';
-import { colors, space, type, useChrome, useGlass } from '../core/theme';
+import { colors, radius, space, type, useChrome, useGlass } from '../core/theme';
 import { Button } from '../ui/Button';
 import { Glass } from '../ui/Glass';
+import { Icon } from '../ui/Icon';
+import { SlideIn } from '../ui/motion';
 import { describeLink } from './ConnectionPill';
+import { DEFAULT_ICON, groupSections, type SettingsGroupView } from './settingsGroups';
 
 const selectState = (s: ConnectionState) => s;
 
+/** The connection row's line: short, unlike describeLink's full sentence. */
+export function linkSummary(s: Pick<ConnectionState, 'link' | 'baseUrl'>): string {
+  const host = s.baseUrl?.replace(/^https?:\/\//i, '').replace(/[:/].*$/, '');
+  switch (s.link) {
+    case 'open':
+      return host ? `Connected · ${host}` : 'Connected';
+    case 'connecting':
+      return 'Connecting…';
+    case 'offline':
+      return 'Offline';
+    case 'unauthorized':
+      return 'Token rejected';
+    case 'loading':
+      return 'Loading…';
+    case 'unconfigured':
+      return 'Not set up';
+  }
+}
+
+const GLASS_MODE = { shader: 'refraction (Android 13+)', blur: 'blur (Android 12)', flat: 'flat' } as const;
+const GLASS_SHORT = { shader: 'refraction', blur: 'blur', flat: 'flat' } as const;
+
+function useFramesSummary(): string {
+  return `Frame meter · glass: ${GLASS_SHORT[useGlass().mode]}`;
+}
+
+/** The shell's own sections, in the same shape as the features'. */
+export function shellSections(connection: Connection, meter: FrameMeter | null): SettingsSection[] {
+  const useLinkSummary = () => useStore(connection.store, linkSummary);
+  const own: SettingsSection[] = [
+    {
+      title: 'Server connection',
+      group: 'connection',
+      icon: 'server-network',
+      order: 0,
+      component: () => <ConnectionSection connection={connection} />,
+      summary: useLinkSummary,
+    },
+  ];
+  if (meter) {
+    own.push({ title: 'Developer', group: 'app', icon: 'speedometer', order: 90, component: () => <FrameSection meter={meter} />, summary: useFramesSummary });
+  }
+  return own;
+}
+
+/** Whether Settings is the screen on top (tabs stay mounted when hidden: back must not act from behind). */
+function useOnScreen(connection: Connection): boolean {
+  const [on, setOn] = useState(true); // it mounts when it's opened
+  useEffect(() => connection.bus.on('app.screen', (e) => setOn(str(e.data.name) === 'settings'), 'settings'), [connection]);
+  return on;
+}
+
 export function SettingsScreen({ connection, sections, meter }: { connection: Connection; sections: SettingsSection[]; meter: FrameMeter | null }) {
+  const all = useMemo(() => [...shellSections(connection, meter), ...sections], [connection, meter, sections]);
+  const groups = useMemo(() => groupSections(all), [all]);
+  const [open, setOpen] = useState<string | null>(null);
+  const page = open === null ? undefined : all.find((s) => s.title === open);
+  const onScreen = useOnScreen(connection);
+
+  useEffect(() => {
+    if (!page || !onScreen) return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      setOpen(null);
+      return true; // registered after the shell's, so it is asked first
+    });
+    return () => sub.remove();
+  }, [page, onScreen]);
+
+  return (
+    <>
+      {/* The list stays mounted under a page, so it comes back where it was scrolled to. */}
+      <View style={[styles.flex, page && styles.hidden]}>
+        <SettingsList groups={groups} onOpen={setOpen} />
+      </View>
+      {page ? <SettingsPage key={page.title} section={page} onBack={() => setOpen(null)} /> : null}
+    </>
+  );
+}
+
+function SettingsList({ groups, onOpen }: { groups: SettingsGroupView[]; onOpen: (title: string) => void }) {
+  const insets = useChrome();
+  return (
+    <ScrollView contentContainerStyle={[styles.body, { paddingTop: insets.top + space.l, paddingBottom: insets.bottom + space.l }]}>
+      {groups.map((g) => (
+        <View key={g.id} style={styles.group}>
+          <Text style={styles.heading} accessibilityRole="header">
+            {g.title}
+          </Text>
+          <Glass level="regular" rim style={styles.card}>
+            {g.sections.map((s, i) => (
+              <SettingsRow key={s.title} section={s} first={i === 0} onPress={() => onOpen(s.title)} />
+            ))}
+          </Glass>
+        </View>
+      ))}
+    </ScrollView>
+  );
+}
+
+function SettingsRow({ section, first, onPress }: { section: SettingsSection; first: boolean; onPress: () => void }) {
+  const useSummary = section.summary ?? noSummary; // one section per row (keyed by title): the same hook every render
+  const summary = useSummary();
+  return (
+    <Pressable
+      onPress={onPress}
+      android_ripple={{ color: colors.ripple }}
+      accessibilityRole="button"
+      accessibilityLabel={summary ? `${section.title}, ${summary}` : section.title}
+      style={[styles.row, !first && styles.divider]}
+    >
+      <Icon name={section.icon ?? DEFAULT_ICON} size={22} color={colors.accent} />
+      <View style={styles.flex}>
+        <Text style={styles.title} numberOfLines={1}>
+          {section.title}
+        </Text>
+        {summary ? (
+          <Text style={styles.summary} numberOfLines={1}>
+            {summary}
+          </Text>
+        ) : null}
+      </View>
+      <Icon name="chevron-right" size={20} color={colors.textDim} />
+    </Pressable>
+  );
+}
+
+const noSummary = () => null;
+
+function SettingsPage({ section, onBack }: { section: SettingsSection; onBack: () => void }) {
+  const insets = useChrome();
+  return (
+    <SlideIn style={styles.flex}>
+      <ScrollView contentContainerStyle={[styles.body, { paddingTop: insets.top + space.m, paddingBottom: insets.bottom + space.l }]} keyboardShouldPersistTaps="handled">
+        <Pressable onPress={onBack} hitSlop={10} accessibilityRole="button" accessibilityLabel="Back to Settings" style={styles.back}>
+          <Icon name="arrow-left" size={22} />
+          <Text style={styles.pageTitle} numberOfLines={1} accessibilityRole="header">
+            {section.title}
+          </Text>
+        </Pressable>
+        <Glass level="regular" rim style={styles.section}>
+          <section.component />
+        </Glass>
+      </ScrollView>
+    </SlideIn>
+  );
+}
+
+function ConnectionSection({ connection }: { connection: Connection }) {
   const state = useStore(connection.store, selectState);
-  const chromeInsets = useChrome();
   const forget = () =>
     Alert.alert('Change server?', 'This disconnects and deletes the saved token from this phone.', [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Disconnect', style: 'destructive', onPress: () => void connection.forget() },
     ]);
   return (
-    <ScrollView contentContainerStyle={[styles.body, { paddingTop: chromeInsets.top + space.l, paddingBottom: chromeInsets.bottom + space.l }]}>
-      <Glass level="regular" style={styles.section}>
-        <Text style={styles.heading}>Server</Text>
-        <Text style={styles.value} selectable>
-          {state.baseUrl}
-        </Text>
-        <Text style={styles.dim}>{describeLink(state)}</Text>
-        <View style={styles.actions}>
-          {state.link !== 'open' ? <Button small label="Reconnect now" icon="refresh" onPress={() => connection.retry()} /> : null}
-          <Button small label="Change server" icon="logout" variant="danger" onPress={forget} />
-        </View>
-      </Glass>
-      {sections.map((s) => (
-        <Glass key={s.title} level="regular" style={styles.section}>
-          <Text style={styles.heading}>{s.title}</Text>
-          <s.component />
-        </Glass>
-      ))}
-      {meter ? <FrameSection meter={meter} /> : null}
-    </ScrollView>
+    <>
+      <Text style={styles.value} selectable>
+        {state.baseUrl}
+      </Text>
+      <Text style={styles.dim}>{describeLink(state)}</Text>
+      <View style={styles.actions}>
+        {state.link !== 'open' ? <Button small label="Reconnect now" icon="refresh" onPress={() => connection.retry()} /> : null}
+        <Button small label="Change server" icon="logout" variant="danger" onPress={forget} />
+      </View>
+    </>
   );
 }
 
@@ -70,9 +212,9 @@ function FrameSection({ meter }: { meter: FrameMeter }) {
     void meter.stop().then(setReport, () => setReport(null));
   };
   return (
-    <Glass level="regular" style={styles.section}>
+    <>
       <Text style={styles.heading}>Performance</Text>
-      <Text style={styles.dim}>Glass: {mode === 'shader' ? 'refraction (Android 13+)' : mode === 'blur' ? 'blur (Android 12)' : 'flat'}</Text>
+      <Text style={styles.dim}>Glass: {GLASS_MODE[mode]}</Text>
       {report ? (
         <Text style={styles.value} selectable>
           {describeFrames(report)}
@@ -83,14 +225,24 @@ function FrameSection({ meter }: { meter: FrameMeter }) {
       <View style={styles.actions}>
         <Button small label={running ? 'Stop measuring' : 'Measure frames'} icon={running ? 'stop' : 'speedometer'} onPress={toggle} />
       </View>
-    </Glass>
+    </>
   );
 }
 
 const styles = StyleSheet.create({
+  flex: { flex: 1 },
+  hidden: { display: 'none' },
   body: { paddingHorizontal: space.l, gap: space.m },
+  group: { gap: space.s },
+  card: { paddingVertical: space.xs, overflow: 'hidden' },
+  row: { flexDirection: 'row', alignItems: 'center', gap: space.m, paddingHorizontal: space.l, paddingVertical: space.m, minHeight: 60 },
+  divider: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.hairline },
   section: { padding: space.l, gap: space.xs },
-  heading: { color: colors.textDim, fontSize: type.size.caption, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.8 },
+  back: { flexDirection: 'row', alignItems: 'center', gap: space.s, paddingVertical: space.xs, borderRadius: radius.m },
+  pageTitle: { color: colors.text, fontSize: type.size.title, fontWeight: '700', flex: 1 },
+  heading: { color: colors.textDim, fontSize: type.size.caption, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.8, paddingHorizontal: space.xs },
+  title: { color: colors.text, fontSize: type.size.body, fontWeight: '600' },
+  summary: { color: colors.textDim, fontSize: type.size.small, marginTop: 2 },
   value: { color: colors.text, fontSize: type.size.title },
   dim: { color: colors.textDim, fontSize: type.size.small },
   actions: { flexDirection: 'row', gap: space.s, marginTop: space.s, flexWrap: 'wrap' },

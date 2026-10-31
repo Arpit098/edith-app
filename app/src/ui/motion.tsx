@@ -42,6 +42,20 @@ export const Squish = memo(function Squish({
   );
 });
 
+/** Slides in a little from the right when it mounts: a sub-page opening (Settings → Push). */
+export const SlideIn = memo(function SlideIn({ style, children }: { style?: StyleProp<ViewStyle>; children?: ReactNode }) {
+  const reduce = useReduceMotion();
+  const p = useSharedValue(reduce ? 1 : 0);
+  useEffect(() => {
+    if (!reduce) p.value = withSpring(1, motion.settle);
+  }, [p, reduce]);
+  const animated = useAnimatedStyle(() => ({
+    opacity: Math.min(1, p.value * 1.5),
+    transform: [{ translateX: (1 - p.value) * 32 }],
+  }));
+  return <Animated.View style={[style, animated]}>{children}</Animated.View>;
+});
+
 /** Grows out of a corner (where its trigger is) when it mounts: a sheet or menu opening. */
 export const GrowIn = memo(function GrowIn({ origin = 'left bottom', style, children }: { origin?: string; style?: StyleProp<ViewStyle>; children?: ReactNode }) {
   const reduce = useReduceMotion();
