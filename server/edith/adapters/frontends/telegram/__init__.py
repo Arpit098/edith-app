@@ -22,6 +22,7 @@ import re
 import threading
 import time
 
+from edith.common import usertime
 from edith.common.paths import resolve
 from edith.common.state import StateFile
 from edith.common.text import take_directives
@@ -230,7 +231,7 @@ class TelegramFrontend:
         attachments = [a for a in attachments if a]
         if not text and not attachments:
             return None
-        prompt = f"[Telegram message from Arpit, {time.strftime('%Y-%m-%d %H:%M %Z')}]\n{text}"
+        prompt = f"[Telegram message from Arpit, {usertime.stamp()}]\n{text}"
         quoted = msg.get("reply_to_message")
         if quoted and (quoted.get("text") or quoted.get("caption")):
             who = "EDITH's" if quoted.get("from", {}).get("is_bot") else "an earlier"

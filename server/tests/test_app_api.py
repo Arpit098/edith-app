@@ -314,7 +314,7 @@ class RoutesTest(unittest.TestCase):
                                               ("zz", None, None, 50)])
 
     def test_messages(self):
-        with mock.patch("time.strftime", return_value="2026-11-02 10:43 IST"):
+        with mock.patch("edith.common.usertime.stamp", return_value="2026-11-02 10:43 IST"):
             status, body = self.a.call("POST", "/v1/messages", {"text": " check the disk ", "voice": True})
         self.assertEqual((status, body["lane"]), (200, "main"))
         self.assertEqual(self.a.agent.sent[-1], ("[App message from Arpit, 2026-11-02 10:43 IST] [voice]\ncheck the disk",
@@ -325,12 +325,12 @@ class RoutesTest(unittest.TestCase):
     def test_message_replying_to_quotes_it_in_the_prompt(self):
         """Swipe to reply: the quote goes in the prompt as Telegram's replies do, so the server's
         message.user (clean_prompt) carries it back as replying_to."""
-        with mock.patch("time.strftime", return_value="2026-11-02 10:43 IST"):
+        with mock.patch("edith.common.usertime.stamp", return_value="2026-11-02 10:43 IST"):
             status, body = self.a.call("POST", "/v1/messages", {"text": "and now?", "replying_to": {"text": "Disk is\n40% full", "from": "edith"}})
         self.assertEqual(status, 200)
         self.assertEqual(self.a.agent.sent[-1][0], "[App message from Arpit, 2026-11-02 10:43 IST]\nand now?\n"
                                                    "[Arpit is replying to EDITH's message: Disk is 40% full]")
-        with mock.patch("time.strftime", return_value="2026-11-02 10:43 IST"):
+        with mock.patch("edith.common.usertime.stamp", return_value="2026-11-02 10:43 IST"):
             self.a.call("POST", "/v1/messages", {"text": "no quote", "replying_to": None})
         self.assertEqual(self.a.agent.sent[-1][0], "[App message from Arpit, 2026-11-02 10:43 IST]\nno quote")
         self.assertEqual(self.a.call("POST", "/v1/messages", raw=b"{not json")[0], 400)
@@ -382,13 +382,13 @@ class RoutesTest(unittest.TestCase):
         self.assertEqual([r.split("\n")[0] for r in replies], ["⏳ Main: 5s", "⏳ In the background:", "🖥 tmux session: running · First chat"])
         self.assertRegex(replies[1], r"\n• Shell · Wait for PR 41 CI · \d+ min$")
         self.assertEqual(self.a.agent.sent, [])
-        with mock.patch("time.strftime", return_value="2026-11-02 10:43 IST"):
+        with mock.patch("edith.common.usertime.stamp", return_value="2026-11-02 10:43 IST"):
             body, _ = self._typed("/queue after this")
         self.assertEqual(self.a.agent.sent[-1], ("[App message from Arpit, 2026-11-02 10:43 IST]\nafter this",
                                                  "app", body["ref"], True))
 
     def test_unknown_slash_text_still_goes_to_claude(self):
-        with mock.patch("time.strftime", return_value="2026-11-02 10:43 IST"):
+        with mock.patch("edith.common.usertime.stamp", return_value="2026-11-02 10:43 IST"):
             body, events = self._typed("/foo bar")
         self.assertEqual(body["lane"], "main")
         self.assertEqual(self.a.agent.sent, [("[App message from Arpit, 2026-11-02 10:43 IST]\n/foo bar", "app", body["ref"], False)])

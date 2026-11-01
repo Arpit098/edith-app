@@ -78,7 +78,7 @@ def normalize(text):
     text = text.replace(os.environ["HOME"], "~")
     text = re.sub(r"changes-\d{8}-\d{6}\.html", "changes-STAMP.html", text)
     text = re.sub(r"<title>Changes \d{8}-\d{6}</title>", "<title>Changes STAMP</title>", text)
-    return re.sub(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC", "DATE UTC", text)
+    return re.sub(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2} IST", "DATE IST", text)  # the report's time is in IST
 
 
 @contextlib.contextmanager

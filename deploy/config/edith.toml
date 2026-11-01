@@ -2,6 +2,9 @@
 # stay in ~/.claude/channels/telegram, Google tokens in ~/.config/edith-google, the App API token in
 # ~/.config/edith/app-token (0600). Paths default to today's live locations (edith/common/paths.py).
 
+[general]
+timezone = "Asia/Kolkata"   # Claude Code runs with TZ set to this; limit reset times are shown in it
+
 [adapters]
 agent = "claude_tmux"
 stt = "whisper_cpp"

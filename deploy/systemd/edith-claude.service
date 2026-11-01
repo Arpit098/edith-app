@@ -9,6 +9,8 @@ Type=forking
 WorkingDirectory=%h/edith
 Environment=PATH=%h/.local/bin:%h/.bun/bin:/usr/local/bin:/usr/bin:/bin
 Environment=LANG=C.UTF-8
+# Claude Code prints usage-limit reset times in this zone (match [general] timezone in edith.toml)
+Environment=TZ=Asia/Kolkata
 ExecStart=/usr/bin/tmux -L edith new-session -d -s edith -x 200 -y 50 %h/edith/bridge/edith-claude.sh
 ExecStop=/usr/bin/tmux -L edith kill-server
 Restart=always

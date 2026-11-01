@@ -23,6 +23,7 @@ import time
 
 from edith.common.claude_sessions import by_session_id
 from edith.common.text import HEADER_LINE, clean_prompt, reply_parts
+from edith.common.usertime import localize_limit_text
 
 from .background import Background
 from .transcript import Tail, describe_tool, read_backward, read_forward
@@ -235,7 +236,7 @@ def events_of(e, tools, origin_of=lambda ref: None, known=lambda rid: False, typ
             if not isinstance(b, dict):
                 continue
             if b.get("type") == "text" and b.get("text", "").strip():
-                parts = reply_parts(b["text"])
+                parts = reply_parts(localize_limit_text(b["text"]))  # Claude's limit line, in the user's zone
                 if parts["text"]:
                     out.append(("message.assistant", "system", {"text": parts["text"], "files": parts["files"], "lane": "main"}))
             elif b.get("type") == "tool_use":

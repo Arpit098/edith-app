@@ -38,6 +38,7 @@ import tempfile
 import threading
 import time
 
+from edith.common import usertime
 from edith.common.claude_screen import read_screen
 from edith.common.paths import resolve
 from edith.common.state import StateFile
@@ -575,6 +576,7 @@ class ClaudeTmux:
             for r, _ in left:
                 self._publish("turn.failed", r, ref=r.ref, lane="main", reason=reason, detail=detail)
             return []
+        reply = usertime.localize_limit_text(reply)  # a limit line printed in UTC: in the user's zone
         parts = reply_parts(reply)
         self._publish("turn.done", run, ref=ref, lane="main", text=reply, steps=run.steps, elapsed=elapsed,
                       is_error=False, subtype="success", display_text=parts["text"], files=parts["files"],
@@ -596,7 +598,7 @@ class ClaudeTmux:
         self._publish("turn.started", run, ref=ref, lane="side")
         if not retry:
             self._delivered(run, "side_lane")
-        env = dict(os.environ, EDITH_PERM_DIR=self.paths.perm_dir, EDITH_RUN_ID=run.rid)
+        env = usertime.env(dict(os.environ, EDITH_PERM_DIR=self.paths.perm_dir, EDITH_RUN_ID=run.rid))
         result = None
         with tempfile.TemporaryFile("w+", errors="replace") as stderr:
             with self._lock:  # shutdown() sets _stopping under this lock, so nothing starts after it
@@ -637,11 +639,11 @@ class ClaudeTmux:
             else:
                 log.warning("side lane failed: code %s %s", run.proc.returncode, err[-300:])
                 self._publish("turn.failed", run, ref=ref, lane="side", reason="error",
-                              code=run.proc.returncode, stderr=err.strip()[-800:])
+                              code=run.proc.returncode, stderr=usertime.localize_limit_text(err.strip()[-800:]))
             return
 
         self._save_fork(result.get("session_id"))
-        reply, is_error, subtype = result.get("result") or "", bool(result.get("is_error")), result.get("subtype", "unknown")
+        reply, is_error, subtype = usertime.localize_limit_text(result.get("result") or ""), bool(result.get("is_error")), result.get("subtype", "unknown")
         self._remember_side_note(text, reply, is_error, subtype)
         parts = reply_parts(reply)
         if parts["text"]:  # the main transcript never has a side lane's answer: send it as a message
@@ -787,7 +789,7 @@ class ClaudeTmux:
             t0 = time.time()
             with Watch(self.paths.state_dir) as watch:
                 if self.tmux.alive():
-                    self.tmux.respawn(f"{self.launch} {session_id}")
+                    self.tmux.respawn(f"{self.launch} {session_id}", env=usertime.env())  # TZ: limit times in the user's zone
                 else:
                     self.tmux.start()
                 wait_for(lambda: self._tmux_session().get("ts", 0) >= t0, watch, 60)  # the SessionStart hook

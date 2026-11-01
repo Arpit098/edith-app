@@ -10,12 +10,14 @@ import sys
 import threading
 import tomllib
 
+from .common import usertime
 from .core import EventBus, JobRunner, Ports, Registry, load_adapter, load_features, load_port
 
 log = logging.getLogger("edith.main")
 
 
 def build(config: dict):
+    usertime.configure_from(config)  # before anything launches Claude or formats a time; never fails
     bus, registry = EventBus(), Registry()
     adapters = config.get("adapters", {})
     settings = config.get("adapter", {})  # [adapter.<name>] sections

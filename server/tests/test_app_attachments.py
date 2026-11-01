@@ -162,7 +162,7 @@ class MessageTest(unittest.TestCase):
     def test_prompt_has_telegrams_attachment_lines(self):
         photo = self.s.upload(HEADERS["image/heic"] + b"x", **{"x-filename": "IMG_2041.HEIC"})[1]
         voice = self.s.upload(HEADERS["audio/mp4"] + b"x", **{"x-filename": "note.m4a"})[1]
-        with mock.patch("time.strftime", return_value="2026-11-02 10:43 IST"):
+        with mock.patch("edith.common.usertime.stamp", return_value="2026-11-02 10:43 IST"):
             status, body = self.s.call("POST", "/v1/messages", {"text": "what is this plant?",
                                                                 "attachments": [photo["id"], voice["id"]]})
         self.assertEqual(status, 200)

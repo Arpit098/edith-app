@@ -32,6 +32,7 @@ import sys
 import threading
 import time
 
+from edith.common import usertime
 from edith.common.paths import resolve
 from edith.core import ApiError, Context, Event, Feature
 
@@ -259,6 +260,7 @@ def setup(ctx: Context) -> None:
                     raise ApiError(409, "Can't switch while " + "; ".join(why))
                 plan = {"run": run, "unit": unit, "target": target, "root": root, "claude_dir": claude_dir,
                         "claude_json": claude_json, "claude": claude, "home": home, "path": os.environ.get("PATH", ""),
+                        "tz": usertime.tz_name(),  # the respawned Claudes print limit times in the user's zone
                         "agents": [{k: a[k] for k in ("name", "pane", "pid", "proc_start", "cwd", "session_id")} for a in agents],
                         "agents_socket": cfg.get("agents_socket"), "edith_socket": cfg.get("edith_socket", "edith"),
                         "edith_target": cfg.get("edith_target", "edith"), "service": cfg.get("service", "edith-claude"),
@@ -342,7 +344,8 @@ def setup(ctx: Context) -> None:
             for flow in logins.values():
                 flow.cancel()
             logins.clear()
-            flow = Login(claude, root, {"HOME": home, "PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LANG": "C.UTF-8"})
+            flow = Login(claude, root, usertime.env({"HOME": home, "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+                                                     "LANG": "C.UTF-8"}))
             logins[flow.id] = flow
         try:
             url = flow.start()

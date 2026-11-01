@@ -42,6 +42,7 @@ import subprocess
 import sys
 import time
 
+from edith.common import usertime
 from edith.common.claude_sessions import proc_stat, same_process
 
 from .panes import Panes
@@ -189,7 +190,8 @@ class Switch:
     def _respawn(self, a):
         path = self.plan.get("path") or os.environ.get("PATH", "/usr/bin:/bin")
         argv = [self.plan.get("claude", "claude")] + (["--resume", a["session_id"]] if a.get("session_id") else [])
-        cmd = f"export PATH={shlex.quote(path)}; exec {shlex.join(argv)}"
+        tz = self.plan.get("tz") or usertime.tz_name()  # Claude prints its limit reset times in this zone
+        cmd = f"export PATH={shlex.quote(path)} TZ={shlex.quote(tz)}; exec {shlex.join(argv)}"
         r = self._tmux("respawn-pane", "-k", "-t", a["pane"], "-c", a["cwd"], cmd)
         if r.returncode != 0:
             raise StepError(f"couldn't restart {a['name']}")
@@ -232,7 +234,8 @@ class Switch:
             self.foreign = True
             raise StepError("the login changed while the Claudes started (something wrote other credentials)")
         email = self.profiles.get(pid).get("email")
-        env = dict(os.environ, HOME=self.plan.get("home") or os.path.expanduser("~"))
+        env = dict(os.environ, HOME=self.plan.get("home") or os.path.expanduser("~"),
+                   TZ=self.plan.get("tz") or usertime.tz_name())
         r = self.sys.run([self.plan.get("claude", "claude"), "auth", "status", "--json"], 30, env=env)
         try:
             status = json.loads(r.stdout or "")

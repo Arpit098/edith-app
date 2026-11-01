@@ -84,8 +84,8 @@ describe('PushSettings', () => {
     expect(calls.turnOn).toEqual(['poll']);
     expect(texts(r)).toContain('first check comes within 15 minutes');
     expect(texts(r)).not.toContain('Unrestricted');
-    act(() => store.set((s) => ({ ...s, status: { ...s.status, connected: true, lastCheckAt: new Date(2026, 9, 30, 9, 5).getTime() } })));
-    expect(texts(r)).toContain('Last check 09:05');
+    act(() => store.set((s) => ({ ...s, status: { ...s.status, connected: true, lastCheckAt: Date.UTC(2026, 9, 30, 3, 35) } })));
+    expect(texts(r)).toContain('Last check 09:05 IST'); // IST whatever the phone's zone
     act(() => press(r, 'Instant'));
     expect(calls.modes).toEqual(['instant']);
     expect(texts(r)).toContain('Battery to Unrestricted');

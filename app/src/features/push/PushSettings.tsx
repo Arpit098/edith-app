@@ -4,6 +4,7 @@
 import { useState } from 'react';
 import { StyleSheet, Text, TextInput, View } from 'react-native';
 
+import { clockIST } from '../../common/format';
 import { colors, radius, space, type } from '../../core/theme';
 import { useStore } from '../../core/store';
 import { Button } from '../../ui/Button';
@@ -20,10 +21,7 @@ const MODES: { mode: PushMode; label: string; icon: string; hint: string }[] = [
   { mode: 'poll', label: 'Every 15 min', icon: 'timer-outline', hint: 'Checks every 15 minutes (longer in deep sleep): less battery, news can be late.' },
 ];
 
-const clock = (ms: number) => {
-  const d = new Date(ms);
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-};
+const clock = (ms: number) => `${clockIST(ms / 1000)} IST`; // the phone's zone may not be IST
 
 function statusLine(status: PushState['status']): string {
   if (status.mode === 'poll') {
