@@ -327,7 +327,7 @@ SCENARIOS = [help_and_start, menu, sessions, resume_lists, resume_switch, resume
 
 def run(scenario):
     with temp_home() as home, mock.patch("time.time", return_value=NOW), \
-            mock.patch("time.strftime", return_value=STAMP):
+            mock.patch("edith.common.usertime.stamp", return_value=STAMP):
         world = NewWorld(home)
         extra = scenario(world) or {}
         return {"calls": world.calls(), **extra}

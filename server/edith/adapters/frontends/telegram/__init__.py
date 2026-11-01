@@ -22,10 +22,10 @@ import re
 import threading
 import time
 
+from edith.common import usertime
 from edith.common.paths import resolve
 from edith.common.state import StateFile
 from edith.common.text import take_directives
-from edith.common.usertime import localize_limit_text
 from edith.core import CommandCall, Reply
 
 from .api import BotApi, allowed_ids, read_token
@@ -144,7 +144,7 @@ class TelegramFrontend:
     # ---- sending ----
 
     def send_text(self, chat_id, text, **kw):
-        text = localize_limit_text(text or "") or "(empty reply)"  # a UTC limit time: the user's zone
+        text = text or "(empty reply)"
         last = None
         for i in range(0, len(text), MAX_MSG):
             last = self.api("sendMessage", chat_id=chat_id, text=text[i:i + MAX_MSG], **kw)
@@ -231,7 +231,7 @@ class TelegramFrontend:
         attachments = [a for a in attachments if a]
         if not text and not attachments:
             return None
-        prompt = f"[Telegram message from Arpit, {time.strftime('%Y-%m-%d %H:%M %Z')}]\n{text}"
+        prompt = f"[Telegram message from Arpit, {usertime.stamp()}]\n{text}"
         quoted = msg.get("reply_to_message")
         if quoted and (quoted.get("text") or quoted.get("caption")):
             who = "EDITH's" if quoted.get("from", {}).get("is_bot") else "an earlier"

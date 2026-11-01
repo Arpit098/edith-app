@@ -30,6 +30,7 @@ import threading
 import time
 import urllib.parse
 
+from edith.common import usertime
 from edith.common.paths import resolve
 from edith.common.text import reply_line
 from edith.core import ApiError, CommandCall, Event, Reply, Response, Route
@@ -256,7 +257,7 @@ class AppApi:
         return Event(type, data, origin="app")
 
     def _prompt(self, text, voice=False):
-        return f"[App message from Arpit, {time.strftime('%Y-%m-%d %H:%M %Z')}]" + (" [voice]" if voice else "") + f"\n{text}"
+        return f"[App message from Arpit, {usertime.stamp()}]" + (" [voice]" if voice else "") + f"\n{text}"
 
     def _messages(self, req):
         body = req.get("body") or {}

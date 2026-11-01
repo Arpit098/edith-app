@@ -3,18 +3,14 @@
 a busy agent)."""
 import re
 
-from .usertime import localize_limit_text
+from .usertime import USAGE_LIMIT, localize_limit_text
 
 ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]")
 BOX = re.compile(r"[─-▟]+")  # box drawing and block elements (borders, separators)
 BOTTOM = 15  # lines at the end of the screen that hold Claude Code's prompt, footer and dialogs
 PERMISSION = re.compile(r"Do you want to (?:proceed|make this edit|create|allow|run)|Would you like to proceed"
                         r"|❯\s*1\.\s*Yes", re.I)
-# Claude Code's own wording only ("Claude usage limit reached", "5-hour limit reached ∙ resets 4pm",
-# "You've hit your limit"): never a bare "limit reached", which a reply or a tool ("rate limit
-# reached") can print too.
-USAGE_LIMIT = re.compile(r"usage limit reached|\b\d+-hour limit reached|weekly limit reached|hit your limit"
-                         r"|limit will reset", re.I)
+# USAGE_LIMIT (from usertime): Claude Code's own limit wording, never a bare "limit reached".
 BLOCK = ("●", "⎿")  # how Claude Code starts a message or a tool's output
 # The menu Claude shows at a rate limit ("What do you want to do?" … "Stop and wait for limit to
 # reset"): a dialog, so it is read before the permission prompt it looks like.

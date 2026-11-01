@@ -2,8 +2,7 @@
 
 Each one sends EDITH a fixed prompt (word for word the legacy bridge's), as a normal turn.
 """
-import time
-
+from edith.common import usertime
 from edith.core import ActionCall, ActionResult, Button, CommandCall, Context, Feature, Reply
 
 GOOGLE = "cd ~/edith/google && ~/edith/venv/bin/python"
@@ -32,7 +31,7 @@ MENU = {  # command menu descriptions, in menu order
 
 
 def quick_prompt(cmd):
-    return f"[Quick action {cmd} from Arpit, {time.strftime('%Y-%m-%d %H:%M %Z')}]\n{QUICK[cmd][1]}"
+    return f"[Quick action {cmd} from Arpit, {usertime.stamp()}]\n{QUICK[cmd][1]}"
 
 
 def menu_keyboard():

@@ -186,7 +186,7 @@ def prompts(w):
 
 
 def run():
-    with temp_home(CLAUDE_BIN=FAKE_CLAUDE) as home, mock.patch("time.strftime", return_value=STAMP):
+    with temp_home(CLAUDE_BIN=FAKE_CLAUDE) as home, mock.patch("edith.common.usertime.stamp", return_value=STAMP):
         plan_file = fixture(home)
         with mock.patch.dict(os.environ, {"FAKE_CLAUDE_PLAN": str(plan_file), "FAKE_CLAUDE_LOG": str(home / "argv.jsonl")}), \
                 mock.patch("urllib.request.urlretrieve", side_effect=lambda url, dest: pathlib.Path(dest).write_bytes(b"x")):

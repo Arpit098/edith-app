@@ -17,7 +17,7 @@ log = logging.getLogger("edith.main")
 
 
 def build(config: dict):
-    usertime.configure(config.get("general", {}).get("timezone"))  # before anything launches Claude or formats a time
+    usertime.configure_from(config)  # before anything launches Claude or formats a time; never fails
     bus, registry = EventBus(), Registry()
     adapters = config.get("adapters", {})
     settings = config.get("adapter", {})  # [adapter.<name>] sections
