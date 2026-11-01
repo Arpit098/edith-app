@@ -278,7 +278,6 @@ export const motion = {
   settle: { damping: 16, stiffness: 220, mass: 1 }, // a new bubble settling into place
   grow: { damping: 17, stiffness: 260, mass: 0.9 }, // a sheet growing out of its trigger
   pressScale: 0.95,
-  blobMs: 2400, // one breath of the working blob
   orbMs: 9000, // one cycle of the thinking orb's swirl (the edge breathes twice in it)
   swipe: { damping: 20, stiffness: 320, mass: 0.7 }, // a swiped message springing back
 } as const;

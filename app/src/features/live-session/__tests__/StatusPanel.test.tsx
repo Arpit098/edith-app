@@ -16,9 +16,11 @@ import { DETAILS } from './details';
 
 jest.setTimeout(30_000); // the first run transforms all of React Native: slow on a cold cache
 
+/** The text drawn (not the unseen TalkBack live region, checked on its own). */
 function texts(r: ReactTestRenderer): string {
   return r.root
     .findAllByType(Text)
+    .filter((t) => t.props.testID !== 'status-live-region')
     .map((t) => [t.props.children].flat(3).filter((c) => typeof c === 'string' || typeof c === 'number').join(''))
     .join(' | ');
 }

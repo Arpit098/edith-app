@@ -15,6 +15,7 @@ import { Glass, useBackdrop, WallpaperContext } from '../ui/Glass';
 import { Icon } from '../ui/Icon';
 import { ConnectionPill } from './ConnectionPill';
 import { ConnectScreen } from './ConnectScreen';
+import { titleBox, type HeaderLayout, type TitleBox } from './headerTitle';
 import { linkTarget, useDeepLinks } from './links';
 import { MenuButton, NavMenu } from './NavMenu';
 import { back, current, navigate, type NavState } from './navigation';
@@ -129,6 +130,8 @@ function Main({ loaded, connection, meter }: { loaded: LoadedFeatures; connectio
   const HeaderPanel = headerPanel?.component;
   const HeaderOverlay = headerPanel?.overlay;
   const { titleGlow: glow } = useTheme(); // the title's glow takes the theme's accent
+  const title = top === home || !route ? APP_TITLE : route.title;
+  const box = useTitleBox(title);
 
   return (
     <KeyboardAvoidingView style={styles.flex} behavior="padding">
@@ -160,10 +163,23 @@ function Main({ loaded, connection, meter }: { loaded: LoadedFeatures; connectio
       <Glass level="thick" backdrop={backdrop.tag} radius={0} edges={{ bottom: true }} style={styles.header}>
         <View onLayout={onHeaderLayout} style={{ paddingTop: insets.top }}>
           {/* [● bubble 0:42]      E.D.I.T.H      [☰] (plans/ui-next.md §2); other screens show their own title. */}
-          <View style={styles.headerRow}>
-            {/* The title in off-white with the logo's soft blue glow (titleGlow); E.D.I.T.H on the home screen. */}
-            <Text style={[styles.title, { textShadowColor: glow }]} numberOfLines={1} accessibilityRole="header" pointerEvents="none">
-              {top === home || !route ? APP_TITLE : route.title}
+          <View style={styles.headerRow} onLayout={box.onRow} testID="header-row">
+            {/* Its natural width, unseen: decides whether the title can sit centred (headerTitle.ts). */}
+            {/* Keyed by the title: remounted, it reports its layout even when the width is unchanged. */}
+            <Text key={title} style={styles.measure} numberOfLines={1} onLayout={box.onTitle} testID="header-title-measure" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" pointerEvents="none">
+              {title}
+            </Text>
+            {/* The title in off-white with the logo's soft blue glow (titleGlow); E.D.I.T.H on the home screen.
+                Centred when it fits between the chip and the menu, else after the chip, cut with "…". */}
+            <Text
+              style={[styles.title, { textShadowColor: glow }, box.style]}
+              numberOfLines={1}
+              adjustsFontSizeToFit={box.squeezed}
+              minimumFontScale={0.85}
+              accessibilityRole="header"
+              pointerEvents="none"
+            >
+              {title}
             </Text>
             {stacked ? (
               <Pressable onPress={() => setNav((s) => back(s, home) ?? s)} hitSlop={10} accessibilityRole="button" accessibilityLabel="Back" style={styles.backBtn}>
@@ -171,7 +187,7 @@ function Main({ loaded, connection, meter }: { loaded: LoadedFeatures; connectio
               </Pressable>
             ) : null}
             {HeaderPanel ? <HeaderPanel top={headerHeight} backdrop={backdrop.tag} /> : <ConnectionPill connection={connection} onUnauthorized={() => open('settings', SERVER_CONNECTION)} />}
-            <View style={styles.flex} />
+            <View style={styles.flex} onLayout={box.onFree} testID="header-free" />
             <MenuButton open={menuOpen} onPress={toggleMenu} />
           </View>
           {loaded.panels
@@ -190,6 +206,29 @@ function Main({ loaded, connection, meter }: { loaded: LoadedFeatures; connectio
   );
 }
 
+/** The header title's place, from the measured row, free space and title (shell/headerTitle.ts). */
+function useTitleBox(title: string) {
+  // The measured width belongs to one title: a new title is unmeasured (hidden) until its own layout.
+  const [l, setL] = useState<Omit<HeaderLayout, 'title'> & { measured: { title: string; width: number } | null }>({ row: 0, freeX: 0, freeWidth: 0, measured: null });
+  const titleRef = useRef(title);
+  titleRef.current = title;
+  const put = useCallback((patch: Partial<typeof l>) => setL((s) => (Object.entries(patch).every(([k, v]) => s[k as keyof typeof s] === v) ? s : { ...s, ...patch })), []);
+  const onRow = useCallback((e: LayoutChangeEvent) => put({ row: Math.round(e.nativeEvent.layout.width) }), [put]);
+  const onFree = useCallback((e: LayoutChangeEvent) => put({ freeX: Math.round(e.nativeEvent.layout.x), freeWidth: Math.round(e.nativeEvent.layout.width) }), [put]);
+  const onTitle = useCallback((e: LayoutChangeEvent) => {
+    const width = Math.ceil(e.nativeEvent.layout.width);
+    setL((s) => (s.measured?.title === titleRef.current && s.measured.width === width ? s : { ...s, measured: { title: titleRef.current, width } }));
+  }, []);
+  const width = l.measured?.title === title ? l.measured.width : 0; // 0: not measured yet
+  const shown = useRef<TitleBox['align'] | null>(null); // for the hysteresis (headerTitle.ts)
+  const b = titleBox({ row: l.row, freeX: l.freeX, freeWidth: l.freeWidth, title: width }, shown.current);
+  useEffect(() => {
+    shown.current = b?.align ?? null;
+  });
+  const style = b ? { left: b.left, right: b.right, textAlign: b.align } : styles.unmeasured;
+  return { onRow, onFree, onTitle, style, squeezed: b?.align === 'left' };
+}
+
 function useKeyboardVisible(): boolean {
   const [visible, setVisible] = useState(false);
   useEffect(() => {
@@ -203,6 +242,8 @@ function useKeyboardVisible(): boolean {
   return visible;
 }
 
+const TITLE_FONT = { color: colors.text, fontSize: type.size.heading, fontWeight: '700', letterSpacing: 1.5 } as const;
+
 const styles = StyleSheet.create({
   flex: { flex: 1 },
   hidden: { display: 'none' },
@@ -210,7 +251,11 @@ const styles = StyleSheet.create({
   header: { position: 'absolute', top: 0, left: 0, right: 0 },
   headerRow: { flexDirection: 'row', alignItems: 'center', gap: space.s, paddingHorizontal: space.l, minHeight: chrome.headerHeight },
   backBtn: { paddingRight: space.xs },
-  // Centred over the whole row whatever sits either side; its glow is a static text shadow (titleGlow).
-  title: { position: 'absolute', left: 96, right: 96, textAlign: 'center', color: colors.text, fontSize: type.size.heading, fontWeight: '700', letterSpacing: 1.5, ...titleGlow },
+  // Placed by useTitleBox (never under the chip or the menu); its glow is a static text shadow (titleGlow).
+  title: { position: 'absolute', left: 96, right: 96, textAlign: 'center', ...TITLE_FONT, ...titleGlow },
+  // Shrink-to-fit (no right edge): its width is the title's natural width, up to the row's.
+  measure: { position: 'absolute', left: 0, opacity: 0, ...TITLE_FONT },
+  unmeasured: { opacity: 0 }, // the first frame, before the row is measured
+
   menuSlot: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
 });

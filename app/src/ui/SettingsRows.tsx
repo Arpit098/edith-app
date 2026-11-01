@@ -74,6 +74,8 @@ export interface RowProps {
   iconColor?: string;
   /** Dim text on the right, before the chevron (a short state: "Every 15 min"). */
   value?: string | null;
+  /** The value in dim monospace (a /command, a path). */
+  mono?: boolean;
   /** A second line under the label, for rows that need one (an account's email). */
   sub?: string | null;
   onPress?: () => void;
@@ -95,7 +97,7 @@ export interface RowProps {
 }
 
 /** One line: icon, label, dim value, chevron. Pressable when it has onPress. */
-export const Row = memo(function Row({ label, icon, iconColor, value, sub, onPress, onLongPress, chevron, trailing, tone, disabled, busy, accessibilityLabel, accessibilityHint, longPressLabel, expanded, selectable }: RowProps) {
+export const Row = memo(function Row({ label, icon, iconColor, value, mono, sub, onPress, onLongPress, chevron, trailing, tone, disabled, busy, accessibilityLabel, accessibilityHint, longPressLabel, expanded, selectable }: RowProps) {
   const { accent } = useTheme();
   const toneColor = tone === 'danger' ? colors.danger : tone === 'accent' ? accent : undefined;
   const a11y = accessibilityLabel ?? [label, value, sub].filter(Boolean).join(', ');
@@ -115,7 +117,7 @@ export const Row = memo(function Row({ label, icon, iconColor, value, sub, onPre
         ) : null}
       </View>
       {value ? (
-        <Text style={styles.value} numberOfLines={1} selectable={selectable}>
+        <Text style={[styles.value, mono && styles.mono]} numberOfLines={1} selectable={selectable}>
           {value}
         </Text>
       ) : null}
@@ -434,6 +436,7 @@ const styles = StyleSheet.create({
   label: { color: colors.text, fontSize: type.size.body, fontWeight: '500' },
   sub: { color: colors.textDim, fontSize: type.size.small, marginTop: 1 },
   value: { color: colors.textDim, fontSize: type.size.small, flexShrink: 1, maxWidth: '55%', textAlign: 'right' },
+  mono: { fontFamily: type.mono, fontSize: 12 },
   helper: { color: colors.textDim, fontSize: type.size.small, paddingHorizontal: space.xs, lineHeight: 18 },
   helperInline: { color: colors.textDim, fontSize: type.size.small },
   error: { color: colors.danger },

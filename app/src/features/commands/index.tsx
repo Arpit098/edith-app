@@ -14,8 +14,8 @@ const commands: FeatureModule = {
   id: 'commands',
   screens: [{ name: 'commands', title: 'Commands', component: Screen }],
   tool: { title: 'Commands', icon: 'console-line', screen: 'commands' },
-  setup: ({ bus, api }) => {
-    const m = createCommandsModel(bus, api);
+  setup: ({ bus, api, ports }) => {
+    const m = createCommandsModel(bus, api, ports.data);
     model = m;
     return () => {
       m.dispose();

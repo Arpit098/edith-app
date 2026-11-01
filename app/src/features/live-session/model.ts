@@ -250,19 +250,6 @@ export function tickOf(item: Extract<Item, { kind: 'user' }>, turns: Record<stri
   return t?.picked ? 'delivered' : 'sent';
 }
 
-/**
- * The "EDITH is working…" row, from the working-state mapping in contracts/events.md: waiting for
- * approval while one is pending; "Running <tool>" from turn.progress/tool.call until the tool's
- * result; "Thinking" otherwise while a turn runs; null when idle.
- */
-export function workingLabel(s: LiveState): string | null {
-  if (Object.keys(s.approvals).length) return 'Waiting for your approval';
-  const runs = Object.values(s.runs);
-  if (!runs.length) return null;
-  const r = runs.find((x) => x.lane === 'main') ?? runs[0]!;
-  return r.active && r.step ? `Running ${r.step}` : 'Thinking';
-}
-
 export function sendStatus(item: Extract<Item, { kind: 'user' }>, turns: Record<string, TurnTrack>): SendStatus | null {
   if (!item.local) return null; // not sent from this app
   if (item.local.status === 'sending' || item.local.status === 'waiting') return 'sending';
