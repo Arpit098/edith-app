@@ -1,16 +1,17 @@
 import { memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { ActivityIndicator, Alert, FlatList, StyleSheet, Text, TextInput, View, type LayoutChangeEvent } from 'react-native';
+import { ActivityIndicator, Alert, Animated, FlatList, StyleSheet, Text, TextInput, View, type LayoutChangeEvent, type ViewToken } from 'react-native';
 
 import type { Command } from '../../core/api';
 import { createStore, useStore, type Store } from '../../core/store';
 import { colors, radius, space, type, useChrome, useTheme } from '../../core/theme';
 import { Empty } from '../../ui/Empty';
-import { Glass, useBackdrop } from '../../ui/Glass';
+import { Glass, GLASS_FADE_MS, GlassFadeContext, useBackdrop } from '../../ui/Glass';
 import { Icon } from '../../ui/Icon';
 import { SettleIn, Squish, useReduceMotion } from '../../ui/motion';
 import { SwipeToReply } from '../../ui/SwipeToReply';
 import { toast } from '../../ui/toast';
 import { ItemView, quoteLabel } from './ItemView';
+import { createLiquidRows } from './liquid';
 import { needsArgs, sendStatus, summarize, tickOf, type Item, type LiveModel, type LiveState, type SendStatus, type Tick } from './model';
 import { findQuoted, quoteOf, type Quote } from './reply';
 import { backgroundStopPrompt } from './status';
@@ -53,6 +54,43 @@ export function LiveScreen({ model, voice, attach, menu, reply }: LiveScreenProp
   const list = useRef<FlatList<Item>>(null);
   const reduce = useReduceMotion();
   const flash = useMemo(() => createStore<number | null>(null), []);
+
+  // Liquid glass bubbles (./liquid): chosen by what's in view, at most a few; each row reads its own
+  // id from the store, so a change re-renders only the rows it touches. While the list moves, their
+  // glass fades out (no re-blur per scroll frame) and back in when it stops.
+  const liquidRows = useMemo(() => createLiquidRows(), []);
+  const glassFade = useRef(new Animated.Value(1)).current;
+  const fadeGlass = useCallback(
+    (on: boolean) => {
+      Animated.timing(glassFade, { toValue: on ? 1 : 0, duration: reduce ? 0 : on ? GLASS_FADE_MS : GLASS_FADE_OUT_MS, delay: on && !reduce ? SETTLE_MS : 0, useNativeDriver: true }).start();
+    },
+    [glassFade, reduce],
+  );
+  const scroll = useMemo(
+    () => ({
+      // A drag starts it moving; a fling keeps it moving; it rests when the drag ends with no fling
+      // (the fade-in waits SETTLE_MS, which a fling starting cancels) or when the fling ends.
+      onScrollBeginDrag: () => {
+        liquidRows.moving(true);
+        fadeGlass(false);
+      },
+      onMomentumScrollBegin: () => {
+        liquidRows.moving(true);
+        fadeGlass(false);
+      },
+      onScrollEndDrag: () => {
+        liquidRows.moving(false);
+        fadeGlass(true);
+      },
+      onMomentumScrollEnd: () => {
+        liquidRows.moving(false);
+        fadeGlass(true);
+      },
+    }),
+    [liquidRows, fadeGlass],
+  );
+  const onViewableItemsChanged = useRef((info: { viewableItems: ViewToken<Item>[]; changed: ViewToken<Item>[] }) => liquidRows.viewable(info)).current;
+
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollRetry = useRef<{ timer: ReturnType<typeof setTimeout> | null; tries: number }>({ timer: null, tries: 0 });
   useEffect(
@@ -103,6 +141,7 @@ export function LiveScreen({ model, voice, attach, menu, reply }: LiveScreenProp
       <SettleIn animate={index === 0 && Date.now() / 1000 - item.ts < FRESH_S}>
         <Row
           item={item}
+          liquid={liquidRows.store}
           tick={item.kind === 'user' ? tickOf(item, turns) : null}
           status={item.kind === 'user' ? sendStatus(item, turns) : null}
           flash={flash}
@@ -113,7 +152,7 @@ export function LiveScreen({ model, voice, attach, menu, reply }: LiveScreenProp
         />
       </SettleIn>
     ),
-    [onPress, onRetry, onReply, onQuote, flash, turns],
+    [onPress, onRetry, onReply, onQuote, flash, turns, liquidRows],
   );
   const loadOlder = useCallback(() => void model.loadOlder(), [model]);
   const chromeInsets = useChrome();
@@ -140,12 +179,16 @@ export function LiveScreen({ model, voice, attach, menu, reply }: LiveScreenProp
     <View style={styles.screen}>
       <Transcript menu={menu} viewRef={backdrop.ref}>
         {items.length ? (
+          <GlassFadeContext.Provider value={glassFade}>
           <FlatList
             ref={list}
             data={items}
             inverted // items are stored newest first: the newest sits at the bottom with no scroll-to-end
             keyExtractor={keyOf}
             renderItem={renderItem}
+            onViewableItemsChanged={onViewableItemsChanged}
+            viewabilityConfig={VIEWABILITY}
+            {...scroll}
             contentContainerStyle={[styles.list, listInsets]}
             initialNumToRender={15}
             maxToRenderPerBatch={10}
@@ -158,6 +201,7 @@ export function LiveScreen({ model, voice, attach, menu, reply }: LiveScreenProp
             ListFooterComponent={<OlderSpinner model={model} />}
             ListHeaderComponent={<WorkingRow model={model} />} // an inverted list's header sits at the bottom
           />
+          </GlassFadeContext.Provider>
         ) : (
           // Outside the list: an inverted list would draw its empty component upside down.
           <View style={[styles.screen, { paddingTop: chromeInsets.top + space.s, paddingBottom: below }]}>
@@ -175,11 +219,16 @@ export function LiveScreen({ model, voice, attach, menu, reply }: LiveScreenProp
 
 const COMPOSER_HEIGHT = 60; // until the composer has measured itself
 const FRESH_S = 4; // a message this new (by its timestamp) arrived just now
+// A row counts as in view from its first pixel, at once: glass is assigned as it enters (./liquid).
+const VIEWABILITY = { itemVisiblePercentThreshold: 0, minimumViewTime: 0 };
+const GLASS_FADE_OUT_MS = 100; // as a drag starts: quick, it's about to move
+const SETTLE_MS = 80; // after a drag ends, wait this long for a fling to start before fading back in
 
 const MAX_SCROLL_TRIES = 3; // jumping to a quoted message that isn't measured yet
 
 interface RowProps {
   item: Item;
+  liquid: Store<ReadonlySet<number>>; // the ids whose bubbles are liquid glass now (./liquid)
   tick: Tick | null;
   status: SendStatus | null;
   flash: Store<number | null>;
@@ -194,22 +243,24 @@ interface RowProps {
  * values and stable callbacks (the swipe's own is made here, per item), so the memo holds; the
  * quote-jump mark is read from `flash` for this row's id only.
  */
-const Row = memo(function Row({ item, tick, status, flash, onPress, onRetry, onReply, onQuote }: RowProps) {
+const Row = memo(function Row({ item, liquid: glassy, tick, status, flash, onPress, onRetry, onReply, onQuote }: RowProps) {
   const id = item.id;
   const marked = useCallback((f: number | null) => f === id, [id]);
   const highlight = useStore(flash, marked);
+  const isGlass = useCallback((s: ReadonlySet<number>) => s.has(id), [id]);
+  const liquid = useStore(glassy, isGlass);
   const swiped = useCallback(() => onReply(item), [onReply, item]);
   if (item.kind === 'user') {
     return (
       <SwipeToReply onReply={swiped}>
-        <ItemView item={item} onPress={onPress} tick={tick} status={status} onRetry={onRetry} onReply={onReply} onQuote={onQuote} highlight={highlight} />
+        <ItemView item={item} liquid={liquid} onPress={onPress} tick={tick} status={status} onRetry={onRetry} onReply={onReply} onQuote={onQuote} highlight={highlight} />
       </SwipeToReply>
     );
   }
   if (item.kind === 'assistant') {
     return (
       <SwipeToReply onReply={swiped}>
-        <ItemView item={item} onPress={onPress} onReply={onReply} highlight={highlight} />
+        <ItemView item={item} liquid={liquid} onPress={onPress} onReply={onReply} highlight={highlight} />
       </SwipeToReply>
     );
   }

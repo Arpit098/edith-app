@@ -47,7 +47,8 @@ describe('chat bubbles in the theme', () => {
     const t = resolveTheme({ ...DEFAULT_APPEARANCE, theme: 'rose', myBubble: 'yellow', edithBubble: 'blue' });
     const r = render(t);
     const mine = bubbleAround(textOf(r, 'Ship it'));
-    expect(style(mine)).toMatchObject({ backgroundColor: t.my.fill, borderTopColor: t.my.edgeLit, borderBottomColor: t.my.edgeDim });
+    // The edge in one colour all round: per-side colours broke off at two corners.
+    expect(style(mine)).toMatchObject({ backgroundColor: t.my.fill, borderTopColor: t.my.edge, borderRightColor: t.my.edge, borderBottomColor: t.my.edge, borderLeftColor: t.my.edge });
     expect(style(textOf(r, 'Ship it')).color).toBe(t.my.ink);
     expect(style(textOf(r, '🎙 voice')).color).toBe(t.my.inkDim); // captions in the bubble's own ink
     expect(style(textOf(r, 'The build passed.')).color).toBe(t.my.quoteDim);

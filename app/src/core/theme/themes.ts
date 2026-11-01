@@ -23,7 +23,7 @@ import {
   type GradientSpec,
 } from './gradients';
 import { isPhotoBackground, normalizePhotoBackground, normalizePhotos, PHOTO_DIM_LIMIT, type Photo, type PhotoBackground, type PhotoFocus } from './photos';
-import { colors, glass, rgbaOf, type GlassLevel, type GlassStyle } from './tokens';
+import { bubbleLens, colors, glass, rgbaOf, type BubbleLensStyle, type GlassLevel, type GlassStyle } from './tokens';
 
 export * from './gradients';
 export * from './photos';
@@ -327,8 +327,32 @@ export function glassAt(level: GlassLevel, amount: number): GlassStyle {
   };
 }
 
+/**
+ * A glass surface's light edge as one colour, halfway between its lit and dim ends: a closed
+ * outline drawn in two colours (lit top-left, dim bottom-right) breaks off at the other corners,
+ * where Android splits per-side colours on the diagonal.
+ */
+export function glassEdge(g: GlassStyle): string {
+  const [a, b] = g.edge.map(rgbaOf) as [number[], number[]];
+  const m = (i: number) => (a[i]! + b[i]!) / 2;
+  return `rgba(${Math.round(m(0) * 255)}, ${Math.round(m(1) * 255)}, ${Math.round(m(2) * 255)}, ${fmt(m(3))})`;
+}
+
 /** Whether surfaces draw real glass (blur, lens) at all: not at 0%, which is the flat look. */
 export const glassOn = (amount: number) => amount > 0;
+
+/**
+ * The bubbles' liquid glass at an amount: null at 0% (flat, as before). Up to 60% the blur, the
+ * bend and the edge light grow to the tokens (bubbleLens); up to 100% a little more (blur 12 dp at
+ * most: light, never a frost). The bending band and the edge light's reach stay thin.
+ */
+export function bubbleLensAt(amount: number): BubbleLensStyle | null {
+  const a = Math.min(100, Math.max(0, amount));
+  if (!glassOn(a)) return null;
+  const l = bubbleLens;
+  const scale = (v: number, most: number) => (a <= DEFAULT_GLASS ? (v * a) / DEFAULT_GLASS : v * lerp(1, most, (a - DEFAULT_GLASS) / (100 - DEFAULT_GLASS)));
+  return { blur: Math.max(1, scale(l.blur, 1.5)), refraction: scale(l.refraction, 1.6), bezel: l.bezel, dispersion: scale(l.dispersion, 1.4), specular: scale(l.specular, 1.2), rimWidth: l.rimWidth };
+}
 
 /** How strong the specular rim is at an amount (0..1; 1 at 60% and over). Its width never changes. */
 export const rimStrength = (amount: number) => Math.min(1, Math.max(0, amount) / DEFAULT_GLASS) * 0.85 + (amount > 0 ? 0.15 : 0);
@@ -344,6 +368,7 @@ export interface BubbleLook {
   gradient: { colors: readonly [string, string, ...string[]]; start: { x: number; y: number }; end: { x: number; y: number } } | null;
   edgeLit: string; // the light edge, top-left (its top is the bubble's sheen)
   edgeDim: string; // bottom-right
+  edge: string; // the edge as drawn: one colour all round, between the two (no break at a corner)
   ink: string; // the text: white or black, whichever reads best everywhere on the bubble, on every backdrop
   inkDim: string; // captions (time, ticks, "voice"): the ink, as faded as still reads at 4.5:1
   inkSoft: string; // the quote's pane inside the bubble (full ink reads at 4.5:1 on it)
@@ -402,6 +427,7 @@ export function bubbleLook(color: string | readonly string[], alpha60: number, a
     gradient: fills.length > 1 ? { colors: fills as unknown as readonly [string, string, ...string[]], ...anglePoints(angle) } : null,
     edgeLit: `rgba(255, 255, 255, ${fmt(0.22 * shine)})`,
     edgeDim: `rgba(255, 255, 255, ${fmt(0.04 * shine)})`,
+    edge: `rgba(255, 255, 255, ${fmt(0.12 * shine)})`,
     ink,
     inkDim: faintest(ink, under),
     inkSoft: withAlpha(ink, paneAlpha),
@@ -472,11 +498,14 @@ export function inkOn(css: string | readonly string[], ground: string): string {
 }
 
 /**
- * A bubble's glass face as view style: its tint, and the light edge (bright top-left, dim
- * bottom-right). A gradient bubble's tint is drawn by ui/BubbleFill inside it, so its own is clear.
+ * A bubble's glass face as view style: its tint, and a thin light edge in one colour all round. (It
+ * was bright on the top and left, dim on the right and bottom: Android splits per-side colours on
+ * the corner's diagonal, so the line broke off at the top-right and bottom-left corners. The liquid
+ * bubbles' fading highlight is ui/Rim's smooth gradient instead.) A gradient bubble's tint is drawn
+ * by ui/BubbleFill inside it, so its own is clear.
  */
 export function bubbleFace(b: BubbleLook) {
-  return { backgroundColor: b.gradient ? 'transparent' : b.fill, borderTopColor: b.edgeLit, borderLeftColor: b.edgeLit, borderRightColor: b.edgeDim, borderBottomColor: b.edgeDim };
+  return { backgroundColor: b.gradient ? 'transparent' : b.fill, borderTopColor: b.edge, borderLeftColor: b.edge, borderRightColor: b.edge, borderBottomColor: b.edge };
 }
 
 // ---- the resolved theme ----
@@ -494,6 +523,7 @@ export interface Theme {
   glass: number; // the amount, 0..100 (0 when the system asks for less transparency)
   glassOf: (level: GlassLevel) => GlassStyle;
   rim: number; // the rim's strength, 0..1
+  lens: BubbleLensStyle | null; // the bubbles' liquid glass at this amount; null at 0% (flat)
   my: BubbleLook;
   edith: BubbleLook;
 }
@@ -593,6 +623,7 @@ export function resolveTheme(appearance: Appearance, reduceTransparency = false)
       return g;
     },
     rim: rimStrength(amount),
+    lens: bubbleLensAt(amount),
     my,
     edith,
   };
