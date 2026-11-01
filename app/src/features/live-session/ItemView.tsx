@@ -120,6 +120,9 @@ export const ItemView = memo(function ItemView({ item, liquid = false, onPress, 
           <Text style={[styles.text, ts.edithText]} selectable textBreakStrategy={BREAK}>
             {item.text}
           </Text>
+          <View style={styles.footer}>
+            <Text style={[styles.time, ts.edithDim]}>{clockIST(item.ts)}</Text>
+          </View>
         </View>
       );
     case 'tool':
