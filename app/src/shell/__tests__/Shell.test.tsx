@@ -79,7 +79,9 @@ describe('Shell', () => {
       ctx.transport.emit(ev('permission.request', { id: 'ab', tool: 'Bash', detail: 'rm -rf /tmp/x', ref: null, lane: 'main' }));
     });
     expect(texts(r)).toContain('check the disk');
-    expect(texts(r)).toContain('$ df -h');
+    // The running tool is the Work card's live step, in plain words: no "$" prefix.
+    expect(texts(r)).toContain('df -h…');
+    expect(texts(r)).not.toContain('$ df -h');
     expect(texts(r)).toContain('Approve Bash?');
 
     await act(async () => {

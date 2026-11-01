@@ -18,12 +18,12 @@ export const LIQUID_CAP = 4;
 
 /** A viewable row as FlatList reports it (ViewToken). */
 export interface SeenRow {
-  item: Item;
+  item: { kind: Item['kind'] | 'work'; id: number }; // a transcript row (a Work card is never a bubble)
   index: number | null;
   isViewable: boolean;
 }
 
-const isBubble = (item: Item) => item.kind === 'user' || item.kind === 'assistant';
+const isBubble = (item: SeenRow['item']) => item.kind === 'user' || item.kind === 'assistant';
 const EMPTY: ReadonlySet<number> = new Set();
 
 const same = (a: ReadonlySet<number>, b: ReadonlySet<number>) => a.size === b.size && [...a].every((x) => b.has(x));

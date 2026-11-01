@@ -3,8 +3,9 @@ import { ActivityIndicator, Alert, Animated, FlatList, StyleSheet, Text, TextInp
 
 import type { Command } from '../../core/api';
 import { createStore, useStore, type Store } from '../../core/store';
-import { colors, radius, space, type, useChrome, useTheme } from '../../core/theme';
+import { colors, radius, space, type, useChrome, useTheme, withAlpha } from '../../core/theme';
 import { Empty } from '../../ui/Empty';
+import { Gradient } from '../../ui/Gradient';
 import { Glass, GLASS_FADE_MS, GlassFadeContext, useBackdrop } from '../../ui/Glass';
 import { Icon } from '../../ui/Icon';
 import { SettleIn, Squish, useReduceMotion } from '../../ui/motion';
@@ -12,6 +13,8 @@ import { SwipeToReply } from '../../ui/SwipeToReply';
 import { toast } from '../../ui/toast';
 import { ItemView, quoteLabel } from './ItemView';
 import { createLiquidRows } from './liquid';
+import { WorkCard, WorkDetailContext } from './WorkCard';
+import { DEFAULT_WORK_DETAIL, groupRows, type Row, type WorkDetail, type WorkGroup } from './work';
 import { needsArgs, sendStatus, summarize, tickOf, type Item, type LiveModel, type LiveState, type SendStatus, type Tick } from './model';
 import { findQuoted, quoteOf, type Quote } from './reply';
 import { backgroundStopPrompt } from './status';
@@ -24,7 +27,8 @@ import type { VoiceModel, VoiceState } from './voice';
 
 const selectItems = (s: LiveState) => s.items;
 const selectTurns = (s: LiveState) => s.turns;
-const keyOf = (item: Item) => String(item.id);
+const keyOf = (row: Row) => (row.kind === 'work' ? `w${row.id}` : String(row.id));
+const selectDetail = (d: WorkDetail) => d;
 
 export interface LiveScreenProps {
   model: LiveModel;
@@ -34,12 +38,28 @@ export interface LiveScreenProps {
   menu: Store<boolean>;
   /** The message being replied to (swipe to reply): its quote bar sits above the composer until sent or cancelled. */
   reply: Store<Quote | null>;
+  /** How much the Work cards show (Settings → Chat → Work details); the default (Steps) without one. */
+  workDetail?: Store<WorkDetail>;
 }
+
+const STEPS_DETAIL = createStore<WorkDetail>(DEFAULT_WORK_DETAIL);
 
 const FLASH_MS = 1600; // how long the message a quote jumped to stays marked
 
-export function LiveScreen({ model, voice, attach, menu, reply }: LiveScreenProps) {
+export function LiveScreen({ model, voice, attach, menu, reply, workDetail }: LiveScreenProps) {
   const items = useStore(model.store, selectItems);
+  // The transcript's rows: messages, and each run of tool calls and edits as one Work card. Groups
+  // whose members didn't change are kept as the same objects, so their rows don't re-render.
+  const grouped = useRef(new Map<number, WorkGroup>());
+  const rows = useMemo(() => {
+    const g = groupRows(items, grouped.current);
+    grouped.current = g.groups;
+    return g.rows;
+  }, [items]);
+  const rowsNow = useRef(rows);
+  rowsNow.current = rows;
+  const busy = useStore(model.store, selectBusy); // the newest Work card is live while the turn runs
+  const detail = useStore(workDetail ?? STEPS_DETAIL, selectDetail);
   const onPress = useCallback(
     (id: number, action: string) =>
       model.press(id, action).then(toast, (e: unknown) => toast(`Couldn't press it: ${e instanceof Error ? e.message : String(e)}`)),
@@ -51,7 +71,7 @@ export function LiveScreen({ model, voice, attach, menu, reply }: LiveScreenProp
 
   // Tapping a reply's quote scrolls to the message it quotes and marks it for a moment. The mark is
   // a store each row reads for its own id, so it re-renders only the two rows it moves between.
-  const list = useRef<FlatList<Item>>(null);
+  const list = useRef<FlatList<Row>>(null);
   const reduce = useReduceMotion();
   const flash = useMemo(() => createStore<number | null>(null), []);
 
@@ -89,7 +109,7 @@ export function LiveScreen({ model, voice, attach, menu, reply }: LiveScreenProp
     }),
     [liquidRows, fadeGlass],
   );
-  const onViewableItemsChanged = useRef((info: { viewableItems: ViewToken<Item>[]; changed: ViewToken<Item>[] }) => liquidRows.viewable(info)).current;
+  const onViewableItemsChanged = useRef((info: { viewableItems: ViewToken<Row>[]; changed: ViewToken<Row>[] }) => liquidRows.viewable(info)).current;
 
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollRetry = useRef<{ timer: ReturnType<typeof setTimeout> | null; tries: number }>({ timer: null, tries: 0 });
@@ -108,12 +128,15 @@ export function LiveScreen({ model, voice, attach, menu, reply }: LiveScreenProp
         toast("The original message is further back than what's loaded.");
         return;
       }
-      flash.set(items[index]!.id);
+      const id = items[index]!.id;
+      flash.set(id);
       if (flashTimer.current) clearTimeout(flashTimer.current);
       flashTimer.current = setTimeout(() => flash.set(null), FLASH_MS);
       if (scrollRetry.current.timer) clearTimeout(scrollRetry.current.timer);
       scrollRetry.current = { timer: null, tries: 0 };
-      list.current?.scrollToIndex({ index, viewPosition: 0.5, animated: !reduce });
+      // The list's rows group tool items: find the quoted message's row (a message is never in a Work card).
+      const at = rowsNow.current.findIndex((r) => r.kind !== 'work' && r.id === id);
+      if (at >= 0) list.current?.scrollToIndex({ index: at, viewPosition: 0.5, animated: !reduce });
     },
     [model, reduce, flash],
   );
@@ -135,11 +158,15 @@ export function LiveScreen({ model, voice, attach, menu, reply }: LiveScreenProp
   );
 
   const renderItem = useCallback(
-    ({ item, index }: { item: Item; index: number }) => (
+    ({ item, index }: { item: Row; index: number }) =>
+      item.kind === 'work' ? (
+        // Live: the newest card while the turn runs, or while one of its tools hasn't answered.
+        <WorkCard group={item} live={index === 0 && (busy || item.items.some((x) => x.kind === 'tool' && x.status === 'running'))} />
+      ) : (
       // The newest message, if it just arrived, settles in on a spring; history and rows scrolled
       // back into view don't move.
       <SettleIn animate={index === 0 && Date.now() / 1000 - item.ts < FRESH_S}>
-        <Row
+        <MessageRow
           item={item}
           liquid={liquidRows.store}
           tick={item.kind === 'user' ? tickOf(item, turns) : null}
@@ -151,8 +178,8 @@ export function LiveScreen({ model, voice, attach, menu, reply }: LiveScreenProp
           onQuote={onQuote}
         />
       </SettleIn>
-    ),
-    [onPress, onRetry, onReply, onQuote, flash, turns, liquidRows],
+      ),
+    [onPress, onRetry, onReply, onQuote, flash, turns, liquidRows, busy],
   );
   const loadOlder = useCallback(() => void model.loadOlder(), [model]);
   const chromeInsets = useChrome();
@@ -162,7 +189,11 @@ export function LiveScreen({ model, voice, attach, menu, reply }: LiveScreenProp
   const [composerHeight, setComposerHeight] = useState(COMPOSER_HEIGHT);
   const onComposerLayout = useCallback((e: LayoutChangeEvent) => setComposerHeight(Math.round(e.nativeEvent.layout.height)), []);
   const below = chromeInsets.bottom + composerHeight;
-  const listInsets = useMemo(() => ({ paddingBottom: chromeInsets.top + space.s, paddingTop: below + space.s }), [chromeInsets.top, below]);
+  // The newest row clears the composer with room to spare (its rim and the round buttons' glow sit
+  // a little above it); rows scrolled down under it fade out behind it.
+  const listInsets = useMemo(() => ({ paddingBottom: chromeInsets.top + space.s, paddingTop: below + space.l }), [chromeInsets.top, below]);
+  const { bg } = useTheme();
+  const fade = useMemo(() => [withAlpha(bg, 0), withAlpha(bg, 0.85)] as const, [bg]);
   // The composer's menu (`menu`): its button (in the composer) and its panel (over the whole
   // screen, so a tap anywhere outside closes it) share it; toggling it re-renders only those two
   // and the transcript's wrapper (hidden from TalkBack while the menu is open).
@@ -180,9 +211,10 @@ export function LiveScreen({ model, voice, attach, menu, reply }: LiveScreenProp
       <Transcript menu={menu} viewRef={backdrop.ref}>
         {items.length ? (
           <GlassFadeContext.Provider value={glassFade}>
+          <WorkDetailContext.Provider value={detail}>
           <FlatList
             ref={list}
-            data={items}
+            data={rows}
             inverted // items are stored newest first: the newest sits at the bottom with no scroll-to-end
             keyExtractor={keyOf}
             renderItem={renderItem}
@@ -201,6 +233,7 @@ export function LiveScreen({ model, voice, attach, menu, reply }: LiveScreenProp
             ListFooterComponent={<OlderSpinner model={model} />}
             ListHeaderComponent={<WorkingRow model={model} />} // an inverted list's header sits at the bottom
           />
+          </WorkDetailContext.Provider>
           </GlassFadeContext.Provider>
         ) : (
           // Outside the list: an inverted list would draw its empty component upside down.
@@ -209,6 +242,10 @@ export function LiveScreen({ model, voice, attach, menu, reply }: LiveScreenProp
           </View>
         )}
       </Transcript>
+      {/* Not in the glass's backdrop: the composer still blurs the rows themselves. */}
+      <View style={[styles.fade, { height: below + space.l }]} pointerEvents="none" testID="composer-fade">
+        <Gradient colors={fade} angle={180} style={StyleSheet.absoluteFill} />
+      </View>
       <ComposerMenu open={menu} bottom={below + space.xs} backdrop={backdrop.tag} attach={attach} voice={voice} loadCommands={loadCommands} onCommand={onCommand} />
       <View style={[styles.composerSlot, { bottom: chromeInsets.bottom }]} onLayout={onComposerLayout} pointerEvents="box-none">
         <Composer model={model} voice={voice} attach={attach} backdrop={backdrop.tag} menu={menu} reply={reply} handle={draft} />
@@ -243,7 +280,7 @@ interface RowProps {
  * values and stable callbacks (the swipe's own is made here, per item), so the memo holds; the
  * quote-jump mark is read from `flash` for this row's id only.
  */
-const Row = memo(function Row({ item, liquid: glassy, tick, status, flash, onPress, onRetry, onReply, onQuote }: RowProps) {
+const MessageRow = memo(function MessageRow({ item, liquid: glassy, tick, status, flash, onPress, onRetry, onReply, onQuote }: RowProps) {
   const id = item.id;
   const marked = useCallback((f: number | null) => f === id, [id]);
   const highlight = useStore(flash, marked);
@@ -552,6 +589,7 @@ const styles = StyleSheet.create({
   list: { paddingHorizontal: space.m, paddingTop: space.s, flexGrow: 1 },
   older: { padding: space.m },
   composerSlot: { position: 'absolute', left: 0, right: 0 },
+  fade: { position: 'absolute', left: 0, right: 0, bottom: 0 },
   composer: { marginHorizontal: space.m, marginBottom: space.s, gap: GAP },
   extras: { paddingBottom: space.s },
   reply: { flexDirection: 'row', alignItems: 'center', gap: space.s, paddingLeft: space.m, paddingRight: space.xs, paddingTop: space.s },

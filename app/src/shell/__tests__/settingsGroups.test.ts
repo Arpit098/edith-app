@@ -66,7 +66,7 @@ describe('the real Settings', () => {
       ['Connection & account', ['Server connection', 'Claude accounts']],
       ['Notifications', ['Push', 'Live Alerts']],
       ['Voice', ['Voice input', 'Wake word']],
-      ['App', ['Appearance', 'Updates', 'Developer']],
+      ['App', ['Appearance', 'Chat', 'Updates', 'Developer']],
     ]);
     for (const s of all) {
       expect(isIcon(s.icon ?? DEFAULT_ICON)).toBe(true);
