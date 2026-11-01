@@ -15,6 +15,9 @@ import { StatusChip, StatusPopup } from './StatusPanel';
 import { createVoiceModel, type VoiceModel } from './voice';
 import { VoiceSettings } from './VoiceSettings';
 import { voiceSummary } from './summary';
+import { ChatSettings, chatSummary } from './ChatSettings';
+import { createWorkDetailSetting, type WorkDetailSetting } from './chatSettings';
+import { WORK_DETAILS } from './work';
 
 let model: LiveModel | null = null;
 let voice: VoiceModel | null = null;
@@ -29,8 +32,11 @@ const reply = createStore<Quote | null>(null);
 // The status card under the header chip; closed when another screen comes up.
 const status = createStore(false);
 
+// Settings → Chat → Work details (how much each turn's Work card shows).
+let workDetail: WorkDetailSetting | null = null;
+
 function Screen() {
-  return model && voice && attach ? <LiveScreen model={model} voice={voice} attach={attach} menu={menu} reply={reply} /> : null;
+  return model && voice && attach ? <LiveScreen model={model} voice={voice} attach={attach} menu={menu} reply={reply} workDetail={workDetail?.store} /> : null;
 }
 
 function Settings() {
@@ -39,6 +45,15 @@ function Settings() {
 
 function useVoiceSummary() {
   return useStoreOr(voice?.store, voiceSummary, null);
+}
+
+function Chat() {
+  return workDetail ? <ChatSettings setting={workDetail} /> : null;
+}
+
+function useChatSummary() {
+  const id = useStoreOr(workDetail?.store, (d) => d, null);
+  return chatSummary(WORK_DETAILS.find((d) => d.id === id)?.name);
 }
 
 function Chip({ backdrop }: PanelProps) {
@@ -52,7 +67,10 @@ function Popup({ top, backdrop }: PanelProps) {
 const liveSession: FeatureModule = {
   id: 'live-session',
   screens: [{ name: 'live', title: 'Live', component: Screen, tab: true, icon: 'message-text-outline' }],
-  settings: [{ title: 'Voice input', component: Settings, group: 'voice', icon: 'microphone-outline', order: 10, summary: useVoiceSummary }],
+  settings: [
+    { title: 'Voice input', component: Settings, group: 'voice', icon: 'microphone-outline', order: 10, summary: useVoiceSummary },
+    { title: 'Chat', component: Chat, group: 'app', icon: 'message-cog-outline', order: 8, summary: useChatSummary },
+  ],
   panels: [{ slot: 'header', component: Chip, overlay: Popup }],
   setup: ({ bus, api, ports, connection: conn }) => {
     const m = createLiveModel(bus, api, ports.data, ports.visibility);
@@ -61,6 +79,9 @@ const liveSession: FeatureModule = {
     const v = createVoiceModel({ bus, send: voiceSend, storage: ports.storage, recorder: ports.recorder, stt: ports.stt });
     const a = createAttachmentsModel({ api, media: ports.media });
     ports.media?.prune(); // old picked files and thumbnails: bounded by age and size
+    const w = createWorkDetailSetting(ports.data);
+    void w.load();
+    workDetail = w;
     const offScreen = bus.on(
       'app.screen',
       (e) => {
@@ -91,6 +112,7 @@ const liveSession: FeatureModule = {
       if (voice === v) voice = null;
       if (attach === a) attach = null;
       if (connection === conn) connection = null;
+      if (workDetail === w) workDetail = null;
     };
   },
 };

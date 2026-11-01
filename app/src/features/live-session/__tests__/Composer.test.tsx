@@ -314,3 +314,18 @@ describe('Composer menu', () => {
     expect(labels(r, 'menuitem')).toEqual(['/compact', '/remind']);
   });
 });
+
+describe('the Work card in the transcript', () => {
+  const workHead = (r: ReactTestRenderer) => r.root.findAll((n) => typeof n.props.accessibilityLabel === 'string' && /^(Work|Working):/.test(n.props.accessibilityLabel) && typeof n.props.onPress === 'function', { deep: false })[0]!;
+
+  it('is live only while the turn runs: a tool whose result was lost doesn’t keep it "Working…"', () => {
+    const f = fakes();
+    const ts = Date.now() / 1000 - 3 * 3600;
+    const tool = { kind: 'tool' as const, id: 1, ts, name: 'Bash', summary: '$ Run the tests', status: 'running' as const, result: null };
+    f.model.store.set((s) => ({ ...s, items: [tool], seq: 1, main: 'idle' }));
+    const r = render(f);
+    expect(workHead(r).props.accessibilityLabel).toMatch(/^Work: /);
+    act(() => f.model.store.set((s) => ({ ...s, main: 'busy' })));
+    expect(workHead(r).props.accessibilityLabel).toBe('Working: Run the tests');
+  });
+});
