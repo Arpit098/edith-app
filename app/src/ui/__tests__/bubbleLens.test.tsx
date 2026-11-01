@@ -68,6 +68,8 @@ describe('the bubble lens', () => {
     const t = at(60);
     const r = render(<BubbleLens look={t.my} tail="right" />, t);
     const n = native(r)[0]!;
+    // No colour split (the contrast argument: only mixes of the wallpaper's own colours).
+    expect(n.dispersion).toBe(0);
     // The edge light is the SVG rim on the exact outline, not the shader's one-radius line.
     expect(n).toMatchObject({ backdrop: 42, mode: 'shader', cornerRadius: radius.l, blur: bubbleLens.blur, refraction: bubbleLens.refraction, bezel: bubbleLens.bezel, specular: 0, saturation: 1, lift: 0 });
     expect(n.tint).toEqual(rgbaOf(t.my.fill));

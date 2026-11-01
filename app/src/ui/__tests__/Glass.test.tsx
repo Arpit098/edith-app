@@ -129,7 +129,10 @@ describe('Rim', () => {
       const dim = stopOf(rims[scheme].dim).opacity;
       const xs = Array.from({ length: 401 }, (_, i) => i / 400);
       const v = xs.map(f);
-      expect(Math.min(...v)).toBeGreaterThanOrEqual(dim - 1e-9); // thins away, never ends
+      // Exactly the rim's old ends (composer and popup parity): lit at the top-left, lit × far at the bottom-right.
+      expect(f(0)).toBeCloseTo(stopOf(rims[scheme].lit).opacity, 9);
+      expect(f(1)).toBeCloseTo(stopOf(rims[scheme].lit).opacity * rims[scheme].far, 9);
+      expect(Math.min(...v)).toBeGreaterThanOrEqual(dim * rims[scheme].far - 1e-9); // thins away, never ends
       expect(Math.min(...v)).toBeGreaterThan(0);
       // Smooth: no jump, and no kink (the slope changes gently everywhere, the old stops' corners gone).
       const d1 = v.slice(1).map((y, i) => y - v[i]!);

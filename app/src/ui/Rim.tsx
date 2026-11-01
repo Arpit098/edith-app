@@ -40,7 +40,8 @@ const MID_AT = 0.22; // where `mid` sits on the curve (as the rim was first draw
 /**
  * The rim's opacity along the diagonal, t 0..1: a raised cosine from the top-left (lit) to the
  * middle (dim) and on to the bottom-right (lit × far), shaped so it passes through `mid` at MID_AT.
- * Smooth everywhere (no kink, no flat cut), and never below `dim`.
+ * Smooth everywhere (no kink, no flat cut), and never below `dim` × `far`; exactly `lit` at the
+ * top-left and `lit` × `far` at the bottom-right.
  */
 export function rimCurve(r: RimStyle): (t: number) => number {
   const lit = stopOf(r.lit).opacity;
@@ -49,7 +50,8 @@ export function rimCurve(r: RimStyle): (t: number) => number {
   const bell = (t: number) => (1 + Math.cos(2 * Math.PI * t)) / 2; // 1 at the ends, 0 in the middle
   const shape = Math.log(Math.max(1e-3, (mid - dim) / Math.max(1e-3, lit - dim))) / Math.log(bell(MID_AT));
   const smooth = (t: number) => t * t * (3 - 2 * t);
-  return (t) => dim + (lit - dim) * bell(t) ** shape * (1 + (r.far - 1) * smooth(t));
+  // `far` scales the whole curve towards the bottom-right, so it ends at exactly lit × far there (as the rim always did).
+  return (t) => (dim + (lit - dim) * bell(t) ** shape) * (1 + (r.far - 1) * smooth(t));
 }
 
 function stopsOf(r: RimStyle): Stops {

@@ -9,8 +9,8 @@
 // at the top-left and bottom-right, an inner highlight and a faint inner shadow.
 
 import { LinearGradient } from 'expo-linear-gradient';
-import { createContext, memo, useCallback, useContext, useState, type ReactNode } from 'react';
-import { findNodeHandle, StyleSheet, View, type LayoutChangeEvent, type StyleProp, type ViewStyle } from 'react-native';
+import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Animated, findNodeHandle, StyleSheet, View, type LayoutChangeEvent, type StyleProp, type ViewStyle } from 'react-native';
 
 import { glassEdge, glassOn, INK_LIGHT, radius as radii, rgbaOf, useGlass, useTheme, type BubbleLook, type GlassLevel, type GlassStyle } from '../core/theme';
 import { Rim, type Corners } from './Rim';
@@ -183,11 +183,21 @@ export function useLiquid(look: BubbleLook): boolean {
  * on a mix is never worse off than on the brightest of them (luminance is convex), which is what the
  * theme's 4.5:1 checks use. The rim stays inside the bubble's padding, away from the text.
  */
+/**
+ * How visible the bubbles' glass is, 0..1, on the native driver (the transcript provides it): it
+ * fades out while the list moves, so no bubble re-blurs the wallpaper every scroll frame, and back in
+ * when it stops. The glass view stays mounted, props untouched (no effect rebuilt, no shader
+ * compiled): at opacity 0 the renderer skips drawing it. Null: always shown (the preview).
+ */
+export const GlassFadeContext = createContext<Animated.Value | null>(null);
+export const GLASS_FADE_MS = 150;
+
 /** `inside`: the bubble shows its own edge now (a ring: failed, a quote's target), so the glass sits inside it, without a rim. */
 export const BubbleLens = memo(function BubbleLens({ look, tail, inside = false }: { look: BubbleLook; tail: 'right' | 'left'; inside?: boolean }) {
   const theme = useTheme();
   const wallpaper = useContext(WallpaperContext);
-  const { mode, View: Native, scheme } = useGlass();
+  const fade = useContext(GlassFadeContext);
+  const { mode, View: Native, scheme, reduceMotion } = useGlass();
   const lens = theme.lens;
   const liquid = useLiquid(look);
   const [size, setSize] = useState<Size | null>(null);
@@ -195,28 +205,37 @@ export const BubbleLens = memo(function BubbleLens({ look, tail, inside = false 
     const { width, height } = e.nativeEvent.layout;
     setSize((s) => (s && s.width === width && s.height === height ? s : { width, height }));
   }, []);
+  // A bubble given glass while in view (a new message) fades it in rather than popping.
+  const appear = useRef(new Animated.Value(reduceMotion ? 1 : 0)).current;
+  useEffect(() => {
+    if (liquid) Animated.timing(appear, { toValue: 1, duration: reduceMotion ? 0 : GLASS_FADE_MS, useNativeDriver: true }).start();
+  }, [liquid, appear, reduceMotion]);
+  const opacity = useMemo(() => (fade ? Animated.multiply(fade, appear) : appear), [fade, appear]);
   if (!liquid || !Native || !lens || wallpaper === null) return null;
   const shader = mode === 'shader';
   const inset = inside ? BUBBLE_BORDER : 0;
   return (
     <View style={inside ? StyleSheet.absoluteFill : styles.bubbleBox} onLayout={inside ? undefined : onLayout} pointerEvents="none" testID="bubble-lens">
-      <Native
-        backdrop={wallpaper}
-        mode={mode === 'shader' ? 'shader' : 'blur'}
-        cornerRadius={radii.l - inset}
-        blur={lens.blur}
-        refraction={shader ? lens.refraction : 0}
-        bezel={lens.bezel}
-        dispersion={shader ? lens.dispersion : 0}
-        saturation={1}
-        lift={0}
-        specular={0} // the rim (below) is the edge light, on the exact outline
-        rimWidth={lens.rimWidth}
-        tint={look.gradient ? NO_TINT : tintOfCss(look.fill)} // a gradient's tint is BubbleFill's, over this
-        base={baseOf(theme.bg)}
-        style={StyleSheet.absoluteFill}
-        pointerEvents="none"
-      />
+      <Animated.View style={[StyleSheet.absoluteFill, { opacity }]} pointerEvents="none">
+        <Native
+          backdrop={wallpaper}
+          mode={mode === 'shader' ? 'shader' : 'blur'}
+          cornerRadius={radii.l - inset}
+          blur={lens.blur}
+          refraction={shader ? lens.refraction : 0}
+          bezel={lens.bezel}
+          dispersion={0} // no colour split: inside is only mixes of the wallpaper's colours (the contrast argument)
+          saturation={1}
+          lift={0}
+          specular={0} // the rim (below) is the edge light, on the exact outline
+          rimWidth={lens.rimWidth}
+          tint={look.gradient ? NO_TINT : tintOfCss(look.fill)} // a gradient's tint is BubbleFill's, over this
+          base={baseOf(theme.bg)}
+          style={StyleSheet.absoluteFill}
+          pointerEvents="none"
+        />
+      </Animated.View>
+      {/* The rim stays while the glass fades: the bubble keeps its edge mid-scroll. */}
       {size && !inside ? <Rim width={size.width} height={size.height} radius={radii.l} corners={bubbleCorners(tail)} scheme={scheme} strength={theme.rim} /> : null}
     </View>
   );
