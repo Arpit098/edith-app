@@ -3,7 +3,7 @@ import { Text, TextInput } from 'react-native';
 
 import { createStore } from '../../../core/store';
 import type { PushModel, PushState } from '../model';
-import { PushSettings } from '../PushSettings';
+import { pushToggle, PushSettings } from '../PushSettings';
 
 jest.setTimeout(30_000); // the first run transforms React Native
 
@@ -67,8 +67,43 @@ describe('PushSettings', () => {
     act(() => store.set((s) => ({ ...s, status: { ...s.status, connected: true, batteryUnrestricted: true } })));
     expect(texts(r)).toContain('connected to edith');
     expect(texts(r)).not.toContain('Unrestricted');
-    act(() => press(r, 'Turn off'));
+    const toggle = r.root.find((n) => n.props.accessibilityRole === 'switch' && n.props.accessibilityLabel === 'Push' && typeof n.props.onPress === 'function');
+    expect(toggle.props.accessibilityState).toMatchObject({ checked: true });
+    act(() => toggle.props.onPress()); // the big switch at the top turns it off
     expect(calls.disabled).toBe(1);
+  });
+
+  it('turns on from the switch at the top too, in the mode picked, and shows the modes as segments', async () => {
+    const { model, calls } = fakeModel();
+    let r!: ReactTestRenderer;
+    act(() => {
+      r = create(<PushSettings model={model} defaultUrl="http://edith:2586" />);
+    });
+    mounted.push(r);
+    const radios = r.root.findAll((n) => n.props.accessibilityRole === 'radio' && typeof n.props.onPress === 'function');
+    expect(radios.map((n) => [n.props.accessibilityLabel, n.props.accessibilityState.checked])).toEqual([
+      ['Instant', true],
+      ['Every 15 min', false],
+    ]);
+    act(() => press(r, 'Every 15 min'));
+    const toggle = r.root.find((n) => n.props.accessibilityRole === 'switch' && n.props.accessibilityLabel === 'Push' && typeof n.props.onPress === 'function');
+    expect(toggle.props.accessibilityState).toMatchObject({ checked: false });
+    await act(async () => toggle.props.onPress());
+    expect(calls.turnOn).toEqual(['poll']);
+  });
+
+  it('wires the Settings list’s switch: on asks edith in the mode last used, off forgets the token', () => {
+    const { model, store, calls } = fakeModel();
+    const off = pushToggle(model, store.get());
+    expect(off).toMatchObject({ on: false, disabled: false, detail: null });
+    off.set(true);
+    expect(calls.turnOn).toEqual(['instant']);
+    store.set((s) => ({ ...s, status: { ...s.status, enabled: true, mode: 'poll' } }));
+    const on = pushToggle(model, store.get());
+    expect(on).toMatchObject({ on: true, detail: 'Every 15 min' });
+    on.set(false);
+    expect(calls.disabled).toBe(1);
+    expect(pushToggle(model, { ...store.get(), fetching: true }).disabled).toBe(true); // no double tap while edith is asked
   });
 
   it('turns on in the 15-minute mode: no battery hint, the last check shown', async () => {

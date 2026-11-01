@@ -2,7 +2,7 @@
 
 import type { VoiceState } from './voice';
 
-export function voiceSummary(s: VoiceState): string {
+export function voiceSummary(s: Pick<VoiceState, 'available' | 'autoSend'>): string {
   if (!s.available) return 'Not available';
   return s.autoSend ? 'Sends right after speaking' : 'Fills the box to edit first';
 }

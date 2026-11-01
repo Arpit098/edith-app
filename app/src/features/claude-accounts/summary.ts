@@ -11,3 +11,10 @@ export function accountsSummary(s: AccountsState): string | null {
   const active = s.accounts.find((a) => a.active);
   return active ? `${count} · ${active.label} active` : count;
 }
+
+/** The words the top card of Settings adds to the link state: "Interseqt active". */
+export function activeBadge(s: AccountsState): string | null {
+  if (s.switch?.state === 'running') return 'Switching account…';
+  const active = s.accounts.find((a) => a.active);
+  return active ? `${active.label} active` : null;
+}

@@ -58,9 +58,14 @@
    `tool` tile for the Tools grid (see "Adding a new tool" below). A feature that must show above
    every screen (like approvals) adds a `panels: [{ slot: 'banner', component }]`.
    - A settings section is a row in Settings that opens `component` on its own page. Give it its place:
-     `group` (`connection`, `notifications`, `voice`, `app`; none goes under More), an outline `icon`,
+     `group` (`connection`, `notifications`, `voice`, `app`, `about`; none goes under More), an outline `icon`,
      an `order` within the group, and a `summary` hook returning one line of live state (e.g.
      `useStoreOr(model?.store, mySummary, null)`, with `mySummary` a pure function in `summary.ts`).
+     A setting that is just on or off also gives a `toggle` hook (`{ on, set, disabled?, detail? }`, or
+     null): the list then shows a switch in the row, and the row still opens the page.
+   - Build the page from `ui/SettingsRows.tsx` (`SummaryCard` at the top, `Section` cards of `Row`,
+     `SwitchRow`, `SegmentRow`, `SliderRow`, helper text under the card, one `PillButton` for the main
+     action), so every page looks the same. The page draws its own cards.
    - Put the logic in `model.ts`: a `createXModel(bus, api)` with a small store (`core/store.ts`),
      subscribed to bus events in `setup(ctx)`. Resync from the API on `app.connected`; never poll.
      Screens read it with `useStore(model.store, selector)`, using module-level selectors.

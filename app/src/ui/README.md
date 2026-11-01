@@ -15,6 +15,15 @@ Presentational components used by several features (buttons, chat bubble, diff v
   `core/theme/__tests__/contrast.test.ts`.
 - **The bend is thin** (Arpit, 31 Oct): the lens bends the backdrop in a 6–8 dp band at the edge
   (`bezel`, was 14–22 dp), pulling in 4–5 dp at the very edge (`refraction`).
+- **Toggle** (`Toggle.tsx`): the on/off switch. The thumb slides and the track fills with the theme's
+  accent on the UI thread (a spring, skipped with "Remove animations"); 48 dp touch target; TalkBack
+  role "switch" with its checked state. `decorative` draws it inside a row that is itself the switch.
+- **Settings pieces** (`SettingsRows.tsx`, Arpit, 1 Nov: "structure like the other image", "better UI
+  inside the setting options"): `SummaryCard` (the state at the top, with a big switch), `Section`
+  (a sentence-case title, a glass card with a thin rim, helper text under it), `Row` (one ~52 dp line:
+  neutral outline icon, label, dim value, chevron; hairlines inset past the icon), `SwitchRow`,
+  `SegmentRow`, `SliderRow` (its value beside the label), `Notice` and `PillButton` (a page's one main
+  action, full width). Every Settings page is built from these.
 - **GrowSheet** (`motion.tsx`): a sheet that grows out of its trigger and shrinks back, unmounted once closed.
 - **The rim is thin** (Arpit, 31 Oct): about a hairline (0.5 dp) and about as bright as the thin
   glass edge, still lit at the top-left and bottom-right, with a 1 dp inner glow.

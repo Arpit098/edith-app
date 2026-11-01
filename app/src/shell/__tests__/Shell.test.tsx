@@ -214,7 +214,7 @@ describe('Shell', () => {
       });
       expect(title()).toBe('settings');
       expect(pageOpen()).toBe(false);
-      expect(texts(r)).toContain('Connection & account');
+      expect(texts(r)).toContain('Notifications');
 
       // The token is rejected while another page is open: the status card's "Open Settings" (a feature,
       // through app.open with a page) lands on Server connection directly.
@@ -226,7 +226,7 @@ describe('Shell', () => {
       });
       expect(title()).toBe('settings');
       expect(pageOpen()).toBe(false);
-      expect(texts(r)).toContain('Change server');
+      expect(texts(r)).toContain('Address'); // the Server connection page (Change server is on the list too)
       act(() => r.unmount());
       loaded.cleanup();
     });
