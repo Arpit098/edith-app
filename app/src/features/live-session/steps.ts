@@ -30,21 +30,29 @@ const BY_TOOL: Record<string, StepKind> = {
   Agent: 'agent',
 };
 
+const TEST = /\b(test|tests|jest|pytest|make test|npm run check|tsc|typecheck|lint|unittest)\b/i;
+// "Find the failing tests", "ls __tests__": a look around, not a test run (unless it starts as one).
+const LOOK = /\b(find|ls|grep|search|look|show|list|read)\b/i;
+const RUNS = /^(run|npm|pytest|make test)\b/i;
+const GIT = /\b(git|gh|commit|commits|committed|push|pull request|merge|rebase|branch|branches|worktree)\b/i;
+const PR = /\bPRs?\b/; // capitals only: not "pr" in a word or a path
+
 // Checked in order: the first that matches the summary (description or command) wins.
-const BY_TEXT: [StepKind, RegExp][] = [
-  ['test', /\b(test|tests|jest|pytest|make test|npm run check|tsc|typecheck|lint|unittest)\b/i],
-  ['deploy', /\b(deploy|systemctl|restart|rollout|release|pm2|docker compose up)\b/i],
-  ['git', /\b(git|gh|commit|push|pull request|PR|merge|rebase|branch|worktree)\b/],
-  ['web', /\b(curl|wget|fetch|https?:\/\/)/i],
-  ['search', /\b(find|search|grep|rg|look|list|ls|cat|read|view|show|check|inspect|head|tail|sed -n)\b/i],
-  ['edit', /\b(edit|write|update|fix|rename|create|add|remove|delete)\b/i],
+const BY_TEXT: [StepKind, (s: string) => boolean][] = [
+  ['test', (s) => TEST.test(s) && (RUNS.test(s) || !LOOK.test(s))],
+  ['deploy', (s) => /\b(deploy|deploys|deploying|redeploy|systemctl|restart|restarts|restarting|rollout|pm2|docker compose up|cut a release|release (v?\d|build))\b/i.test(s)],
+  ['git', (s) => GIT.test(s) || PR.test(s)],
+  ['web', (s) => /\b(curl|wget|fetch|https?:\/\/)/i.test(s)],
+  ['search', (s) => /\b(find|search|grep|rg|look|list|ls|cat|read|view|show|check|inspect|head|tail|sed -n)\b/i.test(s)],
+  ['edit', (s) => /\b(edit|write|update|fix|rename|create|add|remove|delete)\b/i.test(s)],
 ];
 
 /** A step's kind from its tool and summary. */
 export function stepKind(tool: string, summary: string): StepKind {
   const known = BY_TOOL[tool];
   if (known) return known;
-  for (const [kind, re] of BY_TEXT) if (re.test(summary)) return kind;
+  const s = summary.replace(/^\s*\$\s*/, '');
+  for (const [kind, test] of BY_TEXT) if (test(s)) return kind;
   return 'other';
 }
 

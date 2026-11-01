@@ -1,5 +1,5 @@
-// A file's edits in a turn, full screen (Work card → a file row): its short path and +N −M in the
-// header, then each edit's diff with lines wrapped (nothing cut off on the right), red and green
+// A file's edits in a turn, full screen (Work card → a file row): its name, full path and +N −M in
+// the header, then each edit's diff (and the edit tools' results at the end) with lines wrapped (nothing cut off on the right), red and green
 // line backgrounds, hunk headers dimmed, and the ---/+++ headers (long absolute paths) left out.
 // Lines are a virtualised list: a long diff opens at once.
 
@@ -9,23 +9,18 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { colors, radius, space, type, useTheme } from '../../core/theme';
 import { Icon } from '../../ui/Icon';
-import { readableDiff, type FileEdit } from './work';
+import { diffParts, type FileEdit } from './work';
 
 type Line = { key: string; text: string; tone: 'add' | 'del' | 'hunk' | 'ctx' | 'gap' };
 
-function toneOf(line: string): Line['tone'] {
-  if (line.startsWith('@@')) return 'hunk';
-  if (line.startsWith('+')) return 'add';
-  if (line.startsWith('-')) return 'del';
-  return 'ctx';
-}
-
-/** Every edit's lines, one after another (a gap row between edits). */
+/** Every edit's lines, one after another (a gap row between edits), without the ---/+++ headers. */
 export function diffLines(file: FileEdit): Line[] {
   const out: Line[] = [];
   file.diffs.forEach((d, i) => {
     if (i > 0) out.push({ key: `gap-${i}`, text: `Edit ${i + 1}`, tone: 'gap' });
-    readableDiff(d).forEach((text, j) => out.push({ key: `${i}-${j}`, text, tone: toneOf(text) }));
+    diffParts(d).forEach((p, j) => {
+      if (p.tone !== 'header') out.push({ key: `${i}-${j}`, text: p.text, tone: p.tone });
+    });
   });
   return out;
 }
@@ -45,8 +40,9 @@ export const DiffScreen = memo(function DiffScreen({ file, onClose }: { file: Fi
             <Text style={styles.title} numberOfLines={1}>
               {file.name}
             </Text>
-            <Text style={styles.path} numberOfLines={1} ellipsizeMode="head">
-              {file.where}
+            {/* The full path (its start cut if long): a worktree's copy tells apart from the main clone's. */}
+            <Text style={styles.path} numberOfLines={1} ellipsizeMode="head" selectable testID="diff-path">
+              {file.path}
             </Text>
           </View>
           <Counts added={file.added} removed={file.removed} />
@@ -57,6 +53,7 @@ export const DiffScreen = memo(function DiffScreen({ file, onClose }: { file: Fi
           renderItem={({ item }) => <DiffLine line={item} />}
           initialNumToRender={40}
           contentContainerStyle={styles.lines}
+          ListFooterComponent={file.results.length ? <Results results={file.results} /> : null}
         />
       </View>
     </Modal>
@@ -70,6 +67,20 @@ const DiffLine = memo(function DiffLine({ line }: { line: Line }) {
     </Text>
   );
 });
+
+/** The edit tools' results for the file ("The file … has been updated"), under the diff. */
+export function Results({ results }: { results: readonly string[] }) {
+  return (
+    <View style={styles.results} testID="diff-results">
+      <Text style={styles.resultsTitle}>{results.length === 1 ? 'Result' : 'Results'}</Text>
+      {results.map((r, i) => (
+        <Text key={i} style={styles.result} selectable>
+          {r}
+        </Text>
+      ))}
+    </View>
+  );
+}
 
 /** "+12 −3": green and red. */
 export function Counts({ added, removed }: { added: number; removed: number }) {
@@ -90,6 +101,9 @@ const styles = StyleSheet.create({
   path: { color: colors.textDim, fontSize: type.size.caption },
   lines: { paddingVertical: space.s },
   line: { fontFamily: type.mono, fontSize: 12, lineHeight: 18, paddingHorizontal: space.m, color: colors.text },
+  results: { marginTop: space.m, marginHorizontal: space.m, padding: space.s, gap: space.xs, borderRadius: radius.s, backgroundColor: colors.code },
+  resultsTitle: { color: colors.textDim, fontSize: type.size.caption, fontWeight: '700' },
+  result: { color: colors.text, fontFamily: type.mono, fontSize: 12 },
   counts: { flexDirection: 'row', gap: space.xs, paddingHorizontal: space.s, paddingVertical: 2, borderRadius: radius.pill, backgroundColor: colors.card },
   added: { color: colors.diffAddText, fontSize: type.size.caption, fontFamily: type.mono },
   removed: { color: colors.diffDelText, fontSize: type.size.caption, fontFamily: type.mono },

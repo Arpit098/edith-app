@@ -5,7 +5,7 @@
 import { MemoryStorage } from '../../../testing/fakes';
 import { createWorkDetailSetting, WORK_DETAIL_KEY } from '../chatSettings';
 import type { Item } from '../model';
-import { diffCounts, duration, groupRows, readableDiff, shortPath, summarize, summaryLine, type WorkGroup } from '../work';
+import { diffCounts, diffParts, duration, groupRows, readableDiff, shortPath, summarize, summaryLine, type WorkGroup } from '../work';
 
 let n = 0;
 const at = (ts: number) => ({ id: ++n, ts });
@@ -96,6 +96,24 @@ describe('inside a card', () => {
     expect(s.files).toEqual([]);
   });
 
+  it('a long path cut to 120 characters in the tool summary is still the one file row (matched to its diff)', () => {
+    const long = `/home/ubuntu/Projects/Personal Projects/edith-app/.claude/worktrees/agent-a1b2c3d4/app/src/features/live-session/__tests__/WorkCard.test.tsx`;
+    const summary = `Edit: ${long}`.slice(0, 120);
+    expect(summary.length).toBe(120);
+    const s = summarize(group(tool('Edit', summary, 'ok', 0, 'The file has been updated successfully.'), diff(long, `--- a/${long}\n+++ b/${long}\n@@ -1 +1 @@\n-a\n+b\n`)));
+    expect(s.files.map((f) => f.path)).toEqual([long]);
+    expect(s.files[0]!.results).toEqual(['The file has been updated successfully.']); // the tool's result, in the file's detail
+    expect(s.steps).toEqual([]);
+    expect(summaryLine(s, 0)).toBe('1 step · 1 file changed');
+  });
+
+  it('an edit without a diff is an edit step, not a second file row', () => {
+    const s = summarize(group(tool('Write', `Write: /home/ubuntu/edith/notes.md`), tool('Edit', `Edit: ${ABS}`), diff(ABS, DIFF)));
+    expect(s.files.map((f) => f.where)).toEqual(['app/src/features/live-session/LiveScreen.tsx']);
+    expect(s.steps.map((x) => [x.kind, x.label])).toEqual([['edit', 'Edited notes.md']]);
+    expect(summaryLine(s, 0)).toBe('2 steps · 1 file changed');
+  });
+
   it('the running step is the live one', () => {
     const s = summarize(group(tool('Bash', '$ Install'), tool('Bash', '$ Run tests', 'running')));
     expect(s.running?.label).toBe('Run tests');
@@ -109,6 +127,19 @@ describe('inside a card', () => {
     expect(diffCounts(DIFF)).toEqual({ added: 2, removed: 1 });
     expect(readableDiff(DIFF)).toEqual(['@@ -1,2 +1,2 @@', '-old line', '+new line', '+another', ' context']); // no a/ b/ headers
     expect([duration(12), duration(60), duration(100), duration(-3)]).toEqual(['12s', '1m', '1m 40s', '0s']);
+  });
+
+  it('---/+++ are headers only right before a hunk: SQL comments, --i, ++count and a YAML --- are lines', () => {
+    const d = `--- a/x\n+++ b/x\n@@ -1,4 +1,4 @@\n--- sql comment\n+-- sql: a comment\n---i;\n+++count;\n ctx\n----\n+---\n`;
+    expect(diffCounts(d)).toEqual({ added: 3, removed: 3 });
+    expect(readableDiff(d)).toEqual(['@@ -1,4 +1,4 @@', '--- sql comment', '+-- sql: a comment', '---i;', '+++count;', ' ctx', '----', '+---']);
+    expect(diffParts(d).filter((p) => p.tone === 'header').map((p) => p.text)).toEqual(['--- a/x', '+++ b/x']);
+  });
+
+  it('a MultiEdit diff repeats its headers per edit: each pair is left out, the lines counted', () => {
+    const d = `--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n--- a/x\n+++ b/x\n@@ -9,2 +9 @@\n-c\n ---\n`;
+    expect(diffCounts(d)).toEqual({ added: 1, removed: 2 });
+    expect(readableDiff(d)).toEqual(['@@ -1 +1 @@', '-a', '+b', '@@ -9,2 +9 @@', '-c', ' ---']);
   });
 });
 

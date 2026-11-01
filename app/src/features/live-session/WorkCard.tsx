@@ -15,7 +15,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { colors, radius, space, type } from '../../core/theme';
 import { Icon } from '../../ui/Icon';
-import { Counts, DiffScreen, diffLines } from './DiffScreen';
+import { Counts, DiffScreen, diffLines, Results } from './DiffScreen';
 import { STEP_ICON } from './steps';
 import { DEFAULT_WORK_DETAIL, duration, summarize, summaryLine, type FileEdit, type Step, type WorkDetail, type WorkGroup } from './work';
 
@@ -27,9 +27,11 @@ export interface WorkCardProps {
   group: WorkGroup;
   /** The turn is still running (this is the newest card): the live step and a timer. */
   live: boolean;
+  /** The server's clock minus the phone's, in seconds (LiveState.clockOffset): the timer counts from the server's `ts`. */
+  clockOffset?: number;
 }
 
-export const WorkCard = memo(function WorkCard({ group, live }: WorkCardProps) {
+export const WorkCard = memo(function WorkCard({ group, live, clockOffset = 0 }: WorkCardProps) {
   const until = group.until;
   const detail = useContext(WorkDetailContext);
   const sum = useMemo(() => summarize(group), [group]);
@@ -46,7 +48,7 @@ export const WorkCard = memo(function WorkCard({ group, live }: WorkCardProps) {
   return (
     <View style={[styles.card, sum.failed > 0 && !live && styles.cardFailed]} testID="work-card">
       <Pressable onPress={() => setOpen(!shown)} style={styles.head} accessibilityRole="button" accessibilityState={{ expanded: shown }} accessibilityLabel={live ? `Working: ${liveLabel(sum)}` : `Work: ${summaryLine(sum, seconds)}${sum.failed ? `, ${sum.failed} failed` : ''}`}>
-        {live ? <LiveHead label={liveLabel(sum)} since={group.ts} /> : <DoneHead line={summaryLine(sum, seconds)} failed={sum.failed} />}
+        {live ? <LiveHead label={liveLabel(sum)} since={group.ts} offset={clockOffset} /> : <DoneHead line={summaryLine(sum, seconds)} failed={sum.failed} />}
         <Icon name={shown ? 'chevron-up' : 'chevron-down'} size={18} color={colors.textDim} />
       </Pressable>
       {live && !shown && detail !== 'summary' ? <Recent steps={sum.steps.filter((s) => s !== sum.running).slice(-RECENT)} /> : null}
@@ -71,13 +73,14 @@ function liveLabel(sum: ReturnType<typeof summarize>): string {
   return step ? step.label : 'Working';
 }
 
-function LiveHead({ label, since }: { label: string; since: number }) {
-  const [now, setNow] = useState(() => Date.now() / 1000);
+function LiveHead({ label, since, offset }: { label: string; since: number; offset: number }) {
+  const [phoneNow, setNow] = useState(() => Date.now() / 1000);
   useEffect(() => {
     // The timer's one tick a second, only while the turn runs (one live card at most).
     const t = setInterval(() => setNow(Date.now() / 1000), 1000);
     return () => clearInterval(t);
   }, []);
+  const now = phoneNow + offset; // the server's clock, as `since` is
   return (
     <>
       <Icon name="progress-clock" size={16} color={colors.warn} />
@@ -118,17 +121,22 @@ function Recent({ steps }: { steps: Step[] }) {
 
 const StepRow = memo(function StepRow({ step, full }: { step: Step; full: boolean }) {
   const failed = step.status === 'error';
-  // A failed step opens by itself; Full shows every step's command and result.
+  // A failed step opens by itself (also one that fails while shown); Full shows every step's
+  // command and result (also when switched to Full while shown).
   const [open, setOpen] = useState(failed || full);
+  useEffect(() => {
+    if (failed || full) setOpen(true);
+  }, [failed, full]);
   const tint = failed ? colors.danger : step.status === 'running' ? colors.warn : colors.textDim;
+  // The detail sits outside the Pressable: its label would otherwise hide it from TalkBack.
   return (
-    <Pressable onPress={() => setOpen((o) => !o)} style={styles.step} accessibilityRole="button" accessibilityState={{ expanded: open }} accessibilityLabel={`${step.label}${failed ? ', failed' : ''}`} testID={`work-step-${step.id}`}>
-      <View style={styles.stepRow}>
+    <View style={styles.step}>
+      <Pressable onPress={() => setOpen((o) => !o)} style={styles.stepRow} accessibilityRole="button" accessibilityState={{ expanded: open }} accessibilityLabel={`${step.label}${failed ? ', failed' : ''}`} testID={`work-step-${step.id}`}>
         <Icon name={failed ? 'alert-circle-outline' : STEP_ICON[step.kind]} size={15} color={tint} />
         <Text style={[styles.stepText, failed && styles.failedText]} numberOfLines={open ? undefined : 1}>
           {step.label}
         </Text>
-      </View>
+      </Pressable>
       {open ? (
         <View style={styles.detail}>
           <Text style={styles.raw} selectable>
@@ -141,7 +149,7 @@ const StepRow = memo(function StepRow({ step, full }: { step: Step; full: boolea
           ) : null}
         </View>
       ) : null}
-    </Pressable>
+    </View>
   );
 });
 
@@ -150,9 +158,10 @@ const INLINE_LINES = 24; // Full: this much of a file's diff in the card; the re
 const FileRow = memo(function FileRow({ file, full, onOpen }: { file: FileEdit; full: boolean; onOpen: () => void }) {
   const has = file.diffs.length > 0;
   const lines = useMemo(() => (full ? diffLines(file) : []), [full, file]);
+  // The inline diff sits outside the Pressable, so TalkBack reads it too.
   return (
-    <Pressable onPress={has ? onOpen : undefined} disabled={!has} style={styles.step} accessibilityRole="button" accessibilityLabel={`Edited ${file.name}, ${file.added} lines added, ${file.removed} removed`} accessibilityHint={has ? 'Shows the changes' : undefined} testID={`work-file-${file.name}`}>
-      <View style={styles.stepRow}>
+    <View style={styles.step}>
+      <Pressable onPress={has ? onOpen : undefined} disabled={!has} style={styles.stepRow} accessibilityRole="button" accessibilityLabel={`Edited ${file.name}, ${file.added} lines added, ${file.removed} removed`} accessibilityHint={has ? 'Shows the changes' : undefined} testID={`work-file-${file.name}`}>
         <Icon name="pencil" size={15} color={colors.accent} />
         <View style={styles.fileText}>
           <Text style={styles.stepText} numberOfLines={1}>
@@ -163,7 +172,7 @@ const FileRow = memo(function FileRow({ file, full, onOpen }: { file: FileEdit; 
           </Text>
         </View>
         {has ? <Counts added={file.added} removed={file.removed} /> : null}
-      </View>
+      </Pressable>
       {lines.length ? (
         // Full: the diff in the card too, lines wrapped (nothing cut off), the headers left out.
         <View style={styles.detail} testID="work-inline-diff">
@@ -172,10 +181,11 @@ const FileRow = memo(function FileRow({ file, full, onOpen }: { file: FileEdit; 
               {l.text || ' '}
             </Text>
           ))}
-          {lines.length > INLINE_LINES ? <Text style={styles.more}>{`${lines.length - INLINE_LINES} more lines: tap to see all`}</Text> : null}
+          {lines.length > INLINE_LINES ? <Text style={styles.more}>{`${lines.length - INLINE_LINES} more lines: tap the file to see all`}</Text> : null}
+          {lines.length <= INLINE_LINES && file.results.length ? <Results results={file.results} /> : null}
         </View>
       ) : null}
-    </Pressable>
+    </View>
   );
 });
 

@@ -126,18 +126,64 @@ describe('the Work card', () => {
     expect(texts(full)).not.toContain('+++ b/'); // the absolute-path headers are gone
   });
 
-  it('a file row opens the full-screen diff: short path in the header, wrapped lines, no a/ b/ headers', () => {
-    const r = render(groupOf(DONE.map((x) => ({ ...x }))));
+  it('a file row opens the full-screen diff: full path under the name, wrapped lines, no a/ b/ headers, the edit’s result', () => {
+    const items = [tool('Edit', `Edit: ${ABS}`, 'ok', 'The file has been updated successfully.'), diff(ABS, DIFF)];
+    const r = render(groupOf(items));
     act(() => head(r).props.onPress());
     act(() => r.root.findAll((x) => x.props.testID === 'work-file-a.ts' && typeof x.props.onPress === 'function')[0]!.props.onPress());
     const screen = host(r, 'diff-screen')[0]!;
     const lines = screen.findAllByType(Text).map(own);
     expect(lines).toContain('a.ts');
-    expect(lines).toContain('app/src/a.ts');
-    expect(lines.some((l) => l.includes('/home/ubuntu'))).toBe(false);
+    // The full path (a worktree's copy and the main clone's look alike repo-relative), cut at its start.
+    const path = host(r, 'diff-path')[0]!;
+    expect(own(path)).toBe(ABS);
+    expect(path.props.ellipsizeMode).toBe('head');
+    expect(lines.some((l) => l.startsWith('--- a/') || l.startsWith('+++ b/'))).toBe(false);
+    expect(lines).toContain('The file has been updated successfully.'); // the edit tool's result, still reachable
     // Wrapped: no line is clipped to one line.
     expect(screen.findAllByType(Text).every((t) => t.props.numberOfLines === undefined || t.props.numberOfLines === 1)).toBe(true);
     act(() => screen.findAll((x) => x.props.accessibilityLabel === 'Close' && typeof x.props.onPress === 'function')[0]!.props.onPress());
     expect(host(r, 'diff-screen')).toHaveLength(0);
+  });
+
+  it('the live timer counts on the server’s clock (the phone’s may be off)', () => {
+    jest.useFakeTimers();
+    const server = Date.now() / 1000 + 600; // the server is 10 minutes ahead of the phone
+    const live = groupOf([tool('Bash', '$ Build', 'running', null, server - 20)], null);
+    let r!: ReactTestRenderer;
+    jest.spyOn(console, 'error').mockImplementation(() => {});
+    act(() => {
+      r = create(<WorkCard group={live} live clockOffset={600} />);
+    });
+    expect(texts(r)).toContain('20s');
+  });
+
+  it('an opened step’s detail is outside its button, so TalkBack reads it', () => {
+    const r = render(groupOf([tool('Bash', '$ Run the tests', 'error', '2 tests failed')]));
+    const button = steps(r)[0]!;
+    expect(button.findAllByType(Text).map(own)).not.toContain('2 tests failed');
+    expect(texts(r)).toContain('2 tests failed');
+  });
+
+  it('a step that fails while shown opens itself; switching to Full opens every step', () => {
+    const now = Date.now() / 1000;
+    const a = tool('Bash', '$ Build', 'ok', 'built', now);
+    const b = tool('Bash', '$ Run the tests', 'running', null, now);
+    const tree = (g: WorkGroup, detail: WorkDetail) => (
+      <SafeAreaProvider initialMetrics={METRICS}>
+        <WorkDetailContext.Provider value={detail}>
+          <WorkCard group={g} live />
+        </WorkDetailContext.Provider>
+      </SafeAreaProvider>
+    );
+    const r = render(groupOf([a, b], null), true);
+    act(() => head(r).props.onPress());
+    expect(texts(r)).not.toContain('3 failed');
+    act(() => r.update(tree(groupOf([a, { ...b, status: 'error', result: '3 failed' } as Item], null), 'steps')));
+    expect(texts(r)).toContain('3 failed');
+    expect(texts(r)).not.toContain('Bash: $ Build');
+    act(() => r.update(tree(groupOf([a, { ...b, status: 'error', result: '3 failed' } as Item], null), 'full')));
+    expect(texts(r)).toContain('Bash: $ Build');
+    expect(texts(r)).toContain('built');
   });
 });

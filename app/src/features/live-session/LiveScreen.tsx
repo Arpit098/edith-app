@@ -27,6 +27,7 @@ import type { VoiceModel, VoiceState } from './voice';
 
 const selectItems = (s: LiveState) => s.items;
 const selectTurns = (s: LiveState) => s.turns;
+const selectClockOffset = (s: LiveState) => Math.round(s.clockOffset); // whole seconds: a re-measure doesn't redraw the rows
 const keyOf = (row: Row) => (row.kind === 'work' ? `w${row.id}` : String(row.id));
 const selectDetail = (d: WorkDetail) => d;
 
@@ -59,6 +60,7 @@ export function LiveScreen({ model, voice, attach, menu, reply, workDetail }: Li
   const rowsNow = useRef(rows);
   rowsNow.current = rows;
   const busy = useStore(model.store, selectBusy); // the newest Work card is live while the turn runs
+  const clockOffset = useStore(model.store, selectClockOffset); // the live card's timer: server time
   const detail = useStore(workDetail ?? STEPS_DETAIL, selectDetail);
   const onPress = useCallback(
     (id: number, action: string) =>
@@ -160,8 +162,9 @@ export function LiveScreen({ model, voice, attach, menu, reply, workDetail }: Li
   const renderItem = useCallback(
     ({ item, index }: { item: Row; index: number }) =>
       item.kind === 'work' ? (
-        // Live: the newest card while the turn runs, or while one of its tools hasn't answered.
-        <WorkCard group={item} live={index === 0 && (busy || item.items.some((x) => x.kind === 'tool' && x.status === 'running'))} />
+        // Live: the newest card while the turn runs (not "a tool is still running": a lost
+        // tool.result would leave it working for hours). Its timer runs on the server's clock.
+        <WorkCard group={item} live={index === 0 && busy} clockOffset={clockOffset} />
       ) : (
       // The newest message, if it just arrived, settles in on a spring; history and rows scrolled
       // back into view don't move.
@@ -179,7 +182,7 @@ export function LiveScreen({ model, voice, attach, menu, reply, workDetail }: Li
         />
       </SettleIn>
       ),
-    [onPress, onRetry, onReply, onQuote, flash, turns, liquidRows, busy],
+    [onPress, onRetry, onReply, onQuote, flash, turns, liquidRows, busy, clockOffset],
   );
   const loadOlder = useCallback(() => void model.loadOlder(), [model]);
   const chromeInsets = useChrome();

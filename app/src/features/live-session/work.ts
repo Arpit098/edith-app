@@ -88,6 +88,7 @@ export interface FileEdit {
   added: number;
   removed: number;
   diffs: string[]; // each edit's diff, in order (merged: one row per file per turn)
+  results: string[]; // the edit tools' results (shown in the file's detail)
 }
 
 export type Entry = { type: 'step'; step: Step } | { type: 'file'; file: FileEdit };
@@ -103,11 +104,23 @@ export interface WorkSummary {
 
 const EDIT_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit']);
 
-/** The path in an edit tool's summary ("Edit: /x/y.ts" or "/x/y.ts"), or null. */
+/**
+ * The path in an edit tool's summary ("Edit: /x/y.ts" or "/x/y.ts"), or null. The server cuts
+ * summaries to 120 characters, so a long path may be only its start (or, with a "…", its end).
+ */
 function editPath(t: ToolItem): string | null {
   if (!EDIT_TOOLS.has(t.name)) return null;
   const s = t.summary.replace(new RegExp(`^${t.name}:\\s*`), '').trim();
-  return s.startsWith('/') || s.startsWith('~') ? s : null;
+  return s.startsWith('/') || s.startsWith('~') || s.startsWith('…') ? s : null;
+}
+
+/** The diff path an edit tool's (maybe cut) path stands for: the same, or the one path it starts or ends, or null. */
+function matchPath(path: string, diffPaths: readonly string[]): string | null {
+  if (diffPaths.includes(path)) return path;
+  const head = path.replace(/(…|\.\.\.)$/, '');
+  const tail = path.replace(/^(…|\.\.\.)/, '');
+  const found = diffPaths.filter((d) => (head.length >= 8 && d.startsWith(head)) || (tail !== path && tail.length >= 4 && d.endsWith(tail)));
+  return found.length === 1 ? found[0]! : null;
 }
 
 /** A path made short: the repo-relative part ("app/src/x.ts") where it's under a project; home-relative otherwise. */
@@ -124,24 +137,79 @@ export function shortPath(path: string): string {
   return p;
 }
 
+export type DiffTone = 'header' | 'hunk' | 'add' | 'del' | 'ctx';
+export interface DiffPart {
+  text: string;
+  tone: DiffTone;
+}
+
+const HUNK = /^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@/;
+
+/**
+ * A unified diff's lines, each with its part. Inside a hunk the @@ counts say how many lines it
+ * holds, so a removed "---" (YAML), "-- sql", "--i;" or "++count;" stays a line. Outside one,
+ * ---/+++ are headers only right before an @@ (a MultiEdit diff repeats them per edit).
+ */
+export function diffParts(diff: string): DiffPart[] {
+  const lines = diff.replace(/\n$/, '').split('\n');
+  const out: DiffPart[] = [];
+  let oldLeft = 0;
+  let newLeft = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    if (oldLeft > 0 || newLeft > 0) {
+      if (line.startsWith('\\')) out.push({ text: line, tone: 'ctx' }); // "\ No newline at end of file"
+      else if (line.startsWith('+')) {
+        newLeft--;
+        out.push({ text: line, tone: 'add' });
+      } else if (line.startsWith('-')) {
+        oldLeft--;
+        out.push({ text: line, tone: 'del' });
+      } else {
+        oldLeft--;
+        newLeft--;
+        out.push({ text: line, tone: 'ctx' });
+      }
+      continue;
+    }
+    const m = HUNK.exec(line);
+    if (m) {
+      oldLeft = m[1] === undefined ? 1 : Number(m[1]);
+      newLeft = m[2] === undefined ? 1 : Number(m[2]);
+      out.push({ text: line, tone: 'hunk' });
+      continue;
+    }
+    if (line.startsWith('---') || line.startsWith('+++')) {
+      let j = i;
+      while (j < lines.length && (lines[j]!.startsWith('---') || lines[j]!.startsWith('+++'))) j++;
+      if (j < lines.length && lines[j]!.startsWith('@@')) {
+        for (; i < j; i++) out.push({ text: lines[i]!, tone: 'header' });
+        i--;
+        continue;
+      }
+    }
+    // Outside a hunk (a loose diff): by its first character.
+    out.push({ text: line, tone: line.startsWith('@@') ? 'hunk' : line.startsWith('+') ? 'add' : line.startsWith('-') ? 'del' : 'ctx' });
+  }
+  return out;
+}
+
 /** Lines added and removed in a unified diff (not counting its ---/+++ headers). */
 export function diffCounts(diff: string): { added: number; removed: number } {
   let added = 0;
   let removed = 0;
-  for (const line of diff.split('\n')) {
-    if (line.startsWith('+++') || line.startsWith('---')) continue;
-    if (line.startsWith('+')) added++;
-    else if (line.startsWith('-')) removed++;
+  for (const p of diffParts(diff)) {
+    if (p.tone === 'add') added++;
+    else if (p.tone === 'del') removed++;
   }
   return { added, removed };
 }
 
 /** A diff for reading: without its ---/+++ headers (long absolute paths); hunks and lines kept. */
 export function readableDiff(diff: string): string[] {
-  return diff
-    .replace(/\n$/, '')
-    .split('\n')
-    .filter((l) => !l.startsWith('--- ') && !l.startsWith('+++ ') && l !== '---' && l !== '+++');
+  return diffParts(diff)
+    .filter((p) => p.tone !== 'header')
+    .map((p) => p.text);
 }
 
 /** A group's steps, its edits merged per file, and its counts. */
@@ -149,11 +217,13 @@ export function summarize(group: WorkGroup): WorkSummary {
   const steps: Step[] = [];
   const entries: Entry[] = [];
   const files = new Map<string, FileEdit>();
+  // File rows are keyed only by the diffs' paths (full); an edit tool's summary may be cut short.
+  const diffPaths = [...new Set(group.items.flatMap((x) => (x.kind === 'diff' ? [x.path] : [])))];
   const fileOf = (path: string) => {
     let f = files.get(path);
     if (!f) {
       const where = shortPath(path);
-      files.set(path, (f = { path, name: where.slice(where.lastIndexOf('/') + 1), where, added: 0, removed: 0, diffs: [] }));
+      files.set(path, (f = { path, name: where.slice(where.lastIndexOf('/') + 1), where, added: 0, removed: 0, diffs: [], results: [] }));
       entries.push({ type: 'file', file: f });
     }
     return f;
@@ -175,12 +245,15 @@ export function summarize(group: WorkGroup): WorkSummary {
     const path = editPath(x);
     const step: Step = { id: x.id, kind: stepKind(x.name, x.summary), label: stepLabel(x.name, x.summary), raw: x.summary ? `${x.name}: ${x.summary.replace(/^\s*\$\s*/, '$ ')}` : x.name, status: x.status, result: x.result };
     if (x.status === 'running') running = step;
-    // A successful edit is its file's row; a failed or running one stays a step (with the file's name).
-    if (path && x.status === 'ok') {
-      fileOf(path);
+    // A successful edit with a diff is its file's row (its result kept in the file's detail); a
+    // failed or running one, or one without a diff, stays a step (with the file's name).
+    const file = path && x.status === 'ok' ? matchPath(path, diffPaths) : null;
+    if (file) {
+      const f = fileOf(file);
+      if (x.result) f.results.push(x.result);
       continue;
     }
-    if (path) step.label = `${x.status === 'error' ? 'Couldn’t edit' : 'Editing'} ${shortPath(path).split('/').pop()}`;
+    if (path) step.label = `${x.status === 'error' ? 'Couldn’t edit' : x.status === 'running' ? 'Editing' : 'Edited'} ${shortPath(path).split('/').pop()}`;
     steps.push(step);
     entries.push({ type: 'step', step });
   }

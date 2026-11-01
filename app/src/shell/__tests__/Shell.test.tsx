@@ -75,7 +75,8 @@ describe('Shell', () => {
 
     await act(async () => {
       ctx.transport.emit(ev('message.user', { text: 'check the disk' }, { origin: 'telegram' }));
-      ctx.transport.emit(ev('tool.call', { id: 'toolu_1', name: 'Bash', summary: '$ df -h' }));
+      ctx.transport.emit(ev('turn.started', { ref: 'r1', lane: 'main' }));
+      ctx.transport.emit(ev('tool.call',{ id: 'toolu_1', name: 'Bash', summary: '$ df -h' }));
       ctx.transport.emit(ev('permission.request', { id: 'ab', tool: 'Bash', detail: 'rm -rf /tmp/x', ref: null, lane: 'main' }));
     });
     expect(texts(r)).toContain('check the disk');
