@@ -1,8 +1,9 @@
 // The appearance store: read at start (garbled or missing gives the defaults), each change shown at
 // once and written once the changes pause, a change made before the read wins, nothing lost on exit.
 
-import { APPEARANCE_KEY, createAppearanceStore } from '../appearance';
-import { DEFAULT_APPEARANCE } from '../theme';
+import { APPEARANCE_KEY, createAppearanceStore, withoutMissing, withoutPhoto, withPhoto } from '../appearance';
+import type { PickedWallpaper, WallpaperFiles } from '../ports';
+import { DEFAULT_APPEARANCE, DEFAULT_BACKGROUND, DEFAULT_PHOTO_ADJUST, MAX_PHOTOS, resolveTheme, type PhotoBackground } from '../theme';
 import { MemoryStorage } from '../../testing/fakes';
 
 beforeEach(() => jest.useFakeTimers());
@@ -87,5 +88,179 @@ describe('appearance store', () => {
     expect(JSON.parse(data.data.get(APPEARANCE_KEY)!)).toMatchObject({ glass: 35 });
     await jest.advanceTimersByTimeAsync(1000);
     expect(writes).toHaveBeenCalledTimes(1); // the timer it replaced doesn't write again
+  });
+});
+
+/** Wallpaper files in memory: what's "on disk", and what was picked/removed/pruned. */
+function fakeWallpapers(files: string[] = []) {
+  const disk = new Set(files);
+  let n = 0;
+  const w = {
+    disk,
+    pruned: [] as string[][],
+    next: null as PickedWallpaper | null | 'cancel',
+    pick: jest.fn(async (): Promise<PickedWallpaper | null> => {
+      if (w.next === 'cancel') return null;
+      const uri = `file:///docs/wallpapers/${++n}.jpg`;
+      disk.add(uri);
+      return w.next ?? { uri, width: 1080, height: 2400, grid: [[1, 1, 1], [0, 0, 0]] };
+    }),
+    exists: (uri: string) => disk.has(uri),
+    remove: jest.fn((uri: string) => void disk.delete(uri)),
+    prune: (keep: readonly string[]) => {
+      w.pruned.push([...keep]);
+      for (const f of [...disk]) if (!keep.includes(f)) disk.delete(f);
+    },
+  };
+  return w satisfies WallpaperFiles & Record<string, unknown>;
+}
+
+const PHOTO = { uri: 'file:///docs/wallpapers/a.jpg', width: 1080, height: 1440, tones: ['#405060', '#FFFFFF', '#000000'] };
+const ON_PHOTO = { kind: 'photo', uri: PHOTO.uri, blur: 6, dim: 50, focus: 'end', tint: true } as const;
+
+describe('wallpaper photos', () => {
+  it('a stored photo background loads back whole, and settings from before photos load with none', async () => {
+    const data = new MemoryStorage();
+    data.data.set(APPEARANCE_KEY, JSON.stringify({ theme: 'rose', background: 'sunset', glass: 35 })); // the last version's
+    const files = fakeWallpapers();
+    const s = createAppearanceStore(data, files);
+    await s.load();
+    expect(s.store.get()).toEqual({ ...DEFAULT_APPEARANCE, theme: 'rose', background: 'sunset', glass: 35, photos: [] });
+    files.disk.add(PHOTO.uri); // picked
+    s.set({ photos: [PHOTO], background: ON_PHOTO });
+    s.flush();
+    const again = createAppearanceStore(data, files);
+    await again.load();
+    expect(again.store.get()).toMatchObject({ photos: [PHOTO], background: ON_PHOTO });
+  });
+
+  it('a photo whose file is gone at startup is dropped, the background falls back to the theme’s own, and that is saved', async () => {
+    const data = new MemoryStorage();
+    const other = { ...PHOTO, uri: 'file:///docs/wallpapers/b.jpg' };
+    data.data.set(APPEARANCE_KEY, JSON.stringify({ theme: 'ocean', photos: [PHOTO, other], background: ON_PHOTO }));
+    const files = fakeWallpapers([other.uri, 'file:///docs/wallpapers/orphan.jpg']); // a.jpg is gone
+    const s = createAppearanceStore(data, files);
+    await s.load();
+    expect(s.store.get()).toMatchObject({ theme: 'ocean', photos: [other], background: DEFAULT_BACKGROUND });
+    expect(() => resolveTheme(s.store.get())).not.toThrow();
+    expect(files.pruned).toEqual([[PHOTO.uri, other.uri]]); // the saved ones and the ones in memory; the orphan (picked, never saved) is deleted
+    expect([...files.disk]).toEqual([other.uri]);
+    await jest.advanceTimersByTimeAsync(500);
+    expect(JSON.parse(data.data.get(APPEARANCE_KEY)!)).toMatchObject({ photos: [other], background: DEFAULT_BACKGROUND });
+  });
+
+  it('deletes nothing unless the saved value was read: nothing saved, a failed read, or a garbled value', async () => {
+    const saved = 'file:///docs/wallpapers/kept.jpg';
+    for (const data of [new MemoryStorage(), { get: () => Promise.reject(new Error('io')), set: async () => {}, remove: async () => {} }, Object.assign(new MemoryStorage(), { data: new Map([[APPEARANCE_KEY, '{garbled']]) })]) {
+      const files = fakeWallpapers([saved]);
+      jest.spyOn(console, 'warn').mockImplementation(() => {});
+      const s = createAppearanceStore(data, files);
+      await s.load();
+      expect(s.store.get()).toEqual(DEFAULT_APPEARANCE);
+      expect(files.pruned).toEqual([]);
+      expect([...files.disk]).toEqual([saved]); // the wallpaper survives
+    }
+  });
+
+  it('a change made before the read: the files of both the saved photos and the ones in memory are kept', async () => {
+    const data = new MemoryStorage();
+    const other = { ...PHOTO, uri: 'file:///docs/wallpapers/b.jpg' };
+    data.data.set(APPEARANCE_KEY, JSON.stringify({ photos: [PHOTO], background: ON_PHOTO }));
+    const files = fakeWallpapers([PHOTO.uri, other.uri, 'file:///docs/wallpapers/stray.jpg']);
+    const s = createAppearanceStore(data, files);
+    s.set({ photos: [other], background: { ...ON_PHOTO, uri: other.uri } }); // wins over the saved one
+    await s.load();
+    expect(s.store.get().photos).toEqual([other]);
+    expect(files.pruned).toEqual([[PHOTO.uri, other.uri]]);
+    expect([...files.disk].sort()).toEqual([PHOTO.uri, other.uri]);
+  });
+
+  it('a pick in progress when the files are checked is waited for: its new file is never deleted', async () => {
+    const data = new MemoryStorage();
+    data.data.set(APPEARANCE_KEY, JSON.stringify({ theme: 'ocean' }));
+    const files = fakeWallpapers();
+    let land!: () => void;
+    const fresh = 'file:///docs/wallpapers/new.jpg';
+    files.pick.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          files.disk.add(fresh); // written to wallpapers/ before the store knows it
+          land = () => resolve({ uri: fresh, width: 1080, height: 1440, grid: [] });
+        }),
+    );
+    const s = createAppearanceStore(data, files);
+    const adding = s.photos!.add();
+    await s.load();
+    expect(files.pruned).toEqual([]); // waits
+    land();
+    expect(await adding).toBe(true);
+    await Promise.resolve();
+    expect(files.pruned).toEqual([[fresh]]);
+    expect(files.disk.has(fresh)).toBe(true);
+  });
+
+  it('a second add while one is in progress joins it: one picker, one photo', async () => {
+    const files = fakeWallpapers();
+    const s = createAppearanceStore(new MemoryStorage(), files);
+    const first = s.photos!.add();
+    const second = s.photos!.add();
+    expect(second).toBe(first);
+    await Promise.all([first, second]);
+    expect(files.pick).toHaveBeenCalledTimes(1);
+    expect(s.store.get().photos).toHaveLength(1);
+    await s.photos!.add(); // done: the next tap picks again
+    expect(files.pick).toHaveBeenCalledTimes(2);
+  });
+
+  it(`adding makes the photo the background; the ${MAX_PHOTOS} newest are kept and the oldest’s file is deleted`, async () => {
+    const files = fakeWallpapers();
+    const s = createAppearanceStore(new MemoryStorage(), files);
+    await s.load();
+    s.set({ background: 'dots' });
+    expect(await s.photos!.add()).toBe(true);
+    const first = s.store.get();
+    expect(first.photos).toHaveLength(1);
+    expect(first.photos[0]!.tones[0]).toBe('#808080'); // the mean of white and black patches
+    expect(first.background).toEqual({ kind: 'photo', uri: first.photos[0]!.uri, ...DEFAULT_PHOTO_ADJUST });
+    s.set({ background: { ...(first.background as PhotoBackground), dim: 60, focus: 'end' } });
+    for (let i = 0; i < MAX_PHOTOS; i++) await s.photos!.add();
+    const a = s.store.get();
+    expect(a.photos.map((p) => p.uri)).toEqual(['file:///docs/wallpapers/4.jpg', 'file:///docs/wallpapers/3.jpg', 'file:///docs/wallpapers/2.jpg']);
+    expect(files.remove).toHaveBeenCalledWith('file:///docs/wallpapers/1.jpg');
+    expect(files.disk.has('file:///docs/wallpapers/1.jpg')).toBe(false);
+    expect(a.background).toMatchObject({ uri: 'file:///docs/wallpapers/4.jpg', dim: 60, focus: 'center' }); // dim carried over, focus fresh
+  });
+
+  it('a cancelled pick changes nothing', async () => {
+    const files = fakeWallpapers();
+    files.next = 'cancel';
+    const s = createAppearanceStore(new MemoryStorage(), files);
+    expect(await s.photos!.add()).toBe(false);
+    expect(s.store.get()).toEqual(DEFAULT_APPEARANCE);
+  });
+
+  it('removing deletes the file; removing the shown one falls back to the theme’s own', async () => {
+    const files = fakeWallpapers();
+    const s = createAppearanceStore(new MemoryStorage(), files);
+    await s.photos!.add();
+    await s.photos!.add();
+    const [shown, older] = s.store.get().photos.map((p) => p.uri) as [string, string];
+    s.photos!.remove(older);
+    expect(s.store.get().background).toMatchObject({ uri: shown });
+    s.photos!.remove(shown);
+    expect(s.store.get()).toMatchObject({ photos: [], background: DEFAULT_BACKGROUND });
+    expect(files.disk.size).toBe(0);
+  });
+
+  it('without a place for files (tests, web) there are no photo actions', () => {
+    expect(createAppearanceStore(new MemoryStorage()).photos).toBeUndefined();
+  });
+
+  it('withPhoto / withoutPhoto / withoutMissing are pure', () => {
+    const a = { ...DEFAULT_APPEARANCE, photos: [PHOTO], background: ON_PHOTO };
+    expect(withPhoto(a, PHOTO).dropped).toEqual([]); // the same photo again: moved to the front, nothing dropped
+    expect(withoutPhoto(a, 'file:///other.jpg')).toEqual({ photos: [PHOTO] });
+    expect(withoutMissing(a, () => true)).toBeNull();
+    expect(withoutMissing(a, () => false)).toMatchObject({ photos: [], background: DEFAULT_BACKGROUND });
   });
 });

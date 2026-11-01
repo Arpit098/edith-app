@@ -9,12 +9,12 @@
 import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { colors, DIRECTIONS, hexToHsv, hsvToHex, MAX_STOPS, radius, space, STOP_PALETTE, type, useTheme, type GradientSpec } from '../../core/theme';
+import { colors, DIRECTIONS, hexToHsv, hsvToHex, MAX_STOPS, radius, space, STOP_PALETTE, type, type GradientSpec } from '../../core/theme';
 import { Button } from '../../ui/Button';
 import { Gradient } from '../../ui/Gradient';
 import { Icon } from '../../ui/Icon';
 import { Slider } from '../../ui/Slider';
-import { Heading, Hint, shared, Swatch } from './parts';
+import { Heading, Hint, Labelled, Segment, shared, Swatch } from './parts';
 
 export interface GradientBuilderProps {
   mode: 'background' | 'bubble';
@@ -126,9 +126,9 @@ export function GradientBuilder({ mode, value: spec, onChange, onSave, onCancel,
       {mode === 'background' ? (
         <>
           <Heading>Type</Heading>
-          <View style={styles.segments} accessibilityRole="radiogroup">
+          <View style={shared.segments} accessibilityRole="radiogroup">
             {(['linear', 'radial'] as const).map((k) => (
-              <Segment key={k} label={k === 'linear' ? 'Linear' : 'Radial'} on={spec.kind === k} onPress={() => change({ kind: k })} />
+              <Segment key={k} label={k === 'linear' ? 'Linear' : 'Radial'} a11y={`${k === 'linear' ? 'Linear' : 'Radial'} gradient`} on={spec.kind === k} onPress={() => change({ kind: k })} />
             ))}
           </View>
           <Heading>Intensity</Heading>
@@ -150,28 +150,6 @@ export function GradientBuilder({ mode, value: spec, onChange, onSave, onCancel,
   );
 }
 
-/** A slider row: an icon, the slider (it names itself to TalkBack), and its value for sighted users. */
-function Labelled({ icon, value, children }: { icon: string; value: string; children: React.ReactNode }) {
-  return (
-    <View style={styles.labelled}>
-      <Icon name={icon} size={18} color={colors.textDim} />
-      <View style={shared.flex}>{children}</View>
-      <Text style={styles.value} accessibilityElementsHidden importantForAccessibility="no">
-        {value}
-      </Text>
-    </View>
-  );
-}
-
-function Segment({ label, on, onPress }: { label: string; on: boolean; onPress: () => void }) {
-  const { accentSoft } = useTheme();
-  return (
-    <Pressable onPress={onPress} style={[styles.segment, on && { backgroundColor: accentSoft, borderColor: colors.text }]} accessibilityRole="radio" accessibilityState={{ selected: on }} accessibilityLabel={`${label} gradient`}>
-      <Text style={[styles.segmentText, on && styles.segmentOn]}>{label}</Text>
-    </Pressable>
-  );
-}
-
 const ROUND = 34;
 
 const styles = StyleSheet.create({
@@ -181,11 +159,5 @@ const styles = StyleSheet.create({
   stops: { flexDirection: 'row', flexWrap: 'wrap', gap: space.s, alignItems: 'center' },
   round: { width: ROUND, height: ROUND, borderRadius: ROUND / 2, alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth, borderColor: colors.hairline },
   roundOn: { borderWidth: 2, borderColor: colors.text },
-  labelled: { flexDirection: 'row', alignItems: 'center', gap: space.s },
-  value: { color: colors.text, fontSize: type.size.small, fontVariant: ['tabular-nums'], minWidth: 44, textAlign: 'right' },
-  segments: { flexDirection: 'row', gap: space.s },
-  segment: { paddingHorizontal: space.l, paddingVertical: space.s, borderRadius: radius.pill, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.hairline },
-  segmentText: { color: colors.textDim, fontSize: type.size.small },
-  segmentOn: { color: colors.text, fontWeight: '700' },
   actions: { flexDirection: 'row', gap: space.s, marginTop: space.s },
 });

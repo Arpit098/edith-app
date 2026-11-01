@@ -83,11 +83,35 @@ export function LinkButton({ label, onPress, a11y, disabled }: { label: string; 
   );
 }
 
+/** A slider row: an icon, the slider (it names itself to TalkBack), and its value for sighted users. */
+export function Labelled({ icon, value, children }: { icon: string; value: string; children: ReactNode }) {
+  return (
+    <View style={styles.labelled}>
+      <Icon name={icon} size={18} color={colors.textDim} />
+      <View style={shared.flex}>{children}</View>
+      <Text style={styles.value} accessibilityElementsHidden importantForAccessibility="no">
+        {value}
+      </Text>
+    </View>
+  );
+}
+
+/** One choice of a few, as a pill ("Linear", "Top"); in a `shared.segments` radiogroup. */
+export function Segment({ label, a11y, on, onPress }: { label: string; a11y?: string; on: boolean; onPress: () => void }) {
+  const { accentSoft } = useTheme();
+  return (
+    <Pressable onPress={onPress} style={[styles.segment, on && { backgroundColor: accentSoft, borderColor: colors.text }]} accessibilityRole="radio" accessibilityState={{ selected: on }} accessibilityLabel={a11y ?? label}>
+      <Text style={[styles.segmentText, on && styles.segmentOn]}>{label}</Text>
+    </Pressable>
+  );
+}
+
 export const SWATCH = 30;
 export const TILE = 64;
 
 export const shared = StyleSheet.create({
   row: { flexDirection: 'row', flexWrap: 'wrap', gap: space.s },
+  segments: { flexDirection: 'row', flexWrap: 'wrap', gap: space.s },
   tiles: { flexDirection: 'row', flexWrap: 'wrap', gap: space.m },
   links: { flexDirection: 'row', flexWrap: 'wrap', gap: space.l, alignItems: 'center' },
   flex: { flex: 1 },
@@ -108,6 +132,11 @@ const styles = StyleSheet.create({
   ring: { padding: 2, borderRadius: (SWATCH + 8) / 2, borderWidth: 2, borderColor: 'transparent' },
   ringOn: { borderColor: colors.text },
   swatch: { width: SWATCH, height: SWATCH, borderRadius: SWATCH / 2, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
+  labelled: { flexDirection: 'row', alignItems: 'center', gap: space.s },
+  value: { color: colors.text, fontSize: type.size.small, fontVariant: ['tabular-nums'], minWidth: 44, textAlign: 'right' },
+  segment: { paddingHorizontal: space.l, paddingVertical: space.s, borderRadius: radius.pill, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.hairline },
+  segmentText: { color: colors.textDim, fontSize: type.size.small },
+  segmentOn: { color: colors.text, fontWeight: '700' },
   link: { alignSelf: 'flex-start', paddingVertical: space.xs },
   linkText: { fontSize: type.size.small, fontWeight: '600' },
 });

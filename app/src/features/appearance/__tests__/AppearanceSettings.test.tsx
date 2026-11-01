@@ -9,7 +9,23 @@ import { useMemo } from 'react';
 
 import { createAppearanceStore, type AppearanceStore } from '../../../core/appearance';
 import { useStore } from '../../../core/store';
-import { ACCENTS, AppearanceContext, GlassContext, hexToHsv, MAX_CUSTOM, NEW_BACKGROUND_GRADIENT, resolveTheme, rgbaOf, SWATCHES, ThemeContext, type GlassMode } from '../../../core/theme';
+import type { PickedWallpaper } from '../../../core/ports';
+import {
+  ACCENTS,
+  AppearanceContext,
+  DEFAULT_PHOTO_ADJUST,
+  GlassContext,
+  hexToHsv,
+  MAX_CUSTOM,
+  MAX_PHOTOS,
+  NEW_BACKGROUND_GRADIENT,
+  resolveTheme,
+  rgbaOf,
+  SWATCHES,
+  ThemeContext,
+  type GlassMode,
+  type PhotoBackground,
+} from '../../../core/theme';
 import { AppearanceSettings } from '../AppearanceSettings';
 import { appearanceSummary } from '../summary';
 
@@ -19,7 +35,7 @@ jest.setTimeout(30_000); // the first run transforms all of React Native: slow o
 function Root({ appearance, reduceMotion, mode, children }: { appearance: AppearanceStore; reduceMotion: boolean; mode: GlassMode; children: React.ReactNode }) {
   const chosen = useStore(appearance.store, (a) => a);
   const theme = useMemo(() => resolveTheme(chosen), [chosen]);
-  const control = useMemo(() => ({ appearance: chosen, set: appearance.set }), [chosen, appearance]);
+  const control = useMemo(() => ({ appearance: chosen, set: appearance.set, photos: appearance.photos }), [chosen, appearance]);
   return (
     <AppearanceContext.Provider value={control}>
       <ThemeContext.Provider value={theme}>
@@ -293,5 +309,138 @@ describe('Appearance', () => {
     expect(previewBubble(r, 'mine').backgroundColor).toBe(t.my.fill);
     tap(r, 'Glass back to 60%');
     expect(a.store.get().glass).toBe(60);
+  });
+});
+
+describe('Background → your photos', () => {
+  /** Wallpaper files in memory; each pick a new photo of `grid`'s colour (white unless set). */
+  function wallpapers() {
+    const disk = new Set<string>();
+    let n = 0;
+    const w = {
+      grid: [[1, 1, 1]] as [number, number, number][],
+      cancel: false,
+      pick: jest.fn(async (): Promise<PickedWallpaper | null> => {
+        if (w.cancel) return null;
+        const uri = `file:///docs/wallpapers/${++n}.jpg`;
+        disk.add(uri);
+        return { uri, width: 1080, height: 1440, grid: w.grid };
+      }),
+      exists: (uri: string) => disk.has(uri),
+      remove: jest.fn((uri: string) => void disk.delete(uri)),
+      prune: () => {},
+      disk,
+    };
+    return w;
+  }
+  const add = async (r: ReactTestRenderer) => {
+    await act(async () => {
+      await byLabel(r, 'Your photo: pick one from the gallery').props.onPress();
+    });
+  };
+  /** The preview's dim layer: black at the dim drawn. */
+  const previewDim = (r: ReactTestRenderer) => {
+    const layer = r.root.find((n) => n.props.testID === 'appearance-preview').findAll((n) => Array.isArray(n.props.colors) && /^rgba\(0, 0, 0,/.test(n.props.colors[0]))[0]!;
+    return Math.round(rgbaOf(layer.props.colors[0])[3]! * 100);
+  };
+
+  it('"Your photo…" picks from the gallery: the photo becomes the background, live, under the default dim', async () => {
+    const files = wallpapers();
+    files.grid = [[0.2, 0.25, 0.3]]; // a dark photo: shown as chosen
+    const a = createAppearanceStore(undefined, files);
+    const r = mount(a);
+    open(r, 'Background');
+    await add(r);
+    expect(files.pick).toHaveBeenCalledTimes(1);
+    const bg = a.store.get().background as PhotoBackground;
+    expect(bg).toEqual({ kind: 'photo', uri: 'file:///docs/wallpapers/1.jpg', ...DEFAULT_PHOTO_ADJUST });
+    expect(previewAmbient(r)).toBe('ambient-photo');
+    expect(has(r, 'ambient-photo')).toBe(true);
+    expect(previewDim(r)).toBe(DEFAULT_PHOTO_ADJUST.dim);
+    expect(section(r, 'Background').props.accessibilityLabel).toBe('Background: Photo');
+    expect(byLabel(r, 'Photo 1 background').props.accessibilityState).toEqual({ selected: true });
+    expect(appearanceSummary(a.store.get())).toBe('Midnight · Photo · Glass 60%');
+    // Another background, then back to the photo by its tile.
+    tap(r, 'Dots background');
+    expect(has(r, 'photo-adjust')).toBe(false);
+    tap(r, 'Photo 1 background');
+    expect(a.store.get().background).toMatchObject({ kind: 'photo', uri: bg.uri });
+  });
+
+  it('blur and dim preview while dragged and apply on release; focus and tint apply at once', async () => {
+    const files = wallpapers();
+    files.grid = [[0.1, 0.1, 0.1]];
+    const a = createAppearanceStore(undefined, files);
+    const r = mount(a);
+    open(r, 'Background');
+    await add(r);
+    act(() => slider(r, 'Dim').props.onMove(0.75)); // 60%
+    expect(previewDim(r)).toBe(60);
+    expect((a.store.get().background as PhotoBackground).dim).toBe(DEFAULT_PHOTO_ADJUST.dim); // the app waits
+    act(() => slider(r, 'Dim').props.onChange(0.75));
+    expect((a.store.get().background as PhotoBackground).dim).toBe(60);
+    act(() => slider(r, 'Blur').props.onMove(0.5));
+    expect((a.store.get().background as PhotoBackground).blur).toBe(DEFAULT_PHOTO_ADJUST.blur);
+    act(() => slider(r, 'Blur').props.onChange(0.5));
+    expect((a.store.get().background as PhotoBackground).blur).toBe(10);
+    // The tile keeps its own small blur (a blur change would decode every tile again); its dim follows.
+    const tilePhoto = () => byLabel(r, 'Photo 1 background').find((n) => n.props.photo && n.props.thumb).props.photo;
+    expect(tilePhoto()).toMatchObject({ blur: 2, dim: 60 });
+    // A 3:4 photo on a taller screen loses its sides: the choices say left, centre, right.
+    expect(pressables(r, 'Keep the top in view')).toHaveLength(0);
+    tap(r, 'Keep the left in view');
+    tap(r, 'Tint the photo in the theme’s colour');
+    expect(a.store.get().background).toMatchObject({ focus: 'start', tint: true, dim: 60, blur: 10 });
+  });
+
+  it('a bright photo is dimmed further on screen, and the page says so', async () => {
+    const files = wallpapers(); // white
+    const a = createAppearanceStore(undefined, files);
+    const r = mount(a);
+    open(r, 'Background');
+    await add(r);
+    const drawn = resolveTheme(a.store.get()).background.photo!;
+    expect(drawn.raised).toBe(true);
+    expect(previewDim(r)).toBe(drawn.dim);
+    expect(r.root.findAllByType(Text).some((t) => t.props.children === `Dimmed to ${drawn.dim}% on screen, so text stays easy to read on this photo.`)).toBe(true);
+  });
+
+  it(`keeps the ${MAX_PHOTOS} newest as tiles; removing asks first and falls back to the theme’s own`, async () => {
+    const files = wallpapers();
+    const a = createAppearanceStore(undefined, files);
+    const r = mount(a);
+    open(r, 'Background');
+    for (let i = 0; i < MAX_PHOTOS + 1; i++) await add(r);
+    expect(a.store.get().photos).toHaveLength(MAX_PHOTOS);
+    expect(files.remove).toHaveBeenCalledWith('file:///docs/wallpapers/1.jpg'); // the oldest's file
+    expect(pressables(r, `Photo ${MAX_PHOTOS + 1} background`)).toHaveLength(0);
+    const ask = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    tap(r, 'Remove this photo');
+    expect(ask.mock.calls[0]![0]).toBe('Remove Photo 1?');
+    const buttons = ask.mock.calls[0]![2]!;
+    act(() => buttons.find((b) => b.style === 'cancel')!.onPress?.());
+    expect(a.store.get().photos).toHaveLength(MAX_PHOTOS);
+    act(() => buttons.find((b) => b.style === 'destructive')!.onPress!());
+    expect(a.store.get().photos).toHaveLength(MAX_PHOTOS - 1);
+    expect(a.store.get().background).toBe('glow');
+    expect(files.disk.has('file:///docs/wallpapers/4.jpg')).toBe(false);
+  });
+
+  it('a photo that can’t be read says so; cancelling changes nothing; without a place for files there’s no tile', async () => {
+    const files = wallpapers();
+    const a = createAppearanceStore(undefined, files);
+    const r = mount(a);
+    open(r, 'Background');
+    files.cancel = true;
+    await add(r);
+    expect(a.store.get().background).toBe('glow');
+    files.pick.mockRejectedValueOnce(new Error('decode failed'));
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const ask = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    await add(r);
+    expect(ask.mock.calls[0]![0]).toBe('Couldn’t use that photo');
+    const none = mount(createAppearanceStore(undefined));
+    open(none, 'Background');
+    expect(pressables(none, 'Your photo: pick one from the gallery')).toHaveLength(0);
   });
 });

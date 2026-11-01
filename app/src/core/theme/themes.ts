@@ -12,6 +12,7 @@ import {
   BUBBLE_GRADIENTS,
   CUSTOM_BUBBLE,
   GRADIENT_BACKGROUNDS,
+  hexOf,
   MAX_CUSTOM,
   normalizeBubbleGradient,
   normalizeGradient,
@@ -21,9 +22,11 @@ import {
   type CustomGradient,
   type GradientSpec,
 } from './gradients';
+import { isPhotoBackground, normalizePhotoBackground, normalizePhotos, PHOTO_DIM_LIMIT, type Photo, type PhotoBackground, type PhotoFocus } from './photos';
 import { colors, glass, rgbaOf, type GlassLevel, type GlassStyle } from './tokens';
 
 export * from './gradients';
+export * from './photos';
 
 export interface ThemePreset {
   id: string;
@@ -80,22 +83,25 @@ export interface Appearance {
   edithBubble: string | null;
   myGradient: BubbleGradient | null; // my own bubble gradient (kept while another choice is picked)
   edithGradient: BubbleGradient | null;
-  /** A BackgroundId (in the theme's colours), a gradient background's id, or a custom one's. */
-  background: string;
+  /** A BackgroundId (in the theme's colours), a gradient background's id, a custom one's, or a photo. */
+  background: string | PhotoBackground;
   customGradients: CustomGradient[]; // up to MAX_CUSTOM, built with "Custom…"
+  photos: Photo[]; // up to MAX_PHOTOS, newest first ("Your photo…")
   accent: string | null; // an ACCENTS id; null: the theme's
   glass: number; // 0..100
 }
 
 export const DEFAULT_GLASS = 60; // the look the app had before the slider
+export const DEFAULT_BACKGROUND: BackgroundId = 'glow'; // the theme's own (and where a lost photo falls back to)
 export const DEFAULT_APPEARANCE: Appearance = {
   theme: 'midnight',
   myBubble: null,
   edithBubble: null,
   myGradient: null,
   edithGradient: null,
-  background: 'glow',
+  background: DEFAULT_BACKGROUND,
   customGradients: [],
+  photos: [],
   accent: null,
   glass: DEFAULT_GLASS,
 };
@@ -120,14 +126,17 @@ export function normalizeAppearance(v: unknown): Appearance {
     const spec = normalizeGradient(c);
     if (spec && typeof id === 'string' && /^custom-\d+$/.test(id) && !customGradients.some((x) => x.id === id)) customGradients.push({ id, ...spec });
   }
+  const photos = normalizePhotos(o.photos);
+  const background = typeof o.background === 'string' ? (isBackground(o.background, customGradients) ? o.background : null) : normalizePhotoBackground(o.background, photos);
   return {
     theme: typeof o.theme === 'string' && PRESETS.some((p) => p.id === o.theme) ? o.theme : DEFAULT_APPEARANCE.theme,
     myBubble: bubble(o.myBubble, myGradient),
     edithBubble: bubble(o.edithBubble, edithGradient),
     myGradient,
     edithGradient,
-    background: typeof o.background === 'string' && isBackground(o.background, customGradients) ? o.background : DEFAULT_APPEARANCE.background,
+    background: background ?? DEFAULT_BACKGROUND,
     customGradients,
+    photos,
     accent: typeof o.accent === 'string' && ACCENTS.some((a) => a.id === o.accent) ? o.accent : null,
     glass: g,
   };
@@ -170,6 +179,37 @@ export interface BackgroundLook {
   layers: BackgroundLayer[];
   pattern: { kind: 'dots' | 'grid'; color: string } | null;
   drift: boolean; // the first layer drifts slowly (gradients' "drift" variants)
+  /** A photo under the layers (the layers are then its dim and tint, each one even colour). */
+  photo?: PhotoLook;
+}
+
+export interface PhotoLook {
+  uri: string;
+  width: number;
+  height: number;
+  blur: number;
+  focus: PhotoFocus;
+  tones: readonly Rgb[]; // the photo's own colours that matter for text (photoTones)
+  dim: number; // percent, as drawn: the chosen dim, or more where text needed it
+  raised: boolean; // the dim was raised for readability
+}
+
+const PHOTO_TINT_ALPHA = 0.2;
+
+/** A photo as a background: dimmed (black at `dim`%), then washed with the theme's glow if `tint`. */
+export function photoLook(p: ThemePreset, photo: Photo, adjust: PhotoBackground, dim = adjust.dim): BackgroundLook {
+  const shade = (c: string): BackgroundLayer => ({ colors: [c, c], start: { x: 0, y: 0 }, end: { x: 0, y: 1 } });
+  const layers = [shade(withAlpha('#000000', dim / 100)), ...(adjust.tint ? [shade(withAlpha(p.glow, PHOTO_TINT_ALPHA))] : [])];
+  const tones = photo.tones.map(rgbOf);
+  const shaded = (t: Rgb) => layers.reduce((u, l) => composite(l.colors[0], u), t);
+  return {
+    id: 'photo',
+    bg: hexOf(shaded(tones[0]!)), // the dimmed photo's mean: under the glass's frost and a solid bubble
+    layers,
+    pattern: null,
+    drift: false,
+    photo: { uri: photo.uri, width: photo.width, height: photo.height, blur: adjust.blur, focus: adjust.focus, tones, dim, raised: dim > adjust.dim },
+  };
 }
 
 /** A gradient spec as a background: its stops tamed to its intensity (dark enough for text), on its darkest stop. */
@@ -223,6 +263,8 @@ export function backgroundLook(p: ThemePreset, id: string, customs: readonly Cus
  * brightest point), with the pattern over all of those.
  */
 export function backdropSamples(look: BackgroundLook): Rgb[] {
+  // A photo: its colours under its even layers (dim, tint).
+  if (look.photo) return [rgbOf(look.bg), ...look.photo.tones.map((t) => look.layers.reduce((u, l) => composite(l.colors[0], u), t))];
   const base = rgbOf(look.bg);
   const sum = (c: Rgb) => c[0] + c[1] + c[2];
   const out: Rgb[] = [base];
@@ -387,7 +429,7 @@ function tintAt(c: Rgb, alpha60: number, amount: number, base: Rgb): [number, nu
 // asks for them hundreds of times. Bounded: the builder makes a new background on every change.
 const SAMPLES_KEPT = 64;
 const samplesKept = new Map<string, Rgb[]>();
-const lookKey = (look: BackgroundLook) => `${look.id}|${look.bg}|${look.layers.map((l) => l.colors.join()).join(';')}|${look.pattern?.color ?? ''}`;
+const lookKey = (look: BackgroundLook) => `${look.id}|${look.photo?.uri ?? ''}|${look.bg}|${look.layers.map((l) => l.colors.join()).join(';')}|${look.pattern?.color ?? ''}`;
 function samplesOf(look: BackgroundLook): Rgb[] {
   const key = lookKey(look);
   let s = samplesKept.get(key);
@@ -526,9 +568,14 @@ function sideLook(choice: ReturnType<typeof bubbleChoice>, fallback: { color: st
 export function resolveTheme(appearance: Appearance, reduceTransparency = false): Theme {
   const preset = PRESETS.find((p) => p.id === appearance.theme) ?? PRESETS[0]!;
   const amount = reduceTransparency ? 0 : appearance.glass;
-  const background = backgroundLook(preset, appearance.background, appearance.customGradients);
   const accent = ACCENTS.find((a) => a.id === appearance.accent)?.color ?? preset.accent;
   const accentRgb = rgbOf(accent);
+  const bubbles = (background: BackgroundLook) => ({
+    my: sideLook(bubbleChoice(appearance.myBubble, appearance.myGradient), { color: accent, alpha: fitBubbleAlpha(accent, background, MY_DEFAULT_ALPHA) }, amount, background),
+    edith: sideLook(bubbleChoice(appearance.edithBubble, appearance.edithGradient), { color: EDITH_DEFAULT.color, alpha: EDITH_DEFAULT.alpha }, amount, background),
+  });
+  const situation = JSON.stringify([amount, appearance.myBubble, appearance.myGradient, appearance.edithBubble, appearance.edithGradient]);
+  const { background, my, edith } = resolveBackground(appearance, preset, accent, bubbles, situation);
   const cache = new Map<GlassLevel, GlassStyle>();
   return {
     appearance,
@@ -546,7 +593,57 @@ export function resolveTheme(appearance: Appearance, reduceTransparency = false)
       return g;
     },
     rim: rimStrength(amount),
-    my: sideLook(bubbleChoice(appearance.myBubble, appearance.myGradient), { color: accent, alpha: fitBubbleAlpha(accent, background, MY_DEFAULT_ALPHA) }, amount, background),
-    edith: sideLook(bubbleChoice(appearance.edithBubble, appearance.edithGradient), { color: EDITH_DEFAULT.color, alpha: EDITH_DEFAULT.alpha }, amount, background),
+    my,
+    edith,
   };
 }
+
+/** Text drawn straight on the background (headings, captions, links in the accent). */
+const ON_BACKDROP = [colors.text, colors.textDim];
+const DIM_STEP = 5;
+
+/**
+ * The background and the bubbles on it. A photo is dimmed at least as much as chosen, and more (in
+ * steps of DIM_STEP, up to PHOTO_DIM_LIMIT) until the app's text, the accent and both bubbles' text
+ * read at 4.5:1 over every colour that matters in it (its mean, brightest and darkest patches).
+ */
+function resolveBackground(
+  appearance: Appearance,
+  preset: ThemePreset,
+  accent: string,
+  bubbles: (b: BackgroundLook) => { my: BubbleLook; edith: BubbleLook },
+  situation: string, // what else the bubbles depend on: the glass amount and both sides' choices
+): { background: BackgroundLook; my: BubbleLook; edith: BubbleLook } {
+  const chosen = appearance.background;
+  const photo = isPhotoBackground(chosen) ? appearance.photos.find((p) => p.uri === chosen.uri) : undefined;
+  if (!isPhotoBackground(chosen) || !photo) {
+    // A photo that isn't kept (normalizeAppearance never lets one through): the theme's own.
+    const background = backgroundLook(preset, typeof chosen === 'string' ? chosen : DEFAULT_BACKGROUND, appearance.customGradients);
+    return { background, ...bubbles(background) };
+  }
+  // What's known for this photo with everything but the dim the same (a dim slider's drag resolves
+  // many times): the highest dim seen to fail. Darker only reads better, so the search starts past
+  // it (from the last raised dim), and what's returned is still checked: a warm drag costs one
+  // check per move, not a search.
+  const key = `${photo.uri}|${preset.id}|${accent}|${chosen.tint}|${situation}`;
+  let fail = failsAt.get(key) ?? -1;
+  for (let dim = chosen.dim; ; dim = Math.min(PHOTO_DIM_LIMIT, dim + DIM_STEP)) {
+    if (dim < PHOTO_DIM_LIMIT && dim <= fail) continue;
+    const background = photoLook(preset, photo, chosen, dim);
+    const samples = samplesOf(background);
+    // The text on the background first: it's the cheap check, and the usual reason to dim more.
+    const textReads = dim >= PHOTO_DIM_LIMIT || [...ON_BACKDROP, accent].every((c) => worstOn(c, samples) >= 4.5);
+    const both = textReads ? bubbles(background) : null;
+    if (both && (dim >= PHOTO_DIM_LIMIT || (both.my.worst >= 4.5 && both.edith.worst >= 4.5))) {
+      if (fail >= 0) {
+        if (!failsAt.has(key) && failsAt.size >= FAILS_KEPT) failsAt.clear();
+        failsAt.set(key, fail);
+      }
+      return { background, ...both };
+    }
+    fail = Math.max(fail, dim);
+  }
+}
+
+const FAILS_KEPT = 64; // bounded: each photo, theme, accent, tint, glass amount and bubble choice has its own
+const failsAt = new Map<string, number>(); // the highest dim known to leave text under 4.5:1

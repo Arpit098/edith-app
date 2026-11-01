@@ -8,6 +8,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { createAndroidInstaller } from './adapters/installer/android';
 import { createAndroidGlass, type AndroidGlass } from './adapters/glass/android';
 import { createExpoMediaPicker } from './adapters/media/expo';
+import { createExpoWallpapers } from './adapters/media/expo/wallpapers';
 import { createAndroidRecorder } from './adapters/recorder/android';
 import { createAsyncStorage } from './adapters/storage/async-storage';
 import { createSecureStorage } from './adapters/storage/secure-store';
@@ -40,7 +41,7 @@ function boot() {
   const api = createApi(transport);
   const connection = new Connection(transport, storage, bus);
   const loaded = loadFeatures(features, { bus, ports: { transport, storage, data, installer, ota, recorder, stt, media: createExpoMediaPicker(), status: system?.status, notifier: system?.notifier, push: system?.push, visibility }, api, connection });
-  return { connection, loaded, visibility, glass: createAndroidGlass(), appearance: createAppearanceStore(data) };
+  return { connection, loaded, visibility, glass: createAndroidGlass(), appearance: createAppearanceStore(data, createExpoWallpapers()) };
 }
 
 /**
@@ -57,7 +58,7 @@ function useTheme(appearance: AppearanceStore): { theme: Theme; control: Appeara
     return () => sub?.remove();
   }, []);
   const theme = useMemo(() => resolveTheme(chosen, reduceTransparency), [chosen, reduceTransparency]);
-  const control = useMemo(() => ({ appearance: chosen, set: appearance.set }), [chosen, appearance]);
+  const control = useMemo(() => ({ appearance: chosen, set: appearance.set, photos: appearance.photos }), [chosen, appearance]);
   return { theme, control };
 }
 

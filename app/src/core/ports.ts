@@ -79,6 +79,29 @@ export interface MediaPicker {
   prune(): void;
 }
 
+/** A photo picked as a wallpaper: the app's own downscaled copy, and its colours on a small grid. */
+export interface PickedWallpaper {
+  uri: string;
+  width: number;
+  height: number;
+  /** The photo shrunk to a grid (sRGB 0..1, a patch each), for contrast; empty if it couldn't be read. */
+  grid: readonly (readonly [number, number, number])[];
+}
+
+/**
+ * Wallpaper photos (Settings → Appearance): picked from the gallery (the system's photo picker, no
+ * permission), shrunk to about the screen's size and kept in the app's documents (wallpapers/).
+ */
+export interface WallpaperFiles {
+  /** Null when Arpit cancels. */
+  pick(): Promise<PickedWallpaper | null>;
+  exists(uri: string): boolean;
+  /** Delete a kept wallpaper (only files in wallpapers/; nothing if it's gone). */
+  remove(uri: string): void;
+  /** Delete the wallpapers not in `keep` (a pick the app was closed before saving). */
+  prune(keep: readonly string[]): void;
+}
+
 /** What EDITH's live status shows (Live Alerts on the phone). The wording is the feature's. */
 export interface OngoingStatusView {
   title: string;

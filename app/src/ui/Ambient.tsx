@@ -1,8 +1,10 @@
 // The app's backdrop, from the theme (Settings → Appearance): its background colour with the chosen
 // look on top: the theme's two soft glows (as the app always had), plain, a sweep, a horizon, a faint
-// dot or grid pattern, or a gradient (linear through expo-linear-gradient, radial through
-// react-native-svg; no image assets). Every look stays dark enough for the chat's text
-// (core/theme/themes.ts backdropSamples, tested).
+// dot or grid pattern, a gradient (linear through expo-linear-gradient, radial through
+// react-native-svg; no image assets), or Arpit's own photo under an even dim (and tint). Every look
+// stays dark enough for the chat's text (core/theme/themes.ts backdropSamples, tested); a photo is
+// dimmed further where it needs it. It's all inside the glass's backdrop view, so glass blurs and
+// bends the photo like any other background.
 //
 // Static, drawn once per theme, except the "drift" gradients: their layer, a little larger than the
 // screen, slides slowly back and forth on the native driver (no JS per frame, one view moving). It
@@ -12,11 +14,11 @@
 // saver, Android 11 and older), where nothing samples it.
 
 import { LinearGradient } from 'expo-linear-gradient';
-import { memo, useEffect, useId, useRef } from 'react';
-import { Animated, Dimensions, Easing, StyleSheet, View } from 'react-native';
+import { memo, useCallback, useEffect, useId, useRef, useState } from 'react';
+import { Animated, Dimensions, Easing, Image, StyleSheet, View, type LayoutChangeEvent } from 'react-native';
 import Svg, { Circle, Defs, Path, Pattern, RadialGradient, Rect, Stop } from 'react-native-svg';
 
-import { glassOn, hexOf, rgbaOf, rgbOf, useGlass, useTheme, type BackgroundLayer, type BackgroundLook, type GlassMode } from '../core/theme';
+import { coverRect, glassOn, hexOf, rgbaOf, rgbOf, useGlass, useTheme, type BackgroundLayer, type BackgroundLook, type GlassMode, type PhotoLook } from '../core/theme';
 
 const CELL = { dots: 22, grid: 28 } as const; // pattern spacing, dp
 const DRIFT_MS = 14_000; // one way; a full drift is twice this
@@ -30,6 +32,7 @@ export const Ambient = memo(function Ambient({ look }: { look?: BackgroundLook }
   const drift = bg.drift && !look && driftAllowed(glass.mode, theme.glass, glass.reduceMotion);
   return (
     <View style={[StyleSheet.absoluteFill, { backgroundColor: bg.bg }]} pointerEvents="none" testID={`ambient-${bg.id}`}>
+      {bg.photo ? <PhotoLayer key={bg.photo.uri} photo={bg.photo} thumb={!!look} /> : null}
       {bg.layers.map((l, i) => (drift && i === 0 ? <Drifting key={i} layer={l} /> : <Layer key={i} layer={l} />))}
       {bg.pattern ? <PatternLayer kind={bg.pattern.kind} color={bg.pattern.color} /> : null}
     </View>
@@ -39,6 +42,38 @@ export const Ambient = memo(function Ambient({ look }: { look?: BackgroundLook }
 /** Whether a drifting background may move: no "Remove animations", and no real glass sampling it. */
 export function driftAllowed(mode: GlassMode, amount: number, reduceMotion: boolean): boolean {
   return !reduceMotion && (mode === 'flat' || !glassOn(amount));
+}
+
+/**
+ * A photo, covering the box with the cut axis at its focus: one Image, blurred once when it's decoded
+ * (blurRadius), never per frame. A thumbnail decodes small (resizeMethod) with its blur scaled to its
+ * size, so it looks like the screen. A file that can't be read draws nothing: the dimmed mean shows.
+ */
+function PhotoLayer({ photo, thumb }: { photo: PhotoLook; thumb: boolean }) {
+  const [box, setBox] = useState<{ w: number; h: number } | null>(null);
+  const [broken, setBroken] = useState(false);
+  const onLayout = useCallback((e: LayoutChangeEvent) => {
+    const { width: w, height: h } = e.nativeEvent.layout;
+    setBox((b) => (b && b.w === w && b.h === h ? b : { w, h }));
+  }, []);
+  const rect = box ? coverRect(box.w, box.h, photo.width, photo.height, photo.focus) : null;
+  const blur = thumb && box ? (photo.blur * box.w) / Dimensions.get('window').width : photo.blur;
+  return (
+    <View style={StyleSheet.absoluteFill} onLayout={onLayout} testID="ambient-photo-layer">
+      {rect && !broken ? (
+        <Image
+          source={{ uri: photo.uri }}
+          style={[styles.photo, rect]}
+          resizeMode="cover"
+          resizeMethod={thumb ? 'resize' : 'auto'}
+          blurRadius={blur}
+          fadeDuration={0}
+          onError={() => setBroken(true)}
+          testID="ambient-photo-image"
+        />
+      ) : null}
+    </View>
+  );
 }
 
 function Layer({ layer: l }: { layer: BackgroundLayer }) {
@@ -104,6 +139,7 @@ function PatternLayer({ kind, color }: { kind: 'dots' | 'grid'; color: string })
 }
 
 const styles = StyleSheet.create({
+  photo: { position: 'absolute' },
   // Larger than the screen by more than the drift's reach, so no edge ever shows.
   oversized: { position: 'absolute', top: '-20%', left: '-20%', width: '140%', height: '140%' },
 });
