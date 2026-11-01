@@ -2,7 +2,7 @@
 // flows (connect gate, live events, approvals banner, tools grid, back button) work end to end.
 
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import { BackHandler, Text } from 'react-native';
+import { BackHandler, StyleSheet, Text } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { localEvent } from '../../core/events';
@@ -83,6 +83,9 @@ describe('Shell', () => {
     // The running tool is the Work card's live step, in plain words: no "$" prefix.
     expect(texts(r)).toContain('df -h…');
     expect(texts(r)).not.toContain('$ df -h');
+    // No "Running …" line above the composer repeating it; the chip still says so to TalkBack.
+    expect(texts(r)).not.toContain('Running');
+    expect(r.root.findAll((n) => typeof n.props.accessibilityLabel === 'string' && n.props.accessibilityLabel.includes('EDITH: Waiting for approval'))).not.toHaveLength(0);
     expect(texts(r)).toContain('Approve Bash?');
 
     await act(async () => {
@@ -112,6 +115,21 @@ describe('Shell', () => {
     await press('Tools');
     await press('Commands');
     expect(texts(r)).toContain('/today');
+
+    // The title never runs under the back arrow and chip (Arpit's screenshot at 360 dp: the chip
+    // covered "Co"): with no room to centre it, it starts after the chip and is cut with "…".
+    const byId = (id: string) => r.root.findAll((n) => n.props.testID === id && typeof n.props.onLayout === 'function')[0]!;
+    const layout = async (id: string, l: { x: number; width: number }) => act(async () => byId(id).props.onLayout({ nativeEvent: { layout: { y: 0, height: 56, ...l } } }));
+    const title = () => StyleSheet.flatten(r.root.findAll((n) => n.type === Text && n.props.accessibilityRole === 'header' && n.props.children === 'Commands')[0]!.props.style);
+    expect(title().opacity).toBe(0); // not placed until measured
+    await layout('header-row', { x: 0, width: 360 });
+    await layout('header-free', { x: 180, width: 116 });
+    await layout('header-title-measure', { x: 0, width: 130 });
+    expect(title()).toMatchObject({ left: 180, right: 64, textAlign: 'left' });
+    expect(title().opacity).toBeUndefined();
+    // Room to centre it (no timer in the chip): centred on the row.
+    await layout('header-free', { x: 100, width: 196 });
+    expect(title()).toMatchObject({ left: 100, right: 100, textAlign: 'center' });
 
     const handler = shellBack;
     let handled = false;

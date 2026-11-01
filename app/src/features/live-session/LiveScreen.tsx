@@ -18,7 +18,6 @@ import { DEFAULT_WORK_DETAIL, groupRows, type Row, type WorkDetail, type WorkGro
 import { needsArgs, sendStatus, summarize, tickOf, type Item, type LiveModel, type LiveState, type SendStatus, type Tick } from './model';
 import { findQuoted, quoteOf, type Quote } from './reply';
 import { backgroundStopPrompt } from './status';
-import { WorkingRow } from './WorkingRow';
 import { AttachmentBar } from './AttachmentBar';
 import { CLOSE_LABEL, ComposerMenu, MENU_LABEL } from './ComposerMenu';
 import type { AttachmentsModel, DraftsState } from './attachments';
@@ -234,7 +233,8 @@ export function LiveScreen({ model, voice, attach, menu, reply, workDetail }: Li
             onEndReached={loadOlder} // the "end" of an inverted list is the top: older history
             onEndReachedThreshold={0.5}
             ListFooterComponent={<OlderSpinner model={model} />}
-            ListHeaderComponent={<WorkingRow model={model} />} // an inverted list's header sits at the bottom
+            // No "Running …" line above the composer (Arpit, 1 Nov): the Work card shows the live step
+            // and the header chip shows EDITH's state, so it only repeated them.
           />
           </WorkDetailContext.Provider>
           </GlassFadeContext.Provider>

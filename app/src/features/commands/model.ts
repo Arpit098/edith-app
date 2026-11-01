@@ -4,9 +4,12 @@
 import type { Api, Command, Reply } from '../../core/api';
 import type { ButtonRows, EventBus } from '../../core/events';
 import { buttonRows, str } from '../../core/guards';
+import type { KeyValueStore } from '../../core/ports';
 import { createStore, type Store } from '../../core/store';
 
 const MAX_OUTPUT = 100;
+export const RECENT_KEY = 'commands.recent';
+const MAX_RECENT = 3;
 // Commands that make no sense from this screen: the app has its own UI for them.
 const HIDDEN = new Set(['start', 'help', 'sessions', 'resume', 'name', 'new', 'stop']);
 
@@ -25,6 +28,7 @@ export interface CommandsState {
   running: string | null; // the command waiting for its answer
   output: OutputEntry[]; // newest first
   seq: number;
+  recent: string[]; // the last commands run from here, newest first (kept on the phone only)
 }
 
 export interface CommandsModel {
@@ -38,9 +42,34 @@ export interface CommandsModel {
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-export function createCommandsModel(bus: EventBus, api: Api): CommandsModel {
-  const store = createStore<CommandsState>({ commands: null, loading: false, error: null, running: null, output: [], seq: 0 });
+/** The saved recents, or none if they're missing or unreadable. */
+function parseRecent(raw: string | null): string[] {
+  try {
+    const v: unknown = raw ? JSON.parse(raw) : [];
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string').slice(0, MAX_RECENT) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function createCommandsModel(bus: EventBus, api: Api, storage?: KeyValueStore): CommandsModel {
+  const store = createStore<CommandsState>({ commands: null, loading: false, error: null, running: null, output: [], seq: 0, recent: [] });
   const refs = new Map<string, string>(); // our request refs -> command name, for later replies
+
+  // Recents: read once at start; a run before the read lands wins over what was saved.
+  let touched = false;
+  if (storage) {
+    void storage.get(RECENT_KEY).then(
+      (raw) => !touched && store.set((s) => ({ ...s, recent: parseRecent(raw) })),
+      () => {}, // no recents is fine
+    );
+  }
+  function used(name: string) {
+    touched = true;
+    const recent = [name, ...store.get().recent.filter((n) => n !== name)].slice(0, MAX_RECENT);
+    store.set((s) => ({ ...s, recent }));
+    storage?.set(RECENT_KEY, JSON.stringify(recent)).catch(() => {}); // best effort: only a convenience
+  }
 
   function add(command: string, replies: Reply[]) {
     if (!replies.length) return;
@@ -91,6 +120,7 @@ export function createCommandsModel(bus: EventBus, api: Api): CommandsModel {
       try {
         const r = await api.run(name, args.trim());
         remember(r.ref, name);
+        used(name);
         add(name, r.replies);
         return null;
       } catch (e) {

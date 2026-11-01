@@ -1,4 +1,4 @@
-// A sent message never vanishes: states, side lanes, ticks, reactions, the working row and the outbox.
+// A sent message never vanishes: states, side lanes, ticks, reactions, the working state and the outbox.
 
 import { ApiError } from '../../../core/api';
 import { localEvent } from '../../../core/events';
@@ -13,12 +13,17 @@ import {
   sendStatus,
   stripAppHeader,
   tickOf,
-  workingLabel,
   type Item,
   type LiveState,
 } from '../model';
+import { barSummary } from '../status';
 
 type User = Extract<Item, { kind: 'user' }>;
+// What the header chip says EDITH is doing (the Work card shows the step itself).
+const working = (s: LiveState) => {
+  const b = barSummary(s);
+  return b.state === 'tool' ? `${b.label} · ${b.detail}` : b.label;
+};
 const users = (s: LiveState) => s.items.filter((x): x is User => x.kind === 'user');
 const mine = (s: LiveState) => users(s).find((x) => x.local)!;
 const STATUS = { main: 'busy', queued: 0, runs: [{ ref: 'r-main', lane: 'main', seconds: 30, step: '$ npm test' }], tmux: 'running', conversation: true, session: null };
@@ -179,7 +184,7 @@ describe('message states', () => {
   });
 });
 
-describe('ticks, reactions and the working row', () => {
+describe('ticks, reactions and the working state', () => {
   it('ticks: clock, then sent, then delivered on message.delivered', async () => {
     const { ctx, m } = setup();
     ctx.transport.on('POST /v1/messages', { ref: 'app:5', lane: 'queued' });
@@ -199,24 +204,24 @@ describe('ticks, reactions and the working row', () => {
     m.dispose();
   });
 
-  it('working row follows the contract mapping: thinking, tool, approval, idle', () => {
+  it('working state follows the contract mapping: thinking, tool, approval, idle', () => {
     let s = reduce(initialLive, ev('turn.started', { ref: 'r', lane: 'main' }));
-    expect(workingLabel(s)).toBe('Thinking');
+    expect(working(s)).toBe('Thinking');
     s = reduce(s, ev('turn.progress', { ref: 'r', lane: 'main', step: '$ df -h' }));
-    expect(workingLabel(s)).toBe('Running $ df -h');
+    expect(working(s)).toBe('Running Bash · $ df -h');
     s = reduce(s, ev('tool.result', { id: 't1', name: 'Bash', ok: true, summary: '42%' }));
-    expect(workingLabel(s)).toBe('Thinking'); // back to thinking after each result
-    s = reduce(s, ev('tool.call', { id: 't2', name: 'Read', summary: 'Read a.ts' }));
-    expect(workingLabel(s)).toBe('Running Read a.ts');
+    expect(working(s)).toBe('Thinking'); // back to thinking after each result
+    s = reduce(s, ev('tool.call', { id: 't2', name: 'Read', summary: 'Read: a.ts' }));
+    expect(working(s)).toBe('Running Read · Read: a.ts');
     s = reduce(s, ev('permission.request', { id: 'p1', tool: 'Bash', detail: 'rm' }));
-    expect(workingLabel(s)).toBe('Waiting for your approval');
+    expect(working(s)).toBe('Waiting for approval');
     s = reduce(s, ev('permission.resolved', { id: 'p1' }));
-    expect(workingLabel(s)).toBe('Running Read a.ts');
+    expect(working(s)).toBe('Running Read · Read: a.ts');
     s = reduce(s, ev('turn.done', { ref: 'r' }));
-    expect(workingLabel(s)).toBeNull();
+    expect(working(s)).toBe('Idle');
     // A turn whose end was missed is cleared once the lanes are idle.
     s = reduce(reduce(s, ev('turn.started', { ref: 'lost' })), ev('lane.status', { main: 'idle', side: 0, queued: 0 }));
-    expect(workingLabel(s)).toBeNull();
+    expect(working(s)).toBe('Idle');
   });
 });
 
@@ -453,7 +458,7 @@ describe('a /command typed in the chat (the bridge runs it, like on Telegram)', 
     expect(tickOf(mine(s), s.turns)).toBe('delivered');
     expect(sendStatus(mine(s), s.turns)).toBe('answered'); // not "Queued: EDITH is busy"
     expect(systems(s)).toEqual(['🗜 Compacting the conversation…', '✅ Compacted.']);
-    expect(workingLabel(s)).toBeNull(); // no turn: nothing "working"
+    expect(working(s)).toBe('Idle'); // no turn: nothing "working"
 
     // History (the message log) rebuilds the same thing.
     const events = [

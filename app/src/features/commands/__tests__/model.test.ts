@@ -1,6 +1,6 @@
 import { localEvent } from '../../../core/events';
-import { ev, fakeContext, flush } from '../../../testing/fakes';
-import { createCommandsModel } from '../model';
+import { ev, fakeContext, flush, MemoryStorage } from '../../../testing/fakes';
+import { createCommandsModel, RECENT_KEY } from '../model';
 
 const COMMANDS = {
   commands: [
@@ -56,5 +56,35 @@ describe('commands model', () => {
       throw new Error('timed out');
     });
     expect(await m.run('today')).toBe('/today failed: timed out');
+  });
+
+  it('remembers the last 3 commands run, on the phone, and restores them', async () => {
+    const ctx = fakeContext();
+    const data = new MemoryStorage();
+    await data.set(RECENT_KEY, JSON.stringify(['mail', 7, 'brief']));
+    const m = createCommandsModel(ctx.bus, ctx.api, data);
+    await flush();
+    expect(m.store.get().recent).toEqual(['mail', 'brief']); // junk dropped
+    for (const name of ['today', 'queue', 'mail', 'today']) {
+      ctx.transport.on(`POST /v1/commands/${name}`, { ref: '', replies: [] });
+      await m.run(name);
+    }
+    ctx.transport.on('POST /v1/commands/brief', () => {
+      throw new Error('down');
+    });
+    await m.run('brief'); // a failed run isn't "used"
+    expect(m.store.get().recent).toEqual(['today', 'mail', 'queue']);
+    expect(JSON.parse((await data.get(RECENT_KEY))!)).toEqual(['today', 'mail', 'queue']);
+
+    const again = createCommandsModel(ctx.bus, ctx.api, data);
+    await flush();
+    expect(again.store.get().recent).toEqual(['today', 'mail', 'queue']);
+    // Unreadable storage: just no recents.
+    const broken = createCommandsModel(ctx.bus, ctx.api, { get: () => Promise.resolve('{nope'), set: () => Promise.reject(new Error('full')), remove: async () => {} });
+    await flush();
+    expect(broken.store.get().recent).toEqual([]);
+    ctx.transport.on('POST /v1/commands/today', { ref: '', replies: [] });
+    expect(await broken.run('today')).toBeNull(); // a failed save doesn't fail the run
+    [m, again, broken].forEach((x) => x.dispose());
   });
 });
