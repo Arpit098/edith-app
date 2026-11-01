@@ -32,6 +32,7 @@ import {
   type NativeGlassProps,
   type Theme,
 } from '../../core/theme';
+import { createDraft } from '../../features/appearance/draft';
 import { Preview } from '../../features/appearance/Preview';
 import { ItemView } from '../../features/live-session/ItemView';
 import { BubbleLens, bubbleCorners, WallpaperContext } from '../Glass';
@@ -186,17 +187,20 @@ describe('where bubbles are liquid', () => {
     expect(native(ringed)[0]!.cornerRadius).toBe(radius.l - 1); // the glass inside the ring
   });
 
-  it('the Appearance preview’s bubbles are liquid over the preview’s own wallpaper, like the chat', () => {
+  it('the Appearance preview’s two newest bubbles are liquid over the preview’s own wallpaper, like the chat; the older ones flat', () => {
     const t = at(60);
     // Native views get tag 7 here; the screen around is a chat whose wallpaper is 42.
     jest.spyOn(require('react-native'), 'findNodeHandle').mockReturnValue(7);
-    const r = render(<Preview theme={t} />, t, 'shader', 42);
+    const r = render(<Preview draft={createDraft()} scene={480} />, t, 'shader', 42); // no draft: the theme as given
     const tinted = (look: BubbleLook) => native(r).filter((n) => JSON.stringify(n.tint) === JSON.stringify(rgbaOf(look.fill)) && n.specular === 0 && n.cornerRadius === radius.l);
+    // One lens a side (the newest), so the preview adds 2 to the chat's own, under LIQUID_CAP.
     expect(tinted(t.edith).map((n) => n.backdrop)).toEqual([7]); // the preview's own wallpaper, never the chat's
     expect(tinted(t.my).map((n) => n.backdrop)).toEqual([7]);
-    // Each preview bubble hides its edge for the rim, as in the chat.
+    // A liquid bubble hides its edge for the rim, as in the chat; an older, flat one keeps it.
     const edge = (id: string) => StyleSheet.flatten(r.root.findAll((x) => x.props.testID === id && x.props.style)[0]!.props.style).borderTopColor;
-    expect([edge('preview-edith'), edge('preview-mine')]).toEqual(['transparent', 'transparent']);
+    expect([edge('preview-edith-new'), edge('preview-mine-new')]).toEqual(['transparent', 'transparent']);
+    expect(edge('preview-edith')).not.toBe('transparent');
+    expect(edge('preview-mine')).not.toBe('transparent');
     act(() => r.unmount());
   });
 });

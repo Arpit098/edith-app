@@ -4,7 +4,7 @@
 // the glass slider previews live while dragged and applies on release.
 
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
-import { Alert, StyleSheet, Text } from 'react-native';
+import { AccessibilityInfo, Alert, BackHandler, StyleSheet, Text } from 'react-native';
 import { useMemo } from 'react';
 
 import { createAppearanceStore, type AppearanceStore } from '../../../core/appearance';
@@ -61,9 +61,11 @@ function mount(appearance: AppearanceStore, reduceMotion = true, mode: GlassMode
 const pressables = (r: ReactTestRenderer, label: string) => r.root.findAll((n) => n.props.accessibilityLabel === label && typeof n.props.onPress === 'function');
 const byLabel = (r: ReactTestRenderer, label: string) => pressables(r, label)[0]!;
 const tap = (r: ReactTestRenderer, label: string) => act(() => byLabel(r, label).props.onPress());
-/** Open a section by its header ("Bubbles: Default · Default"). */
-const section = (r: ReactTestRenderer, title: string) => r.root.find((n) => typeof n.props.accessibilityLabel === 'string' && n.props.accessibilityLabel.startsWith(`${title}: `) && typeof n.props.onPress === 'function');
-const open = (r: ReactTestRenderer, title: string) => act(() => section(r, title).props.onPress());
+/** A tool's button in the toolbar ("Bubbles"), and opening its controls in the sheet. */
+const tool = (r: ReactTestRenderer, title: string) => r.root.find((n) => n.props.testID === `tool-${title.toLowerCase()}` && typeof n.props.onPress === 'function');
+const open = (r: ReactTestRenderer, title: string) => act(() => tool(r, title).props.onPress());
+/** Bubbles: show one side's choices (the My / EDITH switch). */
+const side = (r: ReactTestRenderer, who: 'My messages' | 'EDITH’s messages') => tap(r, who);
 const slider = (r: ReactTestRenderer, label: string) => r.root.find((n) => n.props.label === label && typeof n.props.onChange === 'function' && n.props.value !== undefined);
 const styleOf = (n: ReactTestInstance) => StyleSheet.flatten(n.props.style);
 const previewNode = (r: ReactTestRenderer, side: 'mine' | 'edith') => r.root.findAll((n) => n.props.testID === `preview-${side}` && n.props.style)[0]!;
@@ -78,27 +80,30 @@ const previewAmbient = (r: ReactTestRenderer) => r.root.find((n) => n.props.test
 afterEach(() => jest.restoreAllMocks());
 
 describe('Appearance', () => {
-  it('opens one section at a time, Theme first, each header saying the current choice', () => {
+  it('the toolbar lists the tools most used first; a tool’s controls open in the sheet, one tool at a time', () => {
     const a = createAppearanceStore(undefined);
     const r = mount(a);
-    expect(section(r, 'Theme').props.accessibilityState).toEqual({ expanded: true });
-    expect(pressables(r, 'Dots background')).toHaveLength(0); // Background is closed
-    expect(section(r, 'Background').props.accessibilityLabel).toBe('Background: Glow');
-    expect(section(r, 'Bubbles').props.accessibilityLabel).toBe('Bubbles: Default · Default');
-    expect(section(r, 'Accent').props.accessibilityLabel).toBe('Accent: Theme’s');
+    const tools = r.root.findAll((n) => typeof n.props.testID === 'string' && n.props.testID.startsWith('tool-') && typeof n.props.onPress === 'function');
+    expect(tools.map((t) => t.props.accessibilityLabel)).toEqual(['Theme', 'Background', 'Photo', 'Bubbles', 'Accent', 'Glass', 'Reset']);
+    expect(tools.every((t) => t.props.accessibilityRole === 'button')).toBe(true);
+    expect(tools[0]!.props.accessibilityHint).toBe('A whole look at once: background, accent and bubbles.'); // the tool's own hint
+    expect(pressables(r, 'Ocean theme')).toHaveLength(0); // the sheet starts closed: the whole preview shows
+    open(r, 'Theme');
+    expect(tool(r, 'Theme').props.accessibilityState).toEqual({ expanded: true });
+    expect(pressables(r, 'Ocean theme')).toHaveLength(1);
     open(r, 'Background');
-    expect(section(r, 'Background').props.accessibilityState).toEqual({ expanded: true });
-    expect(section(r, 'Theme').props.accessibilityState).toEqual({ expanded: false });
+    expect(tool(r, 'Theme').props.accessibilityState).toEqual({ expanded: false });
     expect(pressables(r, 'Ocean theme')).toHaveLength(0);
     expect(pressables(r, 'Dots background')).toHaveLength(1);
-    open(r, 'Background');
-    expect(pressables(r, 'Dots background')).toHaveLength(0); // closed again
+    open(r, 'Background'); // its own button closes it again
+    expect(tool(r, 'Background').props.accessibilityState).toEqual({ expanded: false });
   });
 
   it('a theme applies at once: the preview, the chat and the summary follow', () => {
     const a = createAppearanceStore(undefined);
     const r = mount(a);
     expect(preview(r)).toBe('Preview: Midnight, glass 60%');
+    open(r, 'Theme');
     expect(byLabel(r, 'Midnight theme').props.accessibilityState).toEqual({ selected: true });
     tap(r, 'Ocean theme');
     expect(a.store.get().theme).toBe('ocean');
@@ -114,6 +119,8 @@ describe('Appearance', () => {
     const r = mount(a);
     open(r, 'Bubbles');
     tap(r, 'Teal for my messages');
+    expect(pressables(r, 'Purple for EDITH’s messages')).toHaveLength(0); // one side at a time
+    side(r, 'EDITH’s messages');
     tap(r, 'Purple for EDITH’s messages');
     expect(a.store.get()).toMatchObject({ myBubble: 'teal', edithBubble: 'purple' });
     const t = resolveTheme(a.store.get());
@@ -122,7 +129,7 @@ describe('Appearance', () => {
     expect(mine.slice(0, 3).map((v) => Math.round(v * 255))).toEqual(teal.slice(0, 3).map((v) => Math.round(v * 255)));
     expect(previewBubble(r, 'edith').backgroundColor).toBe(t.edith.fill);
     expect(textColour(r, 'Nice, ship it')).toBe(t.my.ink);
-    expect(section(r, 'Bubbles').props.accessibilityLabel).toBe('Bubbles: Teal · Purple');
+    side(r, 'My messages');
     tap(r, 'Theme default for my messages');
     expect(a.store.get().myBubble).toBeNull();
   });
@@ -144,6 +151,7 @@ describe('Appearance', () => {
     const a = createAppearanceStore(undefined);
     const r = mount(a);
     open(r, 'Bubbles');
+    side(r, 'EDITH’s messages');
     tap(r, 'Custom gradient for EDITH’s messages');
     expect(has(r, 'builder-bubble')).toBe(true);
     expect(pressables(r, 'Add a colour stop')).toHaveLength(0); // a bubble has 2 stops
@@ -176,7 +184,6 @@ describe('Appearance', () => {
     tap(r, 'Lavender mist background');
     expect(previewAmbient(r)).toBe('ambient-lavender');
     expect(r.root.find((n) => n.props.testID === 'appearance-preview').findAll((n) => n.props.testID === 'ambient-radial').length).toBeGreaterThan(0);
-    expect(section(r, 'Background').props.accessibilityLabel).toBe('Background: Lavender mist');
   });
 
   it('a drifting gradient drifts in the preview, and holds still with "Remove animations"', () => {
@@ -287,7 +294,6 @@ describe('Appearance', () => {
     const t = resolveTheme(a.store.get());
     expect(t.accent).toBe(ACCENTS.find((x) => x.id === 'pink')!.color);
     expect(previewBubble(r, 'mine').backgroundColor).toBe(t.my.fill); // my default bubble follows the accent
-    expect(section(r, 'Accent').props.accessibilityLabel).toBe('Accent: Pink');
     tap(r, 'Theme’s accent');
     expect(a.store.get().accent).toBeNull();
   });
@@ -349,7 +355,7 @@ describe('Background → your photos', () => {
     files.grid = [[0.2, 0.25, 0.3]]; // a dark photo: shown as chosen
     const a = createAppearanceStore(undefined, files);
     const r = mount(a);
-    open(r, 'Background');
+    open(r, 'Photo');
     await add(r);
     expect(files.pick).toHaveBeenCalledTimes(1);
     const bg = a.store.get().background as PhotoBackground;
@@ -357,11 +363,12 @@ describe('Background → your photos', () => {
     expect(previewAmbient(r)).toBe('ambient-photo');
     expect(has(r, 'ambient-photo')).toBe(true);
     expect(previewDim(r)).toBe(DEFAULT_PHOTO_ADJUST.dim);
-    expect(section(r, 'Background').props.accessibilityLabel).toBe('Background: Photo');
     expect(byLabel(r, 'Photo 1 background').props.accessibilityState).toEqual({ selected: true });
     expect(appearanceSummary(a.store.get())).toBe('Midnight · Photo · Glass 60%');
-    // Another background, then back to the photo by its tile.
+    // Another background (the Background tool), then back to the photo by its tile.
+    open(r, 'Background');
     tap(r, 'Dots background');
+    open(r, 'Photo');
     expect(has(r, 'photo-adjust')).toBe(false);
     tap(r, 'Photo 1 background');
     expect(a.store.get().background).toMatchObject({ kind: 'photo', uri: bg.uri });
@@ -372,7 +379,7 @@ describe('Background → your photos', () => {
     files.grid = [[0.1, 0.1, 0.1]];
     const a = createAppearanceStore(undefined, files);
     const r = mount(a);
-    open(r, 'Background');
+    open(r, 'Photo');
     await add(r);
     act(() => slider(r, 'Dim').props.onMove(0.75)); // 60%
     expect(previewDim(r)).toBe(60);
@@ -397,7 +404,7 @@ describe('Background → your photos', () => {
     const files = wallpapers(); // white
     const a = createAppearanceStore(undefined, files);
     const r = mount(a);
-    open(r, 'Background');
+    open(r, 'Photo');
     await add(r);
     const drawn = resolveTheme(a.store.get()).background.photo!;
     expect(drawn.raised).toBe(true);
@@ -409,7 +416,7 @@ describe('Background → your photos', () => {
     const files = wallpapers();
     const a = createAppearanceStore(undefined, files);
     const r = mount(a);
-    open(r, 'Background');
+    open(r, 'Photo');
     for (let i = 0; i < MAX_PHOTOS + 1; i++) await add(r);
     expect(a.store.get().photos).toHaveLength(MAX_PHOTOS);
     expect(files.remove).toHaveBeenCalledWith('file:///docs/wallpapers/1.jpg'); // the oldest's file
@@ -430,7 +437,7 @@ describe('Background → your photos', () => {
     const files = wallpapers();
     const a = createAppearanceStore(undefined, files);
     const r = mount(a);
-    open(r, 'Background');
+    open(r, 'Photo');
     files.cancel = true;
     await add(r);
     expect(a.store.get().background).toBe('glow');
@@ -440,7 +447,110 @@ describe('Background → your photos', () => {
     await add(r);
     expect(ask.mock.calls[0]![0]).toBe('Couldn’t use that photo');
     const none = mount(createAppearanceStore(undefined));
-    open(none, 'Background');
+    open(none, 'Photo');
     expect(pressables(none, 'Your photo: pick one from the gallery')).toHaveLength(0);
+  });
+});
+
+describe('the editor: toolbar, sheet and back', () => {
+  /** BackHandler as Android runs it: the newest listener first, until one returns true. */
+  function fakeBack() {
+    const listeners: (() => boolean)[] = [];
+    jest.spyOn(BackHandler, 'addEventListener').mockImplementation((_e, handler) => {
+      listeners.push(handler as () => boolean);
+      return { remove: () => void listeners.splice(listeners.indexOf(handler as () => boolean), 1) };
+    });
+    return () => [...listeners].reverse().some((l) => l());
+  }
+  const sheetHidden = (r: ReactTestRenderer) => r.root.find((n) => n.props.testID === 'appearance-sheet' && n.props.importantForAccessibility !== undefined).props.accessibilityElementsHidden as boolean;
+
+  it('toolbar → sheet; the chevron collapses it to the toolbar and the toggle brings the same tool back', () => {
+    const r = mount(createAppearanceStore(undefined));
+    expect(sheetHidden(r)).toBe(true);
+    const announce = jest.spyOn(AccessibilityInfo, 'announceForAccessibility');
+    open(r, 'Accent');
+    expect(sheetHidden(r)).toBe(false);
+    expect(r.root.findAll((n) => n.props.accessibilityRole === 'header' && n.props.children === 'Accent')).not.toHaveLength(0);
+    expect(announce).toHaveBeenLastCalledWith('Accent controls open');
+    tap(r, 'Close Accent controls');
+    expect(sheetHidden(r)).toBe(true);
+    expect(announce).toHaveBeenLastCalledWith('Controls closed');
+    expect(byLabel(r, 'Show the controls').props.accessibilityState).toEqual({ expanded: false });
+    tap(r, 'Show the controls');
+    expect(sheetHidden(r)).toBe(false);
+    expect(tool(r, 'Accent').props.accessibilityState).toEqual({ expanded: true }); // the same tool
+    tap(r, 'Close the controls'); // the toolbar's toggle closes it too
+    expect(sheetHidden(r)).toBe(true);
+  });
+
+  it('Android back closes the sheet first, then leaves the page', () => {
+    const back = fakeBack();
+    const r = mount(createAppearanceStore(undefined));
+    open(r, 'Glass');
+    let handled = false;
+    act(() => {
+      handled = back();
+    });
+    expect(handled).toBe(true);
+    expect(sheetHidden(r)).toBe(true);
+    act(() => {
+      handled = back();
+    });
+    expect(handled).toBe(false); // the page's own back takes it: Settings leaves the page
+  });
+
+  it('a drag shows in the preview only; the store, and the app, change once on release', () => {
+    const a = createAppearanceStore(undefined);
+    const r = mount(a);
+    const writes = jest.fn();
+    a.store.subscribe(writes);
+    open(r, 'Glass');
+    const glass = () => r.root.find((n) => n.props.label === 'Glass' && typeof n.props.onMove === 'function');
+    act(() => glass().props.onMove(0.31)); // 30% (rounded to the step)
+    act(() => glass().props.onMove(0.3)); // the same 30%
+    act(() => glass().props.onMove(0.2));
+    expect(preview(r)).toBe('Preview: Midnight, glass 20%');
+    expect(r.root.findAllByType(Text).some((t) => [t.props.children].flat().join('') === '20%')).toBe(true); // the value label follows
+    expect(writes).not.toHaveBeenCalled();
+    act(() => glass().props.onChange(0.2));
+    expect(writes).toHaveBeenCalledTimes(1);
+    expect(a.store.get().glass).toBe(20);
+    expect(preview(r)).toBe('Preview: Midnight, glass 20%');
+  });
+
+  it('the preview keeps its glass and backdrop views through a change: new props, never a remount', () => {
+    const a = createAppearanceStore(undefined);
+    const r = mount(a, true, 'shader');
+    const frame = () => r.root.find((n) => n.props.testID === 'appearance-preview' && n.props.accessible);
+    const before = frame().findAll((n) => typeof n.type === 'string').length;
+    open(r, 'Glass');
+    const glass = () => r.root.find((n) => n.props.label === 'Glass' && typeof n.props.onMove === 'function');
+    act(() => glass().props.onMove(0.8));
+    act(() => glass().props.onChange(0.8));
+    open(r, 'Theme');
+    tap(r, 'Ocean theme');
+    expect(frame().findAll((n) => typeof n.type === 'string').length).toBe(before); // the same tree, other props
+  });
+
+  it('each tool resets to the theme default; Reset all asks first and keeps your photos and gradients', () => {
+    const a = createAppearanceStore(undefined);
+    a.set({ accent: 'pink', glass: 30, theme: 'ocean', myBubble: 'teal', customGradients: [{ id: 'custom-1', stops: ['#FF0000', '#0000FF'], angle: 0, kind: 'linear', intensity: 50 }], background: 'custom-1' });
+    const r = mount(a);
+    open(r, 'Accent');
+    tap(r, 'Reset accent to the theme default');
+    expect(a.store.get().accent).toBeNull();
+    expect(byLabel(r, 'Reset accent to the theme default').props.disabled).toBe(true); // nothing left to reset
+    open(r, 'Reset');
+    expect(r.root.findAllByType(Text).some((t) => t.props.children === 'Changed from the default: theme, background, bubbles, glass.')).toBe(true);
+    const ask = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    tap(r, 'Reset all');
+    expect(ask.mock.calls[0]![0]).toBe('Reset the whole look?');
+    const buttons = ask.mock.calls[0]![2]!;
+    act(() => buttons.find((b) => b.style === 'cancel')!.onPress?.());
+    expect(a.store.get().glass).toBe(30); // cancelled: nothing changed
+    act(() => buttons.find((b) => b.style === 'destructive')!.onPress!());
+    expect(a.store.get()).toMatchObject({ theme: 'midnight', accent: null, glass: 60, myBubble: null, edithBubble: null, background: 'glow' });
+    expect(a.store.get().customGradients).toHaveLength(1); // kept, to pick again
+    expect(r.root.findAllByType(Text).some((t) => t.props.children === 'Everything is at its default.')).toBe(true);
   });
 });

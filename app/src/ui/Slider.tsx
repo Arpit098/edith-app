@@ -2,7 +2,7 @@
 // in steps. While dragging it moves on its own and reports each position to `onMove` (if given, e.g.
 // to preview the glass amount live); `onChange` runs once, on release. In the theme's accent.
 
-import { memo, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { PanResponder, StyleSheet, View, type LayoutChangeEvent } from 'react-native';
 
 import { colors, space, themedStyles } from '../core/theme';
@@ -51,6 +51,16 @@ export const Slider = memo(function Slider({ value, onChange, onMove, step = 0.0
       onPanResponderTerminationRequest: () => false,
     });
   }, []);
+
+  // Taken away mid-drag (its page closed, its tool switched): the value reached still counts.
+  useEffect(
+    () => () => {
+      const v = geometry.current.drag;
+      geometry.current.drag = null;
+      if (v !== null) geometry.current.onChange(v);
+    },
+    [],
+  );
 
   const shown = drag ?? value;
   const left = Math.max(0, width - THUMB) * shown;

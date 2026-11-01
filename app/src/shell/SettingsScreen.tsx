@@ -2,12 +2,13 @@
 // live state. A row opens its section on its own page, with a back header; Android back closes it.
 // The shell adds two sections of its own: the server connection and the Developer page (frame meter).
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, BackHandler, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import type { Connection, ConnectionState } from '../core/connection';
 import type { SettingsSection } from '../core/feature';
 import { str } from '../core/guards';
+import { PageBackContext, type PageBack } from '../core/pageBack';
 import type { FrameMeter, FrameReport } from '../core/ports';
 import { createStore, useStore, type Store } from '../core/store';
 import { colors, space, type, useChrome, useGlass, useTheme } from '../core/theme';
@@ -89,9 +90,13 @@ export function SettingsScreen({ connection, sections, meter, open: openStore }:
   const page = open === null ? undefined : all.find((s) => s.title.toLowerCase() === open.toLowerCase()); // a link's page is lower case
   const onScreen = useOnScreen(connection);
 
+  // The page may take Android back first (e.g. Appearance closes its sheet before leaving).
+  const pageBack = useRef<PageBack | null>(null);
+  const backContext = useMemo(() => ({ set: (h: PageBack | null) => void (pageBack.current = h) }), []);
   useEffect(() => {
     if (!page || !onScreen) return;
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (pageBack.current?.()) return true;
       setOpen(null);
       return true; // registered after the shell's, so it is asked first
     });
@@ -104,7 +109,11 @@ export function SettingsScreen({ connection, sections, meter, open: openStore }:
       <View style={[styles.flex, page && styles.hidden]}>
         <SettingsList groups={groups} onOpen={setOpen} />
       </View>
-      {page ? <SettingsPage key={page.title} section={page} onBack={() => setOpen(null)} /> : null}
+      {page ? (
+        <PageBackContext.Provider value={backContext}>
+          <SettingsPage key={page.title} section={page} onBack={() => setOpen(null)} />
+        </PageBackContext.Provider>
+      ) : null}
     </>
   );
 }
@@ -162,6 +171,24 @@ const noSummary = () => null;
 
 function SettingsPage({ section, onBack }: { section: SettingsSection; onBack: () => void }) {
   const insets = useChrome();
+  if (section.layout === 'full') {
+    // An editor: its own layout under the back header, edge to edge, no scrolling page around it.
+    return (
+      <SlideIn style={[styles.flex, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+        <View style={[styles.back, styles.fullBack]}>
+          <Pressable onPress={onBack} hitSlop={10} accessibilityRole="button" accessibilityLabel="Back to Settings">
+            <Icon name="arrow-left" size={22} />
+          </Pressable>
+          <Text style={styles.pageTitle} numberOfLines={1} accessibilityRole="header">
+            {section.title}
+          </Text>
+        </View>
+        <View style={styles.flex}>
+          <section.component />
+        </View>
+      </SlideIn>
+    );
+  }
   return (
     <SlideIn style={styles.flex}>
       <ScrollView contentContainerStyle={[styles.body, { paddingTop: insets.top + space.m, paddingBottom: insets.bottom + space.l }]} keyboardShouldPersistTaps="handled">
@@ -253,6 +280,7 @@ const styles = StyleSheet.create({
   divider: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.hairline },
   section: { padding: space.l, gap: space.xs },
   back: { flexDirection: 'row', alignItems: 'center', gap: space.s, paddingVertical: space.xs },
+  fullBack: { paddingHorizontal: space.l, paddingVertical: space.s },
   pageTitle: { color: colors.text, fontSize: type.size.title, fontWeight: '700', flex: 1 },
   heading: { color: colors.textDim, fontSize: type.size.caption, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.8, paddingHorizontal: space.xs },
   title: { color: colors.text, fontSize: type.size.body, fontWeight: '600' },

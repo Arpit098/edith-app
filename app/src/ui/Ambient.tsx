@@ -29,11 +29,15 @@ export const Ambient = memo(function Ambient({ look }: { look?: BackgroundLook }
   const theme = useTheme();
   const glass = useGlass();
   const bg = look ?? theme.background;
-  const drift = bg.drift && !look && driftAllowed(glass.mode, theme.glass, glass.reduceMotion);
+  // A drifting background keeps its first layer in Drifting whether it moves now or not: swapping it
+  // for a plain Layer when drift pauses (glass turned on, "Remove animations") remounted the layer,
+  // a flash on every glass change across 0%. Only the animation starts and stops.
+  const drifts = bg.drift && !look;
+  const moving = drifts && driftAllowed(glass.mode, theme.glass, glass.reduceMotion);
   return (
     <View style={[StyleSheet.absoluteFill, { backgroundColor: bg.bg }]} pointerEvents="none" testID={`ambient-${bg.id}`}>
       {bg.photo ? <PhotoLayer key={bg.photo.uri} photo={bg.photo} thumb={!!look} /> : null}
-      {bg.layers.map((l, i) => (drift && i === 0 ? <Drifting key={i} layer={l} /> : <Layer key={i} layer={l} />))}
+      {bg.layers.map((l, i) => (drifts && i === 0 ? <Drifting key={i} layer={l} moving={moving} /> : <Layer key={i} layer={l} />))}
       {bg.pattern ? <PatternLayer kind={bg.pattern.kind} color={bg.pattern.color} /> : null}
     </View>
   );
@@ -98,10 +102,15 @@ function RadialLayer({ layer: l }: { layer: Extract<BackgroundLayer, { kind: 'ra
   );
 }
 
-/** A layer a little larger than the screen, sliding slowly on a diagonal and back. */
-function Drifting({ layer }: { layer: BackgroundLayer }) {
-  const t = useRef(new Animated.Value(0)).current;
+/**
+ * A layer a little larger than the screen, sliding slowly on a diagonal and back while `moving`;
+ * otherwise it holds still where it is (a new one in the middle, where a still layer sits), the
+ * same views either way.
+ */
+function Drifting({ layer, moving }: { layer: BackgroundLayer; moving: boolean }) {
+  const t = useRef(new Animated.Value(0.5)).current;
   useEffect(() => {
+    if (!moving) return;
     const ease = Easing.inOut(Easing.sin);
     const loop = Animated.loop(
       Animated.sequence([
@@ -111,14 +120,14 @@ function Drifting({ layer }: { layer: BackgroundLayer }) {
     );
     loop.start();
     return () => loop.stop();
-  }, [t]);
+  }, [t, moving]);
   const reach = Dimensions.get('window').width * DRIFT_REACH;
   const transform = [
     { translateX: t.interpolate({ inputRange: [0, 1], outputRange: [-reach, reach] }) },
     { translateY: t.interpolate({ inputRange: [0, 1], outputRange: [reach, -reach] }) },
   ];
   return (
-    <Animated.View style={[styles.oversized, { transform }]} testID="ambient-drift">
+    <Animated.View style={[styles.oversized, { transform }]} testID={moving ? 'ambient-drift' : 'ambient-still'}>
       <Layer layer={layer} />
     </Animated.View>
   );
