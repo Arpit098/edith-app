@@ -42,6 +42,9 @@ describe('the sheet', () => {
     const open = run([{ type: 'pick', tool: 'theme' }]);
     expect(sheetReducer(open, { type: 'settle', progress: 0.2, velocity: 0 }).snap).toBe('collapsed');
     expect(sheetReducer(initialSheet, { type: 'settle', progress: 0.8, velocity: 0 })).toEqual({ tool: 'theme', snap: 'half' });
+    // A drag that ends where it started is the same state: TalkBack hears nothing new.
+    expect(sheetReducer(open, { type: 'settle', progress: 0.9, velocity: 0 })).toBe(open);
+    expect(sheetReducer(initialSheet, { type: 'settle', progress: 0.1, velocity: 0 })).toBe(initialSheet);
   });
 
   it('says what changed, for TalkBack', () => {

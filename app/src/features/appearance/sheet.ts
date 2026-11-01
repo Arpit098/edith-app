@@ -63,7 +63,8 @@ export function sheetReducer(s: SheetState, a: SheetAction): SheetState {
       return { tool: s.tool ?? TOOLS[0]!.id, snap: 'half' };
     case 'settle': {
       const snap = snapFor(a.progress, a.velocity);
-      return snap === 'half' ? { tool: s.tool ?? TOOLS[0]!.id, snap } : snap === s.snap ? s : { ...s, snap };
+      if (snap === s.snap && (snap === 'collapsed' || s.tool)) return s; // nothing changed: no new announcement
+      return snap === 'half' ? { tool: s.tool ?? TOOLS[0]!.id, snap } : { ...s, snap };
     }
   }
 }

@@ -4,8 +4,8 @@
 // at once with "Remove animations" (ui/SnapSheet). Its grab handle drags it between the two snap points; the
 // chevron buttons collapse it to the toolbar and bring it back.
 
-import { type ReactNode } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useRef, type ReactNode } from 'react';
+import { AccessibilityInfo, findNodeHandle, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { colors, radius, space, type, useTheme } from '../../core/theme';
 import { Glass } from '../../ui/Glass';
@@ -14,29 +14,38 @@ import { SnapSheet } from '../../ui/SnapSheet';
 import { snapFor, TOOLS, toolOf, type SheetAction, type SheetState } from './sheet';
 
 export const TOOLBAR = 72;
+export const PEEK = 24; // the closed sheet's grab strip above the toolbar: drag it to open
 
 const opens = (progress: number, velocity: number) => snapFor(progress, velocity) === 'half';
 
 export function Sheet({ state, dispatch, height, children }: { state: SheetState; dispatch: (a: SheetAction) => void; height: number; children: ReactNode }) {
   const open = state.snap === 'half';
   const tool = state.tool ? toolOf(state.tool) : null;
+  // TalkBack's focus goes to the sheet's title when it opens (or switches tool), so the controls
+  // are where the reading continues.
+  const title = useRef<Text>(null);
+  useEffect(() => {
+    if (!open) return;
+    const node = title.current ? findNodeHandle(title.current) : null;
+    if (node) AccessibilityInfo.setAccessibilityFocus(node);
+  }, [open, state.tool]);
   return (
     <SnapSheet
       open={open}
       height={height}
-      hiddenOffset={space.l}
+      peek={PEEK}
       snap={opens}
       onSettle={(progress, velocity) => dispatch({ type: 'settle', progress, velocity })}
       style={[styles.sheet, { bottom: TOOLBAR }]}
       testID="appearance-sheet"
     >
-      {(handle) => (
+      {(handle, shown) => (
         <Glass level="panel" radius={radius.l} rim style={styles.panel}>
           <View {...handle} style={styles.head} testID="sheet-handle">
             <View style={styles.grab} />
             <View style={styles.titleRow}>
               <View style={styles.flex}>
-                <Text style={styles.title} accessibilityRole="header">
+                <Text ref={title} style={styles.title} accessibilityRole="header">
                   {tool?.label ?? ''}
                 </Text>
                 {tool ? (
@@ -50,9 +59,12 @@ export function Sheet({ state, dispatch, height, children }: { state: SheetState
               </Pressable>
             </View>
           </View>
-          <ScrollView style={styles.flex} contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled" testID="sheet-body">
-            {children}
-          </ScrollView>
+          {/* Closed, only the grab strip takes touches (to drag it open). */}
+          <View style={styles.flex} pointerEvents={shown ? 'auto' : 'none'}>
+            <ScrollView style={styles.flex} contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled" testID="sheet-body">
+              {children}
+            </ScrollView>
+          </View>
         </Glass>
       )}
     </SnapSheet>
@@ -64,7 +76,7 @@ export function Toolbar({ state, dispatch }: { state: SheetState; dispatch: (a: 
   const open = state.snap === 'half';
   return (
     <Glass level="thick" radius={0} edges={{ top: true }} style={styles.toolbar}>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tools} accessibilityRole="tablist">
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tools}>
         {TOOLS.map((t) => {
           const on = open && state.tool === t.id;
           return (
@@ -72,10 +84,10 @@ export function Toolbar({ state, dispatch }: { state: SheetState; dispatch: (a: 
               key={t.id}
               onPress={() => dispatch({ type: 'pick', tool: t.id })}
               style={[styles.tool, on && { backgroundColor: accentSoft }]}
-              accessibilityRole="tab"
-              accessibilityState={{ selected: on }}
+              accessibilityRole="button"
+              accessibilityState={{ expanded: on }}
               accessibilityLabel={t.label}
-              accessibilityHint={on ? `Closes the ${t.label} controls` : `Opens the ${t.label} controls`}
+              accessibilityHint={t.hint}
               testID={`tool-${t.id}`}
             >
               <Icon name={t.icon} size={24} color={on ? accent : colors.text} />

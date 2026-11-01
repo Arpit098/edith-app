@@ -85,17 +85,18 @@ describe('Appearance', () => {
     const r = mount(a);
     const tools = r.root.findAll((n) => typeof n.props.testID === 'string' && n.props.testID.startsWith('tool-') && typeof n.props.onPress === 'function');
     expect(tools.map((t) => t.props.accessibilityLabel)).toEqual(['Theme', 'Background', 'Photo', 'Bubbles', 'Accent', 'Glass', 'Reset']);
-    expect(tools.every((t) => t.props.accessibilityRole === 'tab')).toBe(true);
+    expect(tools.every((t) => t.props.accessibilityRole === 'button')).toBe(true);
+    expect(tools[0]!.props.accessibilityHint).toBe('A whole look at once: background, accent and bubbles.'); // the tool's own hint
     expect(pressables(r, 'Ocean theme')).toHaveLength(0); // the sheet starts closed: the whole preview shows
     open(r, 'Theme');
-    expect(tool(r, 'Theme').props.accessibilityState).toEqual({ selected: true });
+    expect(tool(r, 'Theme').props.accessibilityState).toEqual({ expanded: true });
     expect(pressables(r, 'Ocean theme')).toHaveLength(1);
     open(r, 'Background');
-    expect(tool(r, 'Theme').props.accessibilityState).toEqual({ selected: false });
+    expect(tool(r, 'Theme').props.accessibilityState).toEqual({ expanded: false });
     expect(pressables(r, 'Ocean theme')).toHaveLength(0);
     expect(pressables(r, 'Dots background')).toHaveLength(1);
     open(r, 'Background'); // its own button closes it again
-    expect(tool(r, 'Background').props.accessibilityState).toEqual({ selected: false });
+    expect(tool(r, 'Background').props.accessibilityState).toEqual({ expanded: false });
   });
 
   it('a theme applies at once: the preview, the chat and the summary follow', () => {
@@ -477,7 +478,7 @@ describe('the editor: toolbar, sheet and back', () => {
     expect(byLabel(r, 'Show the controls').props.accessibilityState).toEqual({ expanded: false });
     tap(r, 'Show the controls');
     expect(sheetHidden(r)).toBe(false);
-    expect(tool(r, 'Accent').props.accessibilityState).toEqual({ selected: true }); // the same tool
+    expect(tool(r, 'Accent').props.accessibilityState).toEqual({ expanded: true }); // the same tool
     tap(r, 'Close the controls'); // the toolbar's toggle closes it too
     expect(sheetHidden(r)).toBe(true);
   });

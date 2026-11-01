@@ -8,14 +8,14 @@
 // only the preview and the open tool see: the store, and the whole app behind, change once on release
 // or Save, so a drag never repaints anything else. Android back closes the sheet first, then leaves.
 
-import { useEffect, useReducer, useRef, useState } from 'react';
+import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { AccessibilityInfo, Alert, Dimensions, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
 
 import { useStore } from '../../core/store';
-import { colors, DEFAULT_APPEARANCE, DEFAULT_BACKGROUND, DEFAULT_GLASS, isPhotoBackground, radius, space, type, useAppearance, type Appearance } from '../../core/theme';
+import { colors, DEFAULT_APPEARANCE, DEFAULT_BACKGROUND, DEFAULT_GLASS, isPhotoBackground, radius, resolveTheme, space, type, useAppearance, useTheme, type Appearance } from '../../core/theme';
 import { Button } from '../../ui/Button';
 import { usePageBack } from '../../ui/pageBack';
-import { createDraft, usePreviewTheme, type DraftStore } from './draft';
+import { createDraft, type DraftStore } from './draft';
 import { Hint, Segment, shared } from './parts';
 import { PhotoChoices } from './PhotoChoices';
 import { Preview } from './Preview';
@@ -126,9 +126,17 @@ function ToolBody({ tool, draft }: { tool: ToolId; draft: DraftStore }) {
   );
 }
 
+const selectPhotoDraft = (d: Partial<Appearance> | null) => (d && isPhotoBackground(d.background) ? d.background : null);
+
 function PhotoTool({ draft }: { draft: DraftStore }) {
   const { appearance, set, photos } = useAppearance();
-  const preview = usePreviewTheme(draft); // knows the dim really shown while a slider moves
+  const live = useTheme();
+  // Only the photo's own draft (blur, dim being dragged): the theme that knows the dim really shown.
+  const photoDraft = useStore(draft.store, selectPhotoDraft);
+  const preview = useMemo(
+    () => (photoDraft ? resolveTheme({ ...appearance, background: photoDraft }, live.glass === 0 && appearance.glass > 0) : live),
+    [photoDraft, appearance, live],
+  );
   return <PhotoChoices appearance={appearance} set={set} photos={photos} preview={preview} onDraft={draft.put} />;
 }
 
