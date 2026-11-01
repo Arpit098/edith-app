@@ -58,8 +58,17 @@ describe('CommandsScreen', () => {
 
   it('runs a plain command, opens the field for one with arguments, and asks before /restart', async () => {
     const { ctx, m, r, row, tap } = await mount();
-    ctx.transport.on('POST /v1/commands/brief', { ref: 'app:1', replies: [{ text: 'Your day' }] });
+    let answer!: (v: unknown) => void;
+    ctx.transport.on('POST /v1/commands/brief', () => new Promise((res) => (answer = res)));
     await tap(row('Brief'));
+    // While it runs: that row is busy, the others can't be tapped.
+    expect(row('Brief')!.props.accessibilityState).toMatchObject({ busy: true });
+    expect(row('Queue')!.props.accessibilityState).toMatchObject({ disabled: true, busy: false });
+    await act(async () => {
+      answer({ ref: 'app:1', replies: [{ text: 'Your day' }] });
+      await flush();
+    });
+    expect(row('Queue')!.props.accessibilityState).toMatchObject({ disabled: false });
     expect(ctx.transport.calls.at(-1)?.path).toBe('/v1/commands/brief');
     expect(texts(r)).toContain('Your day');
     expect(texts(r)).toContain('Recent'); // the one just used

@@ -15,7 +15,7 @@ import { Glass, useBackdrop, WallpaperContext } from '../ui/Glass';
 import { Icon } from '../ui/Icon';
 import { ConnectionPill } from './ConnectionPill';
 import { ConnectScreen } from './ConnectScreen';
-import { titleBox, type HeaderLayout } from './headerTitle';
+import { titleBox, type HeaderLayout, type TitleBox } from './headerTitle';
 import { linkTarget, useDeepLinks } from './links';
 import { MenuButton, NavMenu } from './NavMenu';
 import { back, current, navigate, type NavState } from './navigation';
@@ -131,7 +131,7 @@ function Main({ loaded, connection, meter }: { loaded: LoadedFeatures; connectio
   const HeaderOverlay = headerPanel?.overlay;
   const { titleGlow: glow } = useTheme(); // the title's glow takes the theme's accent
   const title = top === home || !route ? APP_TITLE : route.title;
-  const box = useTitleBox();
+  const box = useTitleBox(title);
 
   return (
     <KeyboardAvoidingView style={styles.flex} behavior="padding">
@@ -165,7 +165,8 @@ function Main({ loaded, connection, meter }: { loaded: LoadedFeatures; connectio
           {/* [● bubble 0:42]      E.D.I.T.H      [☰] (plans/ui-next.md §2); other screens show their own title. */}
           <View style={styles.headerRow} onLayout={box.onRow} testID="header-row">
             {/* Its natural width, unseen: decides whether the title can sit centred (headerTitle.ts). */}
-            <Text style={styles.measure} numberOfLines={1} onLayout={box.onTitle} testID="header-title-measure" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" pointerEvents="none">
+            {/* Keyed by the title: remounted, it reports its layout even when the width is unchanged. */}
+            <Text key={title} style={styles.measure} numberOfLines={1} onLayout={box.onTitle} testID="header-title-measure" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" pointerEvents="none">
               {title}
             </Text>
             {/* The title in off-white with the logo's soft blue glow (titleGlow); E.D.I.T.H on the home screen.
@@ -206,13 +207,24 @@ function Main({ loaded, connection, meter }: { loaded: LoadedFeatures; connectio
 }
 
 /** The header title's place, from the measured row, free space and title (shell/headerTitle.ts). */
-function useTitleBox() {
-  const [l, setL] = useState<HeaderLayout>({ row: 0, freeX: 0, freeWidth: 0, title: 0 });
-  const put = useCallback((patch: Partial<HeaderLayout>) => setL((s) => (Object.entries(patch).every(([k, v]) => s[k as keyof HeaderLayout] === v) ? s : { ...s, ...patch })), []);
+function useTitleBox(title: string) {
+  // The measured width belongs to one title: a new title is unmeasured (hidden) until its own layout.
+  const [l, setL] = useState<Omit<HeaderLayout, 'title'> & { measured: { title: string; width: number } | null }>({ row: 0, freeX: 0, freeWidth: 0, measured: null });
+  const titleRef = useRef(title);
+  titleRef.current = title;
+  const put = useCallback((patch: Partial<typeof l>) => setL((s) => (Object.entries(patch).every(([k, v]) => s[k as keyof typeof s] === v) ? s : { ...s, ...patch })), []);
   const onRow = useCallback((e: LayoutChangeEvent) => put({ row: Math.round(e.nativeEvent.layout.width) }), [put]);
   const onFree = useCallback((e: LayoutChangeEvent) => put({ freeX: Math.round(e.nativeEvent.layout.x), freeWidth: Math.round(e.nativeEvent.layout.width) }), [put]);
-  const onTitle = useCallback((e: LayoutChangeEvent) => put({ title: Math.ceil(e.nativeEvent.layout.width) }), [put]);
-  const b = titleBox(l);
+  const onTitle = useCallback((e: LayoutChangeEvent) => {
+    const width = Math.ceil(e.nativeEvent.layout.width);
+    setL((s) => (s.measured?.title === titleRef.current && s.measured.width === width ? s : { ...s, measured: { title: titleRef.current, width } }));
+  }, []);
+  const width = l.measured?.title === title ? l.measured.width : 0; // 0: not measured yet
+  const shown = useRef<TitleBox['align'] | null>(null); // for the hysteresis (headerTitle.ts)
+  const b = titleBox({ row: l.row, freeX: l.freeX, freeWidth: l.freeWidth, title: width }, shown.current);
+  useEffect(() => {
+    shown.current = b?.align ?? null;
+  });
   const style = b ? { left: b.left, right: b.right, textAlign: b.align } : styles.unmeasured;
   return { onRow, onFree, onTitle, style, squeezed: b?.align === 'left' };
 }

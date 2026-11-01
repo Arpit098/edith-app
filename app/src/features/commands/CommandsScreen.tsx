@@ -125,6 +125,7 @@ const Picker = memo(function Picker({ model, replies }: { model: CommandsModel; 
                   chevron={false}
                   onPress={() => tap(r, key)}
                   busy={running === c.name}
+                  disabled={!!running && running !== c.name} // one at a time: the model would refuse it
                   expanded={c.usage ? open : undefined}
                   tone={r.meta.confirm ? 'danger' : undefined}
                   accessibilityLabel={[`${r.meta.title}, /${c.name}`, r.meta.description].filter(Boolean).join('. ')}

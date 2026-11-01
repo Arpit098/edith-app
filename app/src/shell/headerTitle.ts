@@ -20,12 +20,22 @@ export interface TitleBox {
   align: 'center' | 'left';
 }
 
-/** Null until the row has been measured (the title stays invisible for that first frame). */
-export function titleBox(l: HeaderLayout): TitleBox | null {
+/**
+ * Going back to centred needs this much room to spare, so a chip that grows and shrinks by a digit
+ * (its timer: 9:59 -> 10:00) doesn't flip the title back and forth.
+ */
+export const RECENTRE_SLACK = 16;
+
+/**
+ * Null until the row has been measured (the title stays invisible for that first frame). `prev` is
+ * the alignment shown now: a left-aligned title recentres only with RECENTRE_SLACK to spare.
+ */
+export function titleBox(l: HeaderLayout, prev: TitleBox['align'] | null = null): TitleBox | null {
   if (l.row <= 0 || l.freeWidth <= 0 || l.title <= 0) return null;
   const left = l.freeX;
   const right = Math.max(0, l.row - l.freeX - l.freeWidth);
   const side = Math.max(left, right); // centred on the row: the same inset both sides
-  if (l.title <= l.row - 2 * side) return { left: side, right: side, align: 'center' };
+  const slack = prev === 'left' ? RECENTRE_SLACK : 0;
+  if (l.title + slack <= l.row - 2 * side) return { left: side, right: side, align: 'center' };
   return { left, right, align: 'left' };
 }

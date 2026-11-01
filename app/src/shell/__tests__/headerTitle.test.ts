@@ -43,6 +43,17 @@ describe('header title', () => {
     }
   });
 
+  it("doesn't flip back and forth as the chip's timer gains and loses a digit", () => {
+    const at = (chip: number, prev: 'center' | 'left' | null) => titleBox({ row: ROW, ...free(false, chip), title: 200 }, prev)!.align;
+    // Room for 200 when centred: 360 - 2 * (16 + chip + 8) >= 200 while chip <= 56.
+    expect(at(56, null)).toBe('center');
+    expect(at(64, 'center')).toBe('left'); // 9:59 -> 10:00: it no longer fits
+    expect(at(56, 'left')).toBe('left'); // back by one digit: not enough to spare, stays put
+    expect(at(52, 'left')).toBe('left');
+    expect(at(52, 'center')).toBe('center');
+    expect(at(40, 'left')).toBe('center'); // 16 dp to spare: recentres
+  });
+
   it('on a sub-page with the timer, starts after the chip and is cut instead', () => {
     const f = free(true, 120); // the screenshot: ← [● orb 6:03] Commands
     expect(titleBox({ row: ROW, ...f, title: width('Commands') })).toEqual({ left: f.freeX, right: MENU, align: 'left' });

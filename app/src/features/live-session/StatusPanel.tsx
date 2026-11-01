@@ -82,6 +82,12 @@ export const StatusChip = memo(function StatusChip({ model, connection, open, ba
 
   const label = `${describeLink(link)}. EDITH: ${bar.label}${bar.counts ? `, ${bar.counts}` : ''}. ${isOpen ? 'Hide' : 'Show'} details`;
   return (
+    <>
+    {/* TalkBack announces each change of state ("Thinking", "Waiting for approval"): the chip's
+        own label is on a button, which Android doesn't read out when it changes. Unseen, no size. */}
+    <Text style={styles.liveRegion} accessibilityLiveRegion="polite" testID="status-live-region">
+      {`EDITH: ${bar.label}`}
+    </Text>
     <Squish
       onPress={() => open.set((o) => !o)}
       hitSlop={6}
@@ -99,6 +105,7 @@ export const StatusChip = memo(function StatusChip({ model, connection, open, ba
         ) : null}
       </Glass>
     </Squish>
+    </>
   );
 });
 
@@ -368,7 +375,8 @@ function AgentRow({ agent: a }: { agent: StatusDetails['agents'][number] }) {
 }
 
 const styles = StyleSheet.create({
-  chip: { flexDirection: 'row', alignItems: 'center', gap: space.s, height: 34, paddingHorizontal: space.m },
+  liveRegion: { position: 'absolute', width: 1, height: 1, opacity: 0, overflow: 'hidden' },
+  chip:{ flexDirection: 'row', alignItems: 'center', gap: space.s, height: 34, paddingHorizontal: space.m },
   dot: { width: 8, height: 8, borderRadius: 4 },
   elapsed: { color: colors.text, fontSize: type.size.small, fontVariant: ['tabular-nums'], minWidth: 30 },
   bg: { color: colors.textSecondary, fontSize: type.size.caption, fontWeight: '600' },

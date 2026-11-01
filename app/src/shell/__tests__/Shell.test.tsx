@@ -86,6 +86,10 @@ describe('Shell', () => {
     // No "Running …" line above the composer repeating it; the chip still says so to TalkBack.
     expect(texts(r)).not.toContain('Running');
     expect(r.root.findAll((n) => typeof n.props.accessibilityLabel === 'string' && n.props.accessibilityLabel.includes('EDITH: Waiting for approval'))).not.toHaveLength(0);
+    // ...and announces each change of state (the removed row was the chat's live region).
+    const live = r.root.findAll((n) => n.type === Text && n.props.testID === 'status-live-region')[0]!;
+    expect(live.props.accessibilityLiveRegion).toBe('polite');
+    expect(live.props.children).toBe('EDITH: Waiting for approval');
     expect(texts(r)).toContain('Approve Bash?');
 
     await act(async () => {
@@ -130,6 +134,16 @@ describe('Shell', () => {
     // Room to centre it (no timer in the chip): centred on the row.
     await layout('header-free', { x: 100, width: 196 });
     expect(title()).toMatchObject({ left: 100, right: 100, textAlign: 'center' });
+    // Another page: its title stays hidden until its own width is measured (not the last one's).
+    await press('Menu');
+    await press('Sessions');
+    const sessions = () => StyleSheet.flatten(r.root.findAll((n) => n.type === Text && n.props.accessibilityRole === 'header' && n.props.children === 'Sessions')[0]!.props.style);
+    expect(sessions().opacity).toBe(0);
+    await layout('header-title-measure', { x: 0, width: 120 });
+    expect(sessions()).toMatchObject({ left: 100, right: 100, textAlign: 'center' });
+    await press('Menu');
+    await press('Tools');
+    await press('Commands');
 
     const handler = shellBack;
     let handled = false;

@@ -7,7 +7,6 @@ import Animated from 'react-native-reanimated';
 
 import { GlassContext, type GlassSettings } from '../../core/theme';
 import { GrowSheet, SettleIn, Squish } from '../motion';
-import { WorkingBlob } from '../WorkingBlob';
 
 const settings = (reduceMotion: boolean): GlassSettings => ({ mode: 'flat', View: null, reduceMotion });
 
@@ -108,14 +107,6 @@ describe('Squish', () => {
     });
     expect(onPressIn).toHaveBeenCalledTimes(1);
     expect(onPress).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe('WorkingBlob', () => {
-  it('renders, and unmounts cleanly (its loop is cancelled)', () => {
-    const r = render(<WorkingBlob />);
-    expect(r.root.findAllByType(Animated.View)).toHaveLength(1);
-    act(() => r.unmount());
   });
 });
 
