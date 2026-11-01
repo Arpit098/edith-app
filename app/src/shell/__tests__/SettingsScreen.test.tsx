@@ -215,13 +215,16 @@ describe('SettingsScreen', () => {
     }
     const sections = [
       { title: 'Thing', component: () => <Text>thing page</Text>, group: 'notifications' as const, toggle: useThingToggle, summary: () => 'On or off' },
-      { title: 'Other', component: () => <Text>other page</Text>, group: 'notifications' as const, toggle: () => null, summary: () => 'No switch here' },
+      { title: 'Other', component: () => <Text>other page</Text>, group: 'notifications' as const, toggle: () => null, summary: () => 'No switch here', badge: () => 'Interseqt active' },
     ];
     const page = createStore<string | null>(null);
     let r!: ReactTestRenderer;
     await act(async () => {
       r = create(<SettingsScreen connection={ctx.connection} sections={sections} meter={null} open={page} />);
     });
+    // A section's badge joins the top card's line (its hook runs in a component of its own).
+    const card = r.root.find((n) => n.props.accessibilityRole === 'button' && n.props.accessibilityHint === 'Opens Server connection' && typeof n.props.onPress === 'function');
+    expect(card.props.accessibilityLabel).toMatch(/^E\.D\.I\.T\.H, .+ · Interseqt active$/);
     const toggle = () => r.root.find((n) => n.props.accessibilityRole === 'switch' && n.props.accessibilityLabel === 'Thing' && typeof n.props.onPress === 'function');
     expect(toggle().props.accessibilityState).toMatchObject({ checked: false });
     expect(texts(r)).not.toContain('On or off'); // the switch says it

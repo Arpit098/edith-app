@@ -7,8 +7,10 @@ import { Text } from 'react-native';
 import { EventBus } from '../../../core/events';
 import { createStore } from '../../../core/store';
 import type { WakewordModel, WakewordState } from '../model';
-import { WakeWordSettings, wakewordToggle } from '../WakeWordSettings';
+import { toast } from '../../../ui/toast';
+import { switchWakeWord, WakeWordSettings, wakewordToggle } from '../WakeWordSettings';
 
+jest.mock('../../../ui/toast', () => ({ toast: jest.fn() }));
 jest.setTimeout(30_000); // the first run transforms React Native
 
 function fake(installed: boolean) {
@@ -68,12 +70,30 @@ describe('WakeWordSettings', () => {
     expect(texts(r)).toContain('Train a model first');
   });
 
-  it('wires the Settings list’s switch', () => {
+  it('wires the Settings list’s switch, saying “Train first” while there is no model', () => {
     const { model, calls } = fake(true);
     const t = wakewordToggle(model, { enabled: false, installed: { version: 'v3' } });
-    expect(t).toMatchObject({ on: false, disabled: false });
+    expect(t).toMatchObject({ on: false, disabled: false, detail: null });
     t.set(true);
     expect(calls.enabled).toEqual([true]);
-    expect(wakewordToggle(model, { enabled: false, installed: null }).disabled).toBe(true);
+    expect(wakewordToggle(model, { enabled: false, installed: null })).toMatchObject({ disabled: true, detail: 'Train first' });
+  });
+
+  it('says why when the switch doesn’t take, instead of flipping back silently', async () => {
+    const { model, store } = fake(true);
+    (model as { setEnabled: (on: boolean) => Promise<void> }).setEnabled = async () =>
+      void store.set((s) => ({ ...s, enabled: false, error: 'Couldn’t turn “Hey Edith” on: mic busy' })); // the model reverts and keeps why
+    await wakewordToggle(model, store.get()).set(true);
+    await act(async () => {});
+    expect(toast).toHaveBeenCalledWith('Couldn’t turn “Hey Edith” on: mic busy');
+    let r!: ReactTestRenderer;
+    act(() => {
+      r = create(<WakeWordSettings model={model} bus={new EventBus()} />);
+    });
+    mounted.push(r);
+    expect(texts(r)).toContain('mic busy'); // and on the page
+    (toast as jest.Mock).mockClear();
+    await switchWakeWord(fake(true).model, true); // it took: nothing to say
+    expect(toast).not.toHaveBeenCalled();
   });
 });

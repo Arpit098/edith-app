@@ -5,7 +5,7 @@
 // own page, with a back header; Android back closes it. The pages are built from ui/SettingsRows too.
 // The shell adds two sections of its own: the server connection and the Developer page (frame meter).
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, BackHandler, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { LINK_TONE, type Connection, type ConnectionState } from '../core/connection';
@@ -161,19 +161,32 @@ function SettingsList({ connection, all, onOpen }: { connection: Connection; all
 
 function TopCard({ connection, badges, onOpen }: { connection: Connection; badges: SettingsSection[]; onOpen: () => void }) {
   const { link } = useStore(connection.store, selectCard, shallowEqual);
-  // One hook per section with a badge; `badges` is fixed for this list (memoized from the sections).
-  const words = badges.map((s) => s.badge!());
+  // Each section's badge hook runs in its own small component, which hands the words up.
+  const [words, setWords] = useState<Record<string, string | null>>({});
+  const report = useCallback((title: string, w: string | null) => setWords((was) => (was[title] === w ? was : { ...was, [title]: w })), []);
   const tone = LINK_TONE[link];
   return (
-    <SummaryCard
-      leading={<ThinkingBubble active={false} size={48} />}
-      title="E.D.I.T.H"
-      subtitle={cardLine(link, words)}
-      tone={tone === 'ok' ? undefined : tone === 'textDim' ? undefined : tone}
-      onPress={onOpen}
-      accessibilityHint={`Opens ${SERVER_CONNECTION}`}
-    />
+    <>
+      {badges.map((s) => (
+        <Badge key={s.title} section={s} report={report} />
+      ))}
+      <SummaryCard
+        leading={<ThinkingBubble active={false} size={48} />}
+        title="E.D.I.T.H"
+        subtitle={cardLine(link, badges.map((s) => words[s.title]))}
+        tone={tone === 'warn' || tone === 'danger' ? tone : undefined}
+        onPress={onOpen}
+        accessibilityHint={`Opens ${SERVER_CONNECTION}`}
+      />
+    </>
   );
+}
+
+/** Runs one section's badge hook and reports its words (draws nothing). */
+function Badge({ section, report }: { section: SettingsSection; report: (title: string, words: string | null) => void }) {
+  const words = section.badge!();
+  useEffect(() => report(section.title, words), [report, section.title, words]);
+  return null;
 }
 
 /** A row in the list: a switch when the section has one right now, else its state as dim text. */

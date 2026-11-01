@@ -60,6 +60,7 @@ export function AccountsSection({ model }: { model: AccountsModel }) {
             accessibilityLabel={`${a.label}${a.active ? ', in use' : ''}`}
             accessibilityHint="Long press to rename"
             onLongPress={() => setRenaming(a)}
+            longPressLabel="Rename"
             chevron={false}
             trailing={
               <View style={styles.actions}>

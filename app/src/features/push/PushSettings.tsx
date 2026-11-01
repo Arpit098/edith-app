@@ -8,7 +8,7 @@ import { StyleSheet, TextInput, View } from 'react-native';
 import { clockIST } from '../../common/format';
 import type { SettingsToggle } from '../../core/feature';
 import type { PushMode } from '../../core/ports';
-import { useStore } from '../../core/store';
+import { createSelector, shallowEqual, useStore } from '../../core/store';
 import { colors, radius, space, type } from '../../core/theme';
 import { Button } from '../../ui/Button';
 import { Icon } from '../../ui/Icon';
@@ -33,13 +33,36 @@ function statusLine(status: PushState['status']): string {
   return status.connected ? 'On: connected to edith’s push server.' : (status.error ?? 'On: connecting to edith’s push server…');
 }
 
+/** What the Settings list's switch needs: not every status change (a poll's last-check time). */
+export interface PushToggleState {
+  enabled: boolean;
+  mode: PushMode;
+  connected: boolean;
+  statusError: boolean; // on, but not reaching edith
+  error: string | null; // a refused setup (while off)
+  fetching: boolean;
+}
+
+export const pushToggleState = createSelector(
+  (s: PushState): PushToggleState => ({ enabled: s.status.enabled, mode: s.status.mode, connected: s.status.connected, statusError: !!s.status.error, error: s.error, fetching: s.fetching }),
+  shallowEqual,
+);
+
+/** The text before the list's switch: the row's summary without the "On" the switch already says. */
+export function pushDetail(s: PushToggleState): string | null {
+  if (!s.enabled) return s.error ? 'Couldn’t turn on' : null;
+  const mode = modeLabel(s.mode);
+  if (s.statusError) return `${mode} · not reaching edith`;
+  return s.connected || s.mode === 'poll' ? mode : `${mode} · connecting`;
+}
+
 /** The switch in the Settings list: on fetches the token (in the mode last used), off forgets it. */
-export function pushToggle(model: PushModel, s: PushState): SettingsToggle {
+export function pushToggle(model: PushModel, s: PushToggleState): SettingsToggle {
   return {
-    on: s.status.enabled,
-    set: (on) => (on ? void model.turnOn(s.status.mode) : model.disable()),
+    on: s.enabled,
+    set: (on) => (on ? void model.turnOn(s.mode) : model.disable()),
     disabled: s.fetching,
-    detail: s.status.enabled ? modeLabel(s.status.mode) : null,
+    detail: pushDetail(s),
   };
 }
 
@@ -81,7 +104,7 @@ export function PushSettings({ model, defaultUrl }: { model: PushModel; defaultU
       {status.enabled ? null : (
         <>
           <Section title="Advanced" footer={advanced ? 'The address of edith’s ntfy, and the token in ~/.config/edith/ntfy-phone-token on edith.' : undefined}>
-            <Row icon="key-outline" label="Enter the token by hand" accessibilityLabel="Advanced" onPress={() => setAdvanced(!advanced)} chevron={false} trailing={<Chevron open={advanced} />} />
+            <Row icon="key-outline" label="Enter the token by hand" expanded={advanced} onPress={() => setAdvanced(!advanced)} chevron={false} trailing={<Chevron open={advanced} />} />
             {advanced ? (
               <CardBlock>
                 <TextInput

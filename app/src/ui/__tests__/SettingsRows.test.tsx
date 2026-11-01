@@ -55,6 +55,21 @@ describe('Settings rows', () => {
     expect(chevrons(busy)).toBe(0);
   });
 
+  it('Row with buttons of its own: TalkBack reaches each button; the text keeps the tap and long press as actions', () => {
+    const calls: string[] = [];
+    const r = render(
+      <Row label="Work" onPress={() => calls.push('tap')} onLongPress={() => calls.push('long')} longPressLabel="Rename" trailing={<PillButton label="Switch" onPress={() => calls.push('switch')} />} />,
+    );
+    const outer = r.root.find((n) => n.props.accessible === false && typeof n.props.onLongPress === 'function');
+    expect(outer.props.accessibilityLabel).toBeUndefined();
+    const text = r.root.find((n) => n.props.accessibilityLabel === 'Work' && typeof n.props.onAccessibilityAction === 'function');
+    expect(text.props.accessibilityActions).toEqual([{ name: 'activate' }, { name: 'longpress', label: 'Rename' }]);
+    act(() => text.props.onAccessibilityAction({ nativeEvent: { actionName: 'longpress' } }));
+    act(() => text.props.onAccessibilityAction({ nativeEvent: { actionName: 'activate' } }));
+    act(() => r.root.find((n) => n.props.accessibilityLabel === 'Switch' && typeof n.props.onPress === 'function').props.onPress());
+    expect(calls).toEqual(['long', 'tap', 'switch']);
+  });
+
   it('SettingsCard: one glass card with a rim, a hairline between rows inset past the icon', () => {
     const r = render(
       <SettingsCard>
@@ -131,7 +146,12 @@ describe('Settings rows', () => {
     );
     expect(r.root.find((n) => n.props.accessibilityRole === 'radiogroup').props.accessibilityLabel).toBe('Work details');
     const radios = r.root.findAll((n) => n.props.accessibilityRole === 'radio' && typeof n.props.onPress === 'function');
-    expect(radios.map((n) => n.props.accessibilityState.checked)).toEqual([false, true]);
+    expect(radios.map((n) => n.props.accessibilityState)).toEqual([
+      { checked: false, disabled: false },
+      { checked: true, disabled: false },
+    ]); // checked only: "selected" too would be read twice
+    const label = r.root.findAll((n) => n.type === Text && n.props.children === 'Summary')[0]!;
+    expect(label.props).toMatchObject({ numberOfLines: 1, adjustsFontSizeToFit: true, minimumFontScale: 0.8 });
     act(() => radios[1]!.props.onPress());
     act(() => radios[0]!.props.onPress());
     expect(picked).toEqual(['a']);

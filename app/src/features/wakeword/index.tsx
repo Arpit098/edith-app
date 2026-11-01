@@ -2,6 +2,8 @@
 // trained on Arpit's Mac, PLAN.md §4.5) and its Settings section. The always-on detector
 // (WakeWordService) comes later, behind ports.wakeWord.
 
+import { useMemo } from 'react';
+
 import type { EventBus } from '../../core/events';
 import type { FeatureModule, SettingsToggle } from '../../core/feature';
 import { createSelector, shallowEqual, useStoreOr } from '../../core/store';
@@ -28,7 +30,7 @@ function useSummary() {
 function useToggle(): SettingsToggle | null {
   const state = useStoreOr(model?.store, selectToggle, null);
   const m = model;
-  return m && state ? wakewordToggle(m, state) : null;
+  return useMemo(() => (m && state ? wakewordToggle(m, state) : null), [m, state]);
 }
 
 // Not every state change (a take's level while recording): only the switch's own parts.

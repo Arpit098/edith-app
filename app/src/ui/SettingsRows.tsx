@@ -87,15 +87,21 @@ export interface RowProps {
   busy?: boolean;
   accessibilityLabel?: string;
   accessibilityHint?: string;
+  /** What TalkBack calls the long press when the row has controls of its own (e.g. "Rename"). */
+  longPressLabel?: string;
+  /** For a row that shows or hides more below it. */
+  expanded?: boolean;
   selectable?: boolean;
 }
 
 /** One line: icon, label, dim value, chevron. Pressable when it has onPress. */
-export const Row = memo(function Row({ label, icon, iconColor, value, sub, onPress, onLongPress, chevron, trailing, tone, disabled, busy, accessibilityLabel, accessibilityHint, selectable }: RowProps) {
+export const Row = memo(function Row({ label, icon, iconColor, value, sub, onPress, onLongPress, chevron, trailing, tone, disabled, busy, accessibilityLabel, accessibilityHint, longPressLabel, expanded, selectable }: RowProps) {
   const { accent } = useTheme();
   const toneColor = tone === 'danger' ? colors.danger : tone === 'accent' ? accent : undefined;
   const a11y = accessibilityLabel ?? [label, value, sub].filter(Boolean).join(', ');
-  const body = (
+  const off = !!(disabled || busy);
+  const state = { disabled: off, busy: !!busy, ...(expanded === undefined ? null : { expanded }) };
+  const text = (
     <>
       {icon ? <Icon name={icon} size={ICON} color={iconColor ?? toneColor ?? colors.textSecondary} /> : null}
       <View style={styles.flex}>
@@ -113,6 +119,10 @@ export const Row = memo(function Row({ label, icon, iconColor, value, sub, onPre
           {value}
         </Text>
       ) : null}
+    </>
+  );
+  const controls = (
+    <>
       {busy ? <ActivityIndicator size="small" color={colors.textDim} /> : null}
       {trailing}
       {(chevron ?? !!onPress) ? <Icon name="chevron-right" size={20} color={colors.textFaint} /> : null}
@@ -120,24 +130,50 @@ export const Row = memo(function Row({ label, icon, iconColor, value, sub, onPre
   );
   if (!onPress && !onLongPress) {
     return (
-      <View style={[styles.row, sub ? styles.tall : null]} accessible={!trailing} accessibilityLabel={trailing ? undefined : a11y}>
-        {body}
+      <View style={[styles.row, sub ? styles.tall : null]}>
+        <View style={styles.textArea} accessible accessibilityLabel={a11y}>
+          {text}
+        </View>
+        {controls}
       </View>
+    );
+  }
+  if (trailing) {
+    // The row has buttons of its own: the row isn't one TalkBack stop (it would swallow them). Its
+    // text is, with the tap and the long press as actions; each button is its own stop.
+    const actions = [...(onPress ? [{ name: 'activate' }] : []), ...(onLongPress ? [{ name: 'longpress', label: longPressLabel }] : [])];
+    return (
+      <Pressable onPress={onPress} onLongPress={onLongPress} disabled={off} android_ripple={{ color: colors.ripple }} accessible={false} style={[styles.row, sub ? styles.tall : null, off && styles.dimmed]}>
+        <View
+          style={styles.textArea}
+          accessible
+          accessibilityRole={onPress ? 'button' : undefined}
+          accessibilityLabel={a11y}
+          accessibilityHint={accessibilityHint}
+          accessibilityState={state}
+          accessibilityActions={actions}
+          onAccessibilityAction={(e) => (e.nativeEvent.actionName === 'longpress' ? onLongPress?.() : onPress?.())}
+        >
+          {text}
+        </View>
+        {controls}
+      </Pressable>
     );
   }
   return (
     <Pressable
       onPress={onPress}
       onLongPress={onLongPress}
-      disabled={disabled || busy}
+      disabled={off}
       android_ripple={{ color: colors.ripple }}
       accessibilityRole="button"
       accessibilityLabel={a11y}
       accessibilityHint={accessibilityHint}
-      accessibilityState={{ disabled: !!(disabled || busy), busy: !!busy }}
-      style={[styles.row, sub ? styles.tall : null, (disabled || busy) && styles.dimmed]}
+      accessibilityState={state}
+      style={[styles.row, sub ? styles.tall : null, off && styles.dimmed]}
     >
-      {body}
+      {text}
+      {controls}
     </Pressable>
   );
 });
@@ -241,9 +277,9 @@ export function SegmentRow<T extends string>({ label, icon, options, value, onCh
               style={[styles.segment, on && { backgroundColor: accentSoft, borderColor: colors.hairline }]}
               accessibilityRole="radio"
               accessibilityLabel={o.label}
-              accessibilityState={{ checked: on, selected: on, disabled: !!disabled }}
+              accessibilityState={{ checked: on, disabled: !!disabled }}
             >
-              <Text style={[styles.segmentText, on && styles.segmentOn]} numberOfLines={1}>
+              <Text style={[styles.segmentText, on && styles.segmentOn]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
                 {o.label}
               </Text>
             </Pressable>
@@ -391,6 +427,7 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', gap: space.m, paddingHorizontal: space.l, minHeight: ROW_HEIGHT, paddingVertical: space.xs },
   tall: { paddingVertical: space.s },
   switchRow: { paddingRight: space.s },
+  textArea: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: space.m, minWidth: 0 },
   openArea: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: space.m, alignSelf: 'stretch', minHeight: TOUCH },
   chevron: { justifyContent: 'center' },
   dimmed: { opacity: 0.5 },
