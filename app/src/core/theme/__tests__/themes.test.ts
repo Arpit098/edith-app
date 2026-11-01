@@ -13,6 +13,8 @@ import {
   backgroundLook,
   BUBBLE_GRADIENTS,
   bubbleLook,
+  coverRect,
+  cutAxis,
   DEFAULT_APPEARANCE,
   fitBubbleAlpha,
   glassAt,
@@ -23,18 +25,24 @@ import {
   INK_LIGHT,
   inkOn,
   MAX_CUSTOM,
+  MAX_PHOTOS,
   nextCustomId,
   normalizeAppearance,
+  PHOTO_DIM_LIMIT,
+  photoTones,
   PRESETS,
   resolveTheme,
   rgbOf,
   rimStrength,
   SWATCHES,
   tame,
+  UNKNOWN_TONES,
   withAlpha,
   type Appearance,
   type BubbleLook,
   type CustomGradient,
+  type Photo,
+  type PhotoBackground,
   type Theme,
 } from '../themes';
 
@@ -368,6 +376,116 @@ describe('the themes', () => {
     expect(new Set(PRESETS.map((p) => p.id)).size).toBe(PRESETS.length);
     expect(new Set(SWATCHES.map((s) => s.color)).size).toBe(SWATCHES.length);
     expect(new Set(ACCENTS.map((a) => a.color)).size).toBe(ACCENTS.length);
+  });
+});
+
+describe('a photo background', () => {
+  const grid = (...colours: Rgb[]): Rgb[] => Array.from({ length: 12 * 24 }, (_, i) => colours[i % colours.length]!);
+  const photo = (name: string, pixels: Rgb[]): Photo => ({ uri: `file:///docs/wallpapers/${name}.jpg`, width: 1080, height: 1440, tones: photoTones(pixels) });
+  /** The worst pictures for text: all white, bright and saturated patches, mid grey, black, and unreadable colours. */
+  const PHOTOS: Photo[] = [
+    photo('white', grid([1, 1, 1])),
+    photo('sunlit', grid([1, 1, 0.6], [0.4, 0.9, 1], [1, 1, 1], [0.1, 0.1, 0.12], [0.9, 0.6, 0.2])),
+    photo('saturated', grid([1, 0, 0], [0, 1, 0], [0, 0, 1], [1, 1, 0])),
+    photo('grey', grid([0.5, 0.5, 0.5])),
+    photo('black', grid([0, 0, 0])),
+    { uri: 'file:///docs/wallpapers/unknown.jpg', width: 800, height: 600, tones: [...UNKNOWN_TONES] },
+  ];
+  const on = (p: Photo, adjust: Partial<PhotoBackground> = {}, a: Partial<Appearance> = {}): Appearance =>
+    appearance({ photos: PHOTOS, background: { kind: 'photo', uri: p.uri, blur: 4, dim: 35, focus: 'center', tint: false, ...adjust }, ...a });
+
+  it('the shades are laid over the photo’s colours: black at the dim, then the theme’s tint', () => {
+    const p = PHOTOS[1]!;
+    const t = resolveTheme(on(p, { dim: 80, tint: true }, { theme: 'rose' }));
+    expect(t.background.photo).toMatchObject({ uri: p.uri, blur: 4, focus: 'center' });
+    const dim = t.background.photo!.dim; // the rose tint lightens it: dimmed a step further (85%)
+    expect(dim).toBeGreaterThanOrEqual(80);
+    const expected = p.tones.map((hex) => composite(withAlpha(PRESETS.find((x) => x.id === 'rose')!.glow, 0.2), composite(`rgba(0, 0, 0, ${dim / 100})`, rgbOf(hex))));
+    const samples = backdropSamples(t.background);
+    for (const e of expected) expect(samples.some((s) => s.every((v, i) => Math.abs(v - e[i]!) < 1e-6))).toBe(true);
+    expect(t.bg).toBe(t.background.bg); // the frost's base: the dimmed mean
+  });
+
+  it('the app’s text, dim text and accent read at 4.5:1 on any photo: a bright one is dimmed further, and says so', () => {
+    const low: string[] = [];
+    for (const pr of PRESETS) {
+      for (const p of PHOTOS) {
+        for (const dim of [0, 35, 80]) {
+          for (const tint of [false, true]) {
+            for (const accent of [null, ...ACCENTS.map((a) => a.id)]) {
+              const t = resolveTheme(on(p, { dim, tint }, { theme: pr.id, accent }));
+              const samples = backdropSamples(t.background);
+              for (const [k, c] of [['text', colors.text], ['dim', colors.textDim], ['accent', t.accent]] as const) {
+                if (worst(c, samples) < 4.5) low.push(`${pr.id}/${p.uri}/${dim}/${tint}/${accent}: ${k} ${worst(c, samples).toFixed(2)}`);
+              }
+            }
+          }
+        }
+      }
+    }
+    expect(low).toEqual([]);
+    const white = resolveTheme(on(PHOTOS[0]!, { dim: 0 })).background.photo!;
+    expect(white.raised).toBe(true);
+    expect(white.dim).toBeGreaterThan(0);
+    expect(white.dim).toBeLessThanOrEqual(PHOTO_DIM_LIMIT);
+    expect(resolveTheme(on(PHOTOS[4]!, { dim: 10 })).background.photo).toMatchObject({ dim: 10, raised: false }); // black: as chosen
+    // Unknown colours are taken as white: dimmed as much.
+    expect(resolveTheme(on(PHOTOS[5]!, { dim: 0 })).background.photo!.dim).toBe(white.dim);
+  });
+
+  it('chat text reads at 4.5:1 or more on every photo: each preset × colour and gradient bubble × dim × tint × glass, quotes included', () => {
+    const failures: string[] = [];
+    for (const pr of PRESETS) {
+      for (const p of PHOTOS) {
+        for (const dim of [0, 35, 80]) {
+          for (const tint of [false, true]) {
+            for (const id of [...COLOURS, ...GRADIENT_BUBBLES.slice(0, 3)]) {
+              for (const glassAmount of [0, 30, 60, 100]) {
+                lowScores(resolveTheme(on(p, { dim, tint }, { theme: pr.id, myBubble: id, edithBubble: id, glass: glassAmount })), `${pr.id}/${p.uri}/${dim}/${tint}/${id ?? 'default'}/${glassAmount}%`, failures);
+              }
+            }
+          }
+        }
+      }
+    }
+    expect(failures).toEqual([]);
+  });
+
+  it('a photo’s tones: the mean first, then the brightest and darkest patches; nothing read is taken as white', () => {
+    const tones = photoTones([[1, 1, 1], [0, 0, 0], [0.5, 0.5, 0.5], [1, 0, 0]]);
+    expect(tones[0]).toBe('#9F6060'); // the mean of the four: (2.5, 1.5, 1.5) / 4
+    expect(tones).toEqual(expect.arrayContaining(['#FFFFFF', '#000000', '#FF0000']));
+    expect(photoTones([])).toEqual(['#FFFFFF']);
+    expect(photoTones(Array.from({ length: 300 }, (_, i) => [i / 300, i / 300, i / 300] as Rgb)).length).toBeLessThanOrEqual(10);
+  });
+
+  it('covers the screen with the cut axis at its focus', () => {
+    // A wide photo on a tall screen: its sides are cut.
+    expect(cutAxis(400, 800, 1440, 960)).toBe('horizontal');
+    expect(coverRect(400, 800, 1440, 960, 'start')).toEqual({ left: 0, top: 0, width: 1200, height: 800 });
+    expect(coverRect(400, 800, 1440, 960, 'center')).toEqual({ left: -400, top: 0, width: 1200, height: 800 });
+    expect(coverRect(400, 800, 1440, 960, 'end')).toEqual({ left: -800, top: 0, width: 1200, height: 800 });
+    // A tall photo, taller than the screen: top and bottom are cut.
+    expect(cutAxis(400, 800, 1000, 3000)).toBe('vertical');
+    expect(coverRect(400, 800, 1000, 3000, 'end')).toEqual({ left: 0, top: -400, width: 400, height: 1200 });
+  });
+
+  it('is stored whole: kept photos and the photo background made valid; one pointing at no kept photo falls back', () => {
+    const kept = { uri: 'file:///docs/wallpapers/1.jpg', width: 1080, height: 1440, tones: ['#102030', 'nope', '#FFFFFF'] };
+    const a = normalizeAppearance({
+      photos: [kept, { ...kept }, { uri: '', width: 1, height: 1 }, { uri: 'x', width: -1, height: 2 }, null, { uri: 'file:///b.jpg', width: 10, height: 10 }, { uri: 'c', width: 1, height: 1 }, { uri: 'd', width: 1, height: 1 }],
+      background: { kind: 'photo', uri: kept.uri, blur: 99, dim: -5, focus: 'sideways', tint: 'yes' },
+    });
+    expect(a.photos).toEqual([
+      { ...kept, tones: ['#102030', '#FFFFFF'] },
+      { uri: 'file:///b.jpg', width: 10, height: 10, tones: ['#FFFFFF'] }, // no colours: assumed white
+      { uri: 'c', width: 1, height: 1, tones: ['#FFFFFF'] },
+    ]);
+    expect(a.photos).toHaveLength(MAX_PHOTOS);
+    expect(a.background).toEqual({ kind: 'photo', uri: kept.uri, blur: 20, dim: 0, focus: 'center', tint: false });
+    expect(normalizeAppearance({ photos: [kept], background: { kind: 'photo', uri: 'file:///gone.jpg' } }).background).toBe('glow');
+    expect(normalizeAppearance({ background: { kind: 'gif', uri: kept.uri } }).background).toBe('glow');
+    expect(resolveTheme({ ...DEFAULT_APPEARANCE, background: { kind: 'photo', uri: 'x', blur: 0, dim: 0, focus: 'center', tint: false } }).background.id).toBe('glow'); // never crashes
   });
 });
 

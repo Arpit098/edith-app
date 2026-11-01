@@ -11,7 +11,7 @@ import {
   backgroundLook,
   BUBBLE_GRADIENTS,
   CUSTOM_BUBBLE,
-  DEFAULT_APPEARANCE,
+  DEFAULT_BACKGROUND,
   DEFAULT_GLASS,
   DEFAULT_INTENSITY,
   GRADIENT_BACKGROUNDS,
@@ -30,12 +30,15 @@ import {
   type Appearance,
   type BubbleGradient,
   type GradientSpec,
+  type PhotoActions,
+  type Theme,
 } from '../../core/theme';
 import { Ambient } from '../../ui/Ambient';
 import { Icon } from '../../ui/Icon';
 import { Slider } from '../../ui/Slider';
 import { GradientBuilder } from './GradientBuilder';
 import { Heading, Hint, LinkButton, shared, Swatch, Tile } from './parts';
+import { PhotoChoices } from './PhotoChoices';
 
 export interface SectionProps {
   appearance: Appearance;
@@ -44,7 +47,7 @@ export interface SectionProps {
 
 // ---- Theme ----
 
-const TILE_LOOKS = new Map(PRESETS.map((p) => [p.id, backgroundLook(p, DEFAULT_APPEARANCE.background)]));
+const TILE_LOOKS = new Map(PRESETS.map((p) => [p.id, backgroundLook(p, DEFAULT_BACKGROUND)]));
 
 export function ThemeSection({ appearance, set }: SectionProps) {
   return (
@@ -79,7 +82,7 @@ const ThemeArt = memo(function ThemeArt({ id, accent, on }: { id: string; accent
 /** The builder's state: a new gradient (id null) or an existing one being changed. */
 type Editing = { id: string | null; spec: GradientSpec } | null;
 
-export function BackgroundSection({ appearance, set, onDraft }: SectionProps & { onDraft: (d: Partial<Appearance> | null) => void }) {
+export function BackgroundSection({ appearance, set, onDraft, photos, preview }: SectionProps & { onDraft: (d: Partial<Appearance> | null) => void; photos: PhotoActions | undefined; preview: Theme }) {
   const { preset } = useTheme();
   const [editing, setEditing] = useState<Editing>(null);
   const customs = appearance.customGradients;
@@ -111,7 +114,7 @@ export function BackgroundSection({ appearance, set, onDraft }: SectionProps & {
         text: 'Delete',
         style: 'destructive',
         onPress: () => {
-          set({ customGradients: customs.filter((c) => c.id !== id), ...(appearance.background === id ? { background: DEFAULT_APPEARANCE.background } : {}) });
+          set({ customGradients: customs.filter((c) => c.id !== id), ...(appearance.background === id ? { background: DEFAULT_BACKGROUND } : {}) });
           edit(null);
         },
       },
@@ -149,6 +152,7 @@ export function BackgroundSection({ appearance, set, onDraft }: SectionProps & {
   );
   return (
     <>
+      <PhotoChoices appearance={appearance} set={set} photos={photos} preview={preview} onDraft={onDraft} />
       <Heading>In the theme’s colours</Heading>
       <View style={shared.tiles} accessibilityRole="radiogroup">
         {themed.map(tile)}

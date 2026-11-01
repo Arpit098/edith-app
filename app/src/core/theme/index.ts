@@ -37,10 +37,18 @@ export function themedStyles<T>(make: (t: Theme) => T): () => T {
   };
 }
 
+/** Wallpaper photos: pick one from the gallery (it becomes the background), or remove a kept one. */
+export interface PhotoActions {
+  /** False when Arpit cancels the picker. Throws if the photo couldn't be read or saved. */
+  add(): Promise<boolean>;
+  remove(uri: string): void;
+}
+
 /** The chosen appearance and how to change it (Settings → Appearance); stored on the phone. */
 export interface AppearanceControl {
   appearance: Appearance;
   set(change: Partial<Appearance>): void;
+  photos?: PhotoActions; // absent where photos can't be kept (tests, web)
 }
 
 export const AppearanceContext = createContext<AppearanceControl>({ appearance: DEFAULT_APPEARANCE, set: () => {} });

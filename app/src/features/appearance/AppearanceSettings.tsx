@@ -1,8 +1,8 @@
 // Settings → Appearance: a live preview on top, then five sections that open one at a time (so the
 // page stays short): Theme, Background, Bubbles, Accent and Glass. Every tap applies at once (the app
 // re-renders in the new theme). The preview also shows what isn't applied yet: the glass slider while
-// it's dragged (applied on release, so a drag repaints only the preview), and a "Custom…" gradient
-// while it's being built (kept only on Save).
+// it's dragged (applied on release, so a drag repaints only the preview), a "Custom…" gradient
+// while it's being built (kept only on Save), and a photo's blur and dim while their sliders move.
 
 import { useMemo, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
@@ -16,7 +16,7 @@ import { backgroundName } from './summary';
 type SectionId = 'theme' | 'background' | 'bubbles' | 'accent' | 'glass';
 
 export function AppearanceSettings() {
-  const { appearance, set } = useAppearance();
+  const { appearance, set, photos } = useAppearance();
   const live = useTheme(); // the app's theme (it knows "reduce transparency")
   const [open, setOpen] = useState<SectionId | null>('theme');
   const [dragging, setDragging] = useState<number | null>(null); // the glass amount while the slider moves
@@ -40,7 +40,7 @@ export function AppearanceSettings() {
         <ThemeSection {...props} />
       </Section>
       <Section title="Background" value={backgroundName(appearance)} open={open === 'background'} onToggle={() => toggle('background')}>
-        <BackgroundSection {...props} onDraft={setDraft} />
+        <BackgroundSection {...props} onDraft={setDraft} photos={photos} preview={preview} />
       </Section>
       <Section title="Bubbles" value={`${bubbleName(appearance.myBubble)} · ${bubbleName(appearance.edithBubble)}`} open={open === 'bubbles'} onToggle={() => toggle('bubbles')}>
         <BubblesSection {...props} onDraft={setDraft} />
