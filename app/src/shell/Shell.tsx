@@ -13,6 +13,7 @@ import { ChromeContext, chrome, colors, space, titleGlow, type, useTheme } from 
 import { Ambient } from '../ui/Ambient';
 import { Glass, useBackdrop, WallpaperContext } from '../ui/Glass';
 import { Icon } from '../ui/Icon';
+import { BRAND_FONT, useBrandFont } from './brandFont';
 import { ConnectionPill } from './ConnectionPill';
 import { ConnectScreen } from './ConnectScreen';
 import { titleBox, type HeaderLayout, type TitleBox } from './headerTitle';
@@ -35,6 +36,7 @@ const APP_TITLE = 'E.D.I.T.H';
 export function Shell({ loaded, connection, meter }: { loaded: LoadedFeatures; connection: Connection; meter: FrameMeter | null }) {
   const link = useStore(connection.store, selectLink);
   const theme = useTheme();
+  const brandFont = useBrandFont(); // starts loading at once; nothing waits for it
   if (link === 'loading') {
     return (
       <View style={[styles.splash, { backgroundColor: theme.bg }]}>
@@ -43,10 +45,10 @@ export function Shell({ loaded, connection, meter }: { loaded: LoadedFeatures; c
     );
   }
   if (link === 'unconfigured') return <ConnectScreen connection={connection} />;
-  return <Main loaded={loaded} connection={connection} meter={meter} />;
+  return <Main loaded={loaded} connection={connection} meter={meter} brandFont={brandFont} />;
 }
 
-function Main({ loaded, connection, meter }: { loaded: LoadedFeatures; connection: Connection; meter: FrameMeter | null }) {
+function Main({ loaded, connection, meter, brandFont }: { loaded: LoadedFeatures; connection: Connection; meter: FrameMeter | null; brandFont: boolean }) {
   const insets = useSafeAreaInsets();
   const tabNames = useMemo(() => new Set([...loaded.screens.filter((s) => s.tab).map((s) => s.name), 'tools', 'settings']), [loaded]);
   const [nav, setNav] = useState<NavState>(() => ({ tab: loaded.screens.find((s) => s.tab)?.name ?? 'tools', stack: [] }));
@@ -131,6 +133,8 @@ function Main({ loaded, connection, meter }: { loaded: LoadedFeatures; connectio
   const HeaderOverlay = headerPanel?.overlay;
   const { titleGlow: glow } = useTheme(); // the title's glow takes the theme's accent
   const title = top === home || !route ? APP_TITLE : route.title;
+  // Only the E.D.I.T.H heading takes Michroma (once loaded); other pages' titles keep the system font.
+  const brand = brandFont && title === APP_TITLE;
   const box = useTitleBox(title);
 
   return (
@@ -165,14 +169,15 @@ function Main({ loaded, connection, meter }: { loaded: LoadedFeatures; connectio
           {/* [● bubble 0:42]      E.D.I.T.H      [☰] (plans/ui-next.md §2); other screens show their own title. */}
           <View style={styles.headerRow} onLayout={box.onRow} testID="header-row">
             {/* Its natural width, unseen: decides whether the title can sit centred (headerTitle.ts). */}
-            {/* Keyed by the title: remounted, it reports its layout even when the width is unchanged. */}
-            <Text key={title} style={styles.measure} numberOfLines={1} onLayout={box.onTitle} testID="header-title-measure" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" pointerEvents="none">
+            {/* Keyed by the title (and font): remounted, it reports its layout even when the width is unchanged. */}
+            <Text key={`${title}|${brand}`} style={[styles.measure, brand && styles.brand]} maxFontSizeMultiplier={brand ? BRAND_MAX_SCALE : undefined} numberOfLines={1} onLayout={box.onTitle} testID="header-title-measure" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" pointerEvents="none">
               {title}
             </Text>
             {/* The title in off-white with the logo's soft blue glow (titleGlow); E.D.I.T.H on the home screen.
                 Centred when it fits between the chip and the menu, else after the chip, cut with "…". */}
             <Text
-              style={[styles.title, { textShadowColor: glow }, box.style]}
+              style={[styles.title, brand && styles.brand, { textShadowColor: glow }, box.style]}
+              maxFontSizeMultiplier={brand ? BRAND_MAX_SCALE : undefined}
               numberOfLines={1}
               adjustsFontSizeToFit={box.squeezed}
               minimumFontScale={0.85}
@@ -244,6 +249,14 @@ function useKeyboardVisible(): boolean {
 
 const TITLE_FONT = { color: colors.text, fontSize: type.size.heading, fontWeight: '700', letterSpacing: 1.5 } as const;
 
+// Michroma is wide: "E.D.I.T.H" is 5.11 em of advances. At 18 with 1 of tracking it's ~101 dp, a
+// little wider than the bold system title it replaces, and at the 1.3x cap ~131 dp: inside the
+// space between the chip and the menu on a 360 dp phone (the "…" squeeze in useTitleBox still backs
+// it up). It has one weight; a bold request would make Android fake one, so it stays regular.
+const BRAND_MAX_SCALE = 1.3;
+
+const brandStyle = { fontFamily: BRAND_FONT, fontSize: 18, fontWeight: '400', letterSpacing: 1 } as const;
+
 const styles = StyleSheet.create({
   flex: { flex: 1 },
   hidden: { display: 'none' },
@@ -255,6 +268,7 @@ const styles = StyleSheet.create({
   title: { position: 'absolute', left: 96, right: 96, textAlign: 'center', ...TITLE_FONT, ...titleGlow },
   // Shrink-to-fit (no right edge): its width is the title's natural width, up to the row's.
   measure: { position: 'absolute', left: 0, opacity: 0, ...TITLE_FONT },
+  brand: brandStyle, // on top of title or measure: the E.D.I.T.H heading once Michroma is loaded
   unmeasured: { opacity: 0 }, // the first frame, before the row is measured
 
   menuSlot: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },

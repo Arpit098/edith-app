@@ -13,6 +13,30 @@ import { Squish } from '../../ui/motion';
 import { Shell } from '../Shell';
 
 jest.mock('../../ui/toast', () => ({ toast: jest.fn() }));
+// expo-font: not loaded until a test says so (mockFont.finish), then every useFonts re-renders as loaded.
+const mockFont = { loaded: false, listeners: new Set<() => void>(), sources: [] as Record<string, unknown>[] };
+jest.mock('expo-font', () => {
+  const { useSyncExternalStore } = require('react');
+  return {
+    ...jest.requireActual('expo-font'), // the icon font (vector-icons) uses the rest
+    useFonts: (sources: Record<string, unknown>) => {
+      mockFont.sources.push(sources);
+      const loaded = useSyncExternalStore(
+        (on: () => void) => (mockFont.listeners.add(on), () => mockFont.listeners.delete(on)),
+        () => mockFont.loaded,
+      );
+      return [loaded, null];
+    },
+  };
+});
+beforeEach(() => {
+  mockFont.loaded = false;
+  mockFont.sources = [];
+});
+const finishFontLoad = () => {
+  mockFont.loaded = true;
+  mockFont.listeners.forEach((on) => on());
+};
 jest.setTimeout(30_000); // the first run transforms all of React Native: slow on a cold cache
 
 const METRICS = { frame: { x: 0, y: 0, width: 400, height: 800 }, insets: { top: 24, left: 0, right: 0, bottom: 16 } };
@@ -152,6 +176,45 @@ describe('Shell', () => {
     });
     expect(handled).toBe(true);
     expect(texts(r)).not.toContain('/today');
+    act(() => r.unmount());
+    loaded.cleanup();
+  });
+
+  it('draws E.D.I.T.H in Michroma once it loads, on the system font until then; other titles never', async () => {
+    const { ctx, r, loaded } = await mount();
+    await act(() => ctx.connection.connect('edith', 'x'.repeat(40)));
+    await act(async () => ctx.transport.status({ state: 'open' }));
+    expect(Object.keys(mockFont.sources[0]!)).toEqual(['Michroma']); // asked for at startup, as a bundled asset
+    const header = (name: string) => r.root.findAll((n) => n.type === Text && n.props.accessibilityRole === 'header' && n.props.children === name)[0]!;
+    const measure = () => r.root.findAll((n) => n.type === Text && n.props.testID === 'header-title-measure')[0]!;
+    const font = (n: { props: Record<string, unknown> }) => StyleSheet.flatten(n.props.style as never) as { fontFamily?: string; fontSize?: number; fontWeight?: string; textShadowColor?: string; color?: string };
+
+    // Not loaded yet (or failed): the app runs as before, the system font.
+    expect(font(header('E.D.I.T.H')).fontFamily).toBeUndefined();
+    expect(header('E.D.I.T.H').props.maxFontSizeMultiplier).toBeUndefined();
+    const before = font(header('E.D.I.T.H'));
+
+    await act(async () => finishFontLoad());
+    const title = font(header('E.D.I.T.H'));
+    expect(title).toMatchObject({ fontFamily: 'Michroma', fontSize: 18, fontWeight: '400', color: before.color, textShadowColor: before.textShadowColor });
+    expect(header('E.D.I.T.H').props.maxFontSizeMultiplier).toBe(1.3);
+    // The hidden measuring copy uses the same font, so the header layout (headerTitle.ts) sees its real width.
+    expect(font(measure())).toMatchObject({ fontFamily: 'Michroma', fontSize: 18 });
+    expect(measure().props.maxFontSizeMultiplier).toBe(1.3);
+
+    // A sub-page's title (same style object) stays on the system font.
+    const press = async (label: string) => {
+      const target = r.root.findAll((n) => n.props.accessibilityLabel === label && typeof n.props.onPress === 'function')[0]!;
+      await act(async () => {
+        target.props.onPress();
+        await flush();
+      });
+    };
+    await press('Menu');
+    await press('Tools');
+    expect(font(header('Tools')).fontFamily).toBeUndefined();
+    expect(font(header('Tools')).fontSize).toBe(before.fontSize);
+    expect(font(measure()).fontFamily).toBeUndefined();
     act(() => r.unmount());
     loaded.cleanup();
   });
