@@ -90,7 +90,10 @@ describe('AccountsSection', () => {
     expect(r.root.findAllByType(Modal)).toHaveLength(0);
     expect(texts(r)).toContain('Home max');
 
-    await act(async () => byLabel('Work').props.onLongPress());
+    // TalkBack: the row's text is its own stop (its buttons are others), with Rename as the long-press action.
+    const work = r.root.find((n) => n.props.accessibilityLabel === 'Work' && typeof n.props.onAccessibilityAction === 'function');
+    expect(work.props.accessibilityActions).toContainEqual({ name: 'longpress', label: 'Rename' });
+    await act(async () => work.props.onAccessibilityAction({ nativeEvent: { actionName: 'longpress' } }));
     expect(nameInput()!.props.value).toBe('Work');
     await act(async () => press(r, 'Cancel'));
     expect(r.root.findAllByType(Modal)).toHaveLength(0);

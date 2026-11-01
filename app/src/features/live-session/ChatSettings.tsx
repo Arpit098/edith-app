@@ -1,34 +1,24 @@
 // Settings → Chat → Work details: how much of EDITH's work (the commands she runs, the files she
-// edits) each turn's Work card shows.
-
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+// edits) each turn's Work card shows, as a segmented choice with what it means under it.
 
 import { useStore } from '../../core/store';
-import { colors, radius, space, type, useTheme } from '../../core/theme';
+import { Section, SegmentRow, SettingsPageBody, SummaryCard } from '../../ui/SettingsRows';
 import type { WorkDetailSetting } from './chatSettings';
-import { WORK_DETAILS } from './work';
+import { WORK_DETAILS, type WorkDetail } from './work';
+
+const OPTIONS = WORK_DETAILS.map((d) => ({ id: d.id, label: d.name }));
+const selectDetail = (d: WorkDetail) => d;
 
 export function ChatSettings({ setting }: { setting: WorkDetailSetting }) {
-  const chosen = useStore(setting.store, (d) => d);
-  const { accentSoft } = useTheme();
+  const chosen = useStore(setting.store, selectDetail);
+  const detail = WORK_DETAILS.find((d) => d.id === chosen) ?? WORK_DETAILS[1]!;
   return (
-    <View style={styles.page}>
-      <Text style={styles.heading} accessibilityRole="header">
-        Work details
-      </Text>
-      <View style={styles.options} accessibilityRole="radiogroup">
-        {WORK_DETAILS.map((d) => {
-          const on = d.id === chosen;
-          return (
-            <Pressable key={d.id} onPress={() => setting.set(d.id)} style={[styles.option, on && { backgroundColor: accentSoft, borderColor: colors.text }]} accessibilityRole="radio" accessibilityState={{ selected: on }} accessibilityLabel={`${d.name}: ${d.hint}`}>
-              <Text style={[styles.name, on && styles.on]}>{d.name}</Text>
-              <Text style={styles.hint}>{d.hint}</Text>
-            </Pressable>
-          );
-        })}
-      </View>
-      <Text style={styles.note}>A failed step always shows, whatever this is set to.</Text>
-    </View>
+    <SettingsPageBody>
+      <SummaryCard icon="message-cog-outline" title="Chat" subtitle={chatSummary(detail.name)} />
+      <Section title="Work details" footer={`${detail.hint} A failed step always shows, whatever this is set to.`}>
+        <SegmentRow label="Each turn’s Work card shows" icon="format-list-checks" options={OPTIONS} value={chosen} onChange={setting.set} />
+      </Section>
+    </SettingsPageBody>
   );
 }
 
@@ -36,14 +26,3 @@ export function ChatSettings({ setting }: { setting: WorkDetailSetting }) {
 export function chatSummary(name: string | undefined): string {
   return `Work details: ${name ?? 'Steps'}`;
 }
-
-const styles = StyleSheet.create({
-  page: { gap: space.s },
-  heading: { color: colors.textDim, fontSize: type.size.caption, fontWeight: '700', letterSpacing: 0.8, textTransform: 'uppercase' },
-  options: { gap: space.s },
-  option: { padding: space.m, borderRadius: radius.m, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.hairline, backgroundColor: colors.card, gap: 2 },
-  name: { color: colors.text, fontSize: type.size.body },
-  on: { fontWeight: '700' },
-  hint: { color: colors.textDim, fontSize: type.size.small },
-  note: { color: colors.textDim, fontSize: type.size.small },
-});

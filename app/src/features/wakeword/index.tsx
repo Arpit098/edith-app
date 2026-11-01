@@ -2,12 +2,14 @@
 // trained on Arpit's Mac, PLAN.md §4.5) and its Settings section. The always-on detector
 // (WakeWordService) comes later, behind ports.wakeWord.
 
+import { useMemo } from 'react';
+
 import type { EventBus } from '../../core/events';
-import type { FeatureModule } from '../../core/feature';
-import { useStoreOr } from '../../core/store';
-import { createWakewordModel, type WakewordModel } from './model';
+import type { FeatureModule, SettingsToggle } from '../../core/feature';
+import { createSelector, shallowEqual, useStoreOr } from '../../core/store';
+import { createWakewordModel, type WakewordModel, type WakewordState } from './model';
 import { TrainScreen } from './TrainScreen';
-import { WakeWordSettings } from './WakeWordSettings';
+import { WakeWordSettings, wakewordToggle } from './WakeWordSettings';
 import { wakewordSummary } from './summary';
 
 let model: WakewordModel | null = null;
@@ -25,11 +27,20 @@ function useSummary() {
   return useStoreOr(model?.store, wakewordSummary, null);
 }
 
+function useToggle(): SettingsToggle | null {
+  const state = useStoreOr(model?.store, selectToggle, null);
+  const m = model;
+  return useMemo(() => (m && state ? wakewordToggle(m, state) : null), [m, state]);
+}
+
+// Not every state change (a take's level while recording): only the switch's own parts.
+const selectToggle = createSelector((s: WakewordState) => ({ enabled: s.enabled, installed: s.installed }), shallowEqual);
+
 const wakeword: FeatureModule = {
   id: 'wakeword',
   screens: [{ name: 'wakeword', title: 'Train wake word', component: Screen }],
   tool: { title: 'Wake word', icon: 'account-voice', screen: 'wakeword' },
-  settings: [{ title: 'Wake word', component: Settings, group: 'voice', icon: 'account-voice', order: 20, summary: useSummary }],
+  settings: [{ title: 'Wake word', component: Settings, group: 'voice', icon: 'account-voice', order: 20, summary: useSummary, toggle: useToggle }],
   setup: (ctx) => {
     const m = createWakewordModel({
       bus: ctx.bus,

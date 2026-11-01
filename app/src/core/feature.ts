@@ -23,7 +23,16 @@ export interface Screen {
 }
 
 /** The groups of the Settings list, in the order they show (shell/settingsGroups.ts has their titles). */
-export type SettingsGroup = 'connection' | 'notifications' | 'voice' | 'app' | 'more';
+export type SettingsGroup = 'connection' | 'notifications' | 'voice' | 'app' | 'about' | 'more';
+
+/** A setting that is just on or off, switched right in the Settings list (its row still opens the page). */
+export interface SettingsToggle {
+  on: boolean;
+  set(on: boolean): void;
+  disabled?: boolean;
+  /** Dim text before the switch while it matters, e.g. "Every 15 min". */
+  detail?: string | null;
+}
 
 /**
  * A row in Settings that opens `component` on its own page. Only `title` and `component` are required:
@@ -37,8 +46,12 @@ export interface SettingsSection {
   order?: number; // within the group, lowest first (default 100; ties by title)
   /** A React hook, called while the row renders: one short line of live state, e.g. "On · Instant". */
   summary?: () => string | null;
+  /** A React hook: the row's inline switch, or null for none right now (e.g. not on this phone). */
+  toggle?: () => SettingsToggle | null;
+  /** A React hook: a few words for the card at the top of Settings, after the link state ("Interseqt active"). */
+  badge?: () => string | null;
   /**
-   * "card" (default): the page scrolls, its content in a glass card. "full": the content fills the page
+   * "card" (default): the page scrolls; its content draws its own cards (ui/SettingsRows). "full": the content fills the page
    * under its back header and lays itself out (an editor); it may take Android back first (core/pageBack).
    */
   layout?: 'card' | 'full';

@@ -32,7 +32,7 @@ function useSummary() {
 
 const appUpdate: FeatureModule = {
   id: 'app-update',
-  settings: [{ title: SETTINGS_TITLE, component: Section, group: 'app', icon: 'cellphone-arrow-down', order: 10, summary: useSummary }],
+  settings: [{ title: SETTINGS_TITLE, component: Section, group: 'about', icon: 'cellphone-arrow-down', order: 10, summary: useSummary }],
   panels: [{ slot: 'banner', component: Banner }],
   setup: ({ bus: b, api, ports }) => {
     const m = createAppUpdateModel({

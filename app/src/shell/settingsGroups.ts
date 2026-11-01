@@ -4,10 +4,11 @@
 import type { SettingsGroup, SettingsSection } from '../core/feature';
 
 export const GROUPS: readonly { id: SettingsGroup; title: string }[] = [
-  { id: 'connection', title: 'Connection & account' },
+  { id: 'connection', title: 'Connection' },
   { id: 'notifications', title: 'Notifications' },
   { id: 'voice', title: 'Voice' },
   { id: 'app', title: 'App' },
+  { id: 'about', title: 'About' },
   { id: 'more', title: 'More' },
 ];
 

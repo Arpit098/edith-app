@@ -3,14 +3,15 @@
 // pencil, or a long press on the row: a small dialog) and Remove.
 
 import { useState } from 'react';
-import { Alert, Linking, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Linking, Modal, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import type { ClaudeAccount } from '../../core/api';
 import { useStore } from '../../core/store';
 import { colors, radius, space, type } from '../../core/theme';
 import { Button } from '../../ui/Button';
-import { Icon } from '../../ui/Icon';
+import { CardBlock, Helper, PillButton, Row, Section, SettingsPageBody, SummaryCard } from '../../ui/SettingsRows';
 import { LABEL_MAX, labelProblem, switchLine, type AccountsModel, type AccountsState } from './model';
+import { accountsSummary } from './summary';
 
 const selectState = (s: AccountsState) => s;
 
@@ -38,55 +39,64 @@ export function AccountsSection({ model }: { model: AccountsModel }) {
     if (url) Linking.openURL(url).catch(() => undefined); // the link is also shown, to copy
   };
 
+  const active = s.accounts.find((a) => a.active);
   return (
-    <View style={styles.box}>
-      {!s.loaded && !s.error ? <Text style={styles.dim}>Loading…</Text> : null}
-      {s.accounts.map((a) => (
-        <Pressable
-          key={a.id}
-          style={styles.account}
-          accessibilityLabel={`${a.label}${a.active ? ', in use' : ''}`}
-          accessibilityHint="Long press to rename"
-          onLongPress={() => setRenaming(a)}
-        >
-          <Icon name={a.active ? 'check-circle' : 'account-circle-outline'} size={20} color={a.active ? colors.ok : colors.textDim} />
-          <View style={styles.flex}>
-            <Text style={styles.value} numberOfLines={1}>
-              {a.label}
-            </Text>
-            <Text style={styles.dim} numberOfLines={1}>
-              {[a.email !== a.label ? a.email : null, a.plan ? `${a.plan[0]!.toUpperCase()}${a.plan.slice(1)}` : null, a.active ? 'in use' : null].filter(Boolean).join(' · ')}
-            </Text>
-          </View>
-          <Button small icon="pencil-outline" variant="ghost" accessibilityLabel={`Rename ${a.label}`} disabled={s.busy !== null} onPress={() => setRenaming(a)} />
-          {a.active ? null : (
-            <>
-              <Button small label="Switch" icon="swap-horizontal" variant="primary" disabled={switching || s.busy !== null} busy={s.busy === 'switch'} onPress={() => confirmSwitch(a)} />
-              <Button small icon="delete-outline" accessibilityLabel={`Remove ${a.label}`} disabled={switching || s.busy !== null} onPress={() => confirmRemove(a)} />
-            </>
-          )}
-        </Pressable>
-      ))}
+    <SettingsPageBody>
+      <SummaryCard
+        icon="account-multiple-outline"
+        title={active ? active.label : 'Claude accounts'}
+        subtitle={accountsSummary(s) ?? 'Loading…'}
+        tone={switching ? 'warn' : s.error ? 'danger' : active ? 'ok' : undefined}
+      />
+
+      <Section title="Accounts" footer="Long press an account to rename it. Switching restarts EDITH and the coding agents.">
+        {s.accounts.map((a) => (
+          <Row
+            key={a.id}
+            icon={a.active ? 'check-circle' : 'account-circle-outline'}
+            iconColor={a.active ? colors.ok : undefined}
+            label={a.label}
+            sub={[a.email !== a.label ? a.email : null, a.plan ? `${a.plan[0]!.toUpperCase()}${a.plan.slice(1)}` : null, a.active ? 'in use' : null].filter(Boolean).join(' · ')}
+            accessibilityLabel={`${a.label}${a.active ? ', in use' : ''}`}
+            accessibilityHint="Long press to rename"
+            onLongPress={() => setRenaming(a)}
+            longPressLabel="Rename"
+            chevron={false}
+            trailing={
+              <View style={styles.actions}>
+                <Button small icon="pencil-outline" variant="ghost" accessibilityLabel={`Rename ${a.label}`} disabled={s.busy !== null} onPress={() => setRenaming(a)} />
+                {a.active ? null : (
+                  <>
+                    <Button small label="Switch" icon="swap-horizontal" variant="primary" disabled={switching || s.busy !== null} busy={s.busy === 'switch'} onPress={() => confirmSwitch(a)} />
+                    <Button small icon="delete-outline" variant="ghost" accessibilityLabel={`Remove ${a.label}`} disabled={switching || s.busy !== null} onPress={() => confirmRemove(a)} />
+                  </>
+                )}
+              </View>
+            }
+          />
+        ))}
+        {!s.loaded && !s.error ? <Row icon="progress-clock" label="Loading…" /> : null}
+        <Row icon="refresh" label="Refresh" tone="accent" chevron={false} busy={s.busy === 'refresh'} onPress={() => void model.refresh()} />
+      </Section>
       {renaming ? <RenameDialog model={model} account={renaming} busy={s.busy === 'rename'} onClose={() => setRenaming(null)} /> : null}
 
       {s.switch ? (
-        <View style={styles.block}>
+        <View style={styles.status} accessibilityLiveRegion="polite">
           <Text style={[styles.text, s.switch.state === 'failed' && styles.error, s.switch.state === 'rolled_back' && styles.warn]}>{switchLine(s.switch, s.accounts)}</Text>
-          {switching && s.switch.agents.length ? <Text style={styles.dim}>{`Restarting EDITH and ${s.switch.agents.join(', ')}`}</Text> : null}
+          {switching && s.switch.agents.length ? <Helper>{`Restarting EDITH and ${s.switch.agents.join(', ')}`}</Helper> : null}
         </View>
       ) : null}
 
-      {s.error ? <Text style={[styles.text, styles.error]}>{s.error}</Text> : null}
+      {s.error ? <Helper tone="error">{s.error}</Helper> : null}
 
       {s.login ? (
-        <LoginForm model={model} url={s.login.url} busy={s.busy === 'code'} />
+        <Section title="Add an account">
+          <LoginForm model={model} url={s.login.url} busy={s.busy === 'code'} />
+        </Section>
       ) : (
-        <View style={styles.row}>
-          <Button small label="Add account" icon="account-plus-outline" disabled={switching} busy={s.busy === 'login'} onPress={() => void add()} />
-          <Button small label="Refresh" icon="refresh" busy={s.busy === 'refresh'} onPress={() => void model.refresh()} />
-        </View>
+        <PillButton label="Add account" icon="account-plus-outline" variant="primary" disabled={switching} busy={s.busy === 'login'} onPress={() => void add()} />
       )}
-    </View>
+    </SettingsPageBody>
   );
 }
 
@@ -145,7 +155,7 @@ function LoginForm({ model, url, busy }: { model: AccountsModel; url: string; bu
     }
   };
   return (
-    <View style={styles.block}>
+    <CardBlock>
       <Text style={styles.text}>Sign in to the other Claude account on this page, then paste the code it shows below.</Text>
       <Text style={[styles.dim, styles.link]} selectable numberOfLines={3}>
         {url}
@@ -157,15 +167,13 @@ function LoginForm({ model, url, busy }: { model: AccountsModel; url: string; bu
         <Button small label="Save account" icon="check" variant="primary" disabled={!code.trim()} busy={busy} onPress={() => void done()} />
         <Button small label="Cancel" disabled={busy} onPress={() => void model.cancelLogin()} />
       </View>
-    </View>
+    </CardBlock>
   );
 }
 
 const styles = StyleSheet.create({
-  box: { gap: space.s },
-  account: { flexDirection: 'row', alignItems: 'center', gap: space.s, paddingVertical: space.xs },
-  flex: { flex: 1 },
-  block: { gap: space.s, marginTop: space.xs, paddingTop: space.s, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.hairline },
+  actions: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  status: { gap: space.xs, paddingHorizontal: space.xs },
   row: { flexDirection: 'row', alignItems: 'center', gap: space.s, flexWrap: 'wrap' },
   end: { justifyContent: 'flex-end' },
   scrim: { flex: 1, justifyContent: 'center', padding: space.l, backgroundColor: colors.scrim },

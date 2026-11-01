@@ -1,7 +1,7 @@
 // Each Settings row's one-line summary, from the feature's own state.
 
 import { updateSummary } from '../../features/app-update/summary';
-import { accountsSummary } from '../../features/claude-accounts/summary';
+import { accountsSummary, activeBadge } from '../../features/claude-accounts/summary';
 import { initialAccounts } from '../../features/claude-accounts/model';
 import { voiceSummary } from '../../features/live-session/summary';
 import { liveAlertsSummary } from '../../features/live-status/summary';
@@ -11,7 +11,7 @@ import type { AppUpdateState } from '../../features/app-update/model';
 import type { PushState } from '../../features/push/model';
 import type { VoiceState } from '../../features/live-session/voice';
 import type { WakewordState } from '../../features/wakeword/model';
-import { linkSummary } from '../SettingsScreen';
+import { cardLine, linkSummary } from '../SettingsScreen';
 
 describe('settings summaries', () => {
   it('connection', () => {
@@ -32,6 +32,10 @@ describe('settings summaries', () => {
     expect(accountsSummary({ ...initialAccounts, error: 'offline' })).toBe('Couldn’t load the accounts');
     const running = { run: 'r', target: 'b', previous: 'a', state: 'running' as const, step: 'stopping', detail: null, started: null, ts: null, agents: [] };
     expect(accountsSummary({ ...initialAccounts, loaded: true, accounts, switch: running })).toBe('Switching…');
+    // The words the top card adds after the link state.
+    expect(cardLine('open', [activeBadge({ ...initialAccounts, loaded: true, accounts })])).toBe('Connected · Interseqt active');
+    expect(cardLine('offline', [activeBadge(initialAccounts)])).toBe('Offline');
+    expect(activeBadge({ ...initialAccounts, loaded: true, accounts, switch: running })).toBe('Switching account…');
   });
 
   it('Push', () => {
