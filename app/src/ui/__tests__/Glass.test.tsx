@@ -3,11 +3,11 @@
 
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { StyleSheet, View } from 'react-native';
-import { LinearGradient, Rect, Stop } from 'react-native-svg';
+import { LinearGradient, Path, Stop } from 'react-native-svg';
 
-import { glass, GlassContext, rims, stopOf, type GlassSettings, type NativeGlassProps, type Scheme } from '../../core/theme';
-import { Glass } from '../Glass';
-import { Rim, rimInsets } from '../Rim';
+import { glass, glassEdge, GlassContext, rims, stopOf, type GlassSettings, type NativeGlassProps, type Scheme } from '../../core/theme';
+import { bubbleCorners, Glass } from '../Glass';
+import { insetOutline, Rim, rimCurve, rimInsets, RIM_SAMPLES, type Corners } from '../Rim';
 
 function FakeNative(_: NativeGlassProps) {
   return null;
@@ -54,9 +54,10 @@ describe('Glass rim', () => {
     layout(r, 48, 48);
     const first = rimOf(r);
     expect(first.props).toMatchObject({ width: 48, height: 48, radius: 24, scheme: undefined });
-    const svgBefore = r.root.findAllByType(Rect).map((x) => x.props);
+    const svgBefore = r.root.findAllByType(Path).map((x) => x.props);
+    expect(svgBefore).toHaveLength(3);
     layout(r, 48, 48); // a move (the keyboard opening) reports the same size: nothing redraws
-    expect(r.root.findAllByType(Rect).map((x) => x.props)).toEqual(svgBefore);
+    expect(r.root.findAllByType(Path).map((x) => x.props)).toEqual(svgBefore);
     layout(r, 300, 48);
     expect(rimOf(r).props).toMatchObject({ width: 300, height: 48 });
   });
@@ -81,42 +82,116 @@ describe('Glass rim', () => {
   });
 });
 
+/** A path from insetOutline, read back: its points, and each arc's radius and centre (from its two ends). */
+function readOutline(d: string) {
+  const tokens = d.split(' ');
+  const points: [number, number][] = [];
+  const arcs: { r: number; centre: [number, number] }[] = [];
+  for (let i = 0; i < tokens.length; ) {
+    const c = tokens[i++]!;
+    if (c === 'M' || c === 'L') points.push([Number(tokens[i++]), Number(tokens[i++])]);
+    else if (c === 'A') {
+      const r = Number(tokens[i]);
+      i += 5;
+      const end: [number, number] = [Number(tokens[i++]), Number(tokens[i++])];
+      const start = points[points.length - 1]!;
+      // A clockwise quarter turn from `start` to `end`: the centre is the corner of the box they span, inside the shape.
+      const centre: [number, number] = end[1] > start[1] === end[0] > start[0] ? [start[0], end[1]] : [end[0], start[1]];
+      arcs.push({ r, centre });
+      points.push(end);
+    }
+  }
+  return { points, arcs };
+}
+
 describe('Rim', () => {
-  function rects(width: number, height: number, radius: number) {
-    const r = render(<Rim width={width} height={height} radius={radius} />);
-    return r.root.findAllByType(Rect).map((x) => x.props);
+  function paths(width: number, height: number, radius: number, corners?: Corners) {
+    const r = render(<Rim width={width} height={height} radius={radius} corners={corners} />);
+    return r.root.findAllByType(Path).map((x) => x.props);
   }
 
-  it('is bright at the top-left and bottom-right, nearly clear at the other corners', () => {
+  it('is bright at the top-left and bottom-right and fades towards the other corners along a smooth curve, never to nothing', () => {
     const r = render(<Rim width={200} height={48} radius={24} />);
     const g = r.root.findAllByType(LinearGradient).find((x) => x.props.id === 'rim')!;
-    expect(g.props).toMatchObject({ x1: '0%', y1: '0%', x2: '100%', y2: '100%' }); // the bounding box's diagonal
+    expect(g.props).toMatchObject({ x1: '0%', y1: '0%', x2: '100%', y2: '100%' }); // the bounding box's diagonal: scales with the size
     const op = g.findAllByType(Stop).map((s) => s.props.stopOpacity as number);
-    const mid = op[2]!;
+    expect(op).toHaveLength(RIM_SAMPLES);
+    const first = op[0]!;
+    const last = op[op.length - 1]!;
     // Lit, yet near the thin glass edge's brightness (0.22): a hairline, not a frame (Arpit, 31 Oct).
-    expect(op[0]).toBeGreaterThan(0.3); // top-left
-    expect(op[0]).toBeLessThanOrEqual(0.6);
-    expect(op[4]).toBeGreaterThan(0.3); // bottom-right
-    expect(mid).toBeLessThan(0.1); // halfway along the diagonal: the top-right and bottom-left corners
-    expect(op[0]).toBeGreaterThanOrEqual(op[4]!); // the light comes from the top-left
+    expect(first).toBeGreaterThan(0.3);
+    expect(first).toBeLessThanOrEqual(0.6);
+    expect(last).toBeGreaterThan(0.3);
+    expect(first).toBeGreaterThanOrEqual(last); // the light comes from the top-left
+    expect(op[(RIM_SAMPLES - 1) / 2]).toBeLessThan(0.1); // halfway: the top-right and bottom-left corners
+    for (const scheme of ['dark', 'light'] as const) {
+      const f = rimCurve(rims[scheme]);
+      const dim = stopOf(rims[scheme].dim).opacity;
+      const xs = Array.from({ length: 401 }, (_, i) => i / 400);
+      const v = xs.map(f);
+      // Exactly the rim's old ends (composer and popup parity): lit at the top-left, lit × far at the bottom-right.
+      expect(f(0)).toBeCloseTo(stopOf(rims[scheme].lit).opacity, 9);
+      expect(f(1)).toBeCloseTo(stopOf(rims[scheme].lit).opacity * rims[scheme].far, 9);
+      expect(Math.min(...v)).toBeGreaterThanOrEqual(dim * rims[scheme].far - 1e-9); // thins away, never ends
+      expect(Math.min(...v)).toBeGreaterThan(0);
+      // Smooth: no jump, and no kink (the slope changes gently everywhere, the old stops' corners gone).
+      const d1 = v.slice(1).map((y, i) => y - v[i]!);
+      const d2 = d1.slice(1).map((y, i) => y - d1[i]!);
+      expect(Math.max(...d1.map(Math.abs))).toBeLessThan(0.01);
+      expect(Math.max(...d2.map(Math.abs))).toBeLessThan(0.0005);
+      // About `mid` where the rim always had it (the far corner's easing takes a touch off).
+      expect(Math.abs(f(0.22) - stopOf(rims[scheme].mid).opacity)).toBeLessThan(0.02);
+    }
   });
 
-  it('keeps every stroke inside the surface, with corners that follow its radius', () => {
-    for (const [w, h, radius] of [
-      [48, 48, 24],
-      [300, 48, 999], // a pill: the radius is clamped to half the height
-      [240, 300, 30],
-    ] as const) {
-      for (const p of rects(w, h, radius)) {
-        const half = p.strokeWidth / 2;
-        expect(p.x - half).toBeGreaterThanOrEqual(0);
-        expect(p.y - half).toBeGreaterThanOrEqual(0);
-        expect(p.x + p.width + half).toBeLessThanOrEqual(w);
-        expect(p.y + p.height + half).toBeLessThanOrEqual(h);
-        expect(p.rx).toBeCloseTo(Math.min(radius, w / 2, h / 2) - p.x);
-        expect(p.fill).toBe('none');
+  it('follows the outline exactly: each stroke inset by half its width, every corner concentric, at any size', () => {
+    const sizes: [number, number][] = [
+      [72, 40], // a one-word bubble: the corners clamp to half its height
+      [220, 44], // one line
+      [260, 120], // a few lines
+      [300, 900], // a long message
+    ];
+    for (const [w, h] of sizes) {
+      for (const corners of [undefined, bubbleCorners('right'), bubbleCorners('left')]) {
+        const shape = corners ?? { tl: 24, tr: 24, br: 24, bl: 24 };
+        const fit = Math.min(w / 2, h / 2);
+        const centres = {
+          tr: [w - Math.min(shape.tr, fit), Math.min(shape.tr, fit)],
+          br: [w - Math.min(shape.br, fit), h - Math.min(shape.br, fit)],
+          bl: [Math.min(shape.bl, fit), h - Math.min(shape.bl, fit)],
+          tl: [Math.min(shape.tl, fit), Math.min(shape.tl, fit)],
+        };
+        const ins = rimInsets(rims.dark);
+        const drawn = paths(w, h, 24, corners);
+        expect(drawn.map((p) => p.strokeWidth)).toEqual([ins.shade[1], ins.glow[1], ins.rim[1]]);
+        for (const [p, [inset]] of drawn.map((p, i) => [p, [ins.shade, ins.glow, ins.rim][i]!] as const)) {
+          expect(p.fill).toBe('none');
+          const { points, arcs } = readOutline(p.d);
+          // Inside the surface: the stroke's outer side touches the edge at most.
+          const half = p.strokeWidth / 2;
+          for (const [x, y] of points) {
+            expect(x - half).toBeGreaterThanOrEqual(-1e-6);
+            expect(y - half).toBeGreaterThanOrEqual(-1e-6);
+            expect(x + half).toBeLessThanOrEqual(w + 1e-6);
+            expect(y + half).toBeLessThanOrEqual(h + 1e-6);
+          }
+          // Four corners, in order, each on the outline's own centre with its radius less the inset: no gap or offset.
+          expect(arcs).toHaveLength(4);
+          (['tr', 'br', 'bl', 'tl'] as const).forEach((k, i) => {
+            expect(arcs[i]!.centre[0]).toBeCloseTo(centres[k][0]!, 2);
+            expect(arcs[i]!.centre[1]).toBeCloseTo(centres[k][1]!, 2);
+            expect(arcs[i]!.r).toBeCloseTo(Math.min(shape[k], fit) - inset, 2);
+          });
+          // Closed where it started.
+          expect(points[points.length - 1]).toEqual(points[0]);
+        }
       }
     }
+  });
+
+  it('the outline helper: straight sides at the inset, a corner of radius 0 a plain corner', () => {
+    const d = insetOutline(100, 50, { tl: 10, tr: 10, br: 0, bl: 10 }, 0.25);
+    expect(d.startsWith('M 10 0.25 L 90 0.25 A 9.75 9.75 0 0 1 99.75 10 L 99.75 49.75 L 99.75 49.75')).toBe(true);
   });
 
   it('is thin: the rim and its inner glow about a hairline each, not a frame', () => {
@@ -128,11 +203,20 @@ describe('Rim', () => {
 
   it('draws the shade, then the inner glow, then the rim on top', () => {
     const ins = rimInsets(rims.dark);
-    expect(rects(100, 48, 24).map((p) => [p.x, p.strokeWidth])).toEqual([ins.shade, ins.glow, ins.rim]);
+    // Each stroke's path starts on the top side at its inset.
+    expect(paths(100, 48, 24).map((p) => [Number(p.d.split(' ')[2]), p.strokeWidth])).toEqual([ins.shade, ins.glow, ins.rim]);
   });
 
   it('draws nothing at zero size', () => {
-    expect(rects(0, 48, 24)).toEqual([]);
+    expect(paths(0, 48, 24)).toEqual([]);
+  });
+
+  it('a closed hairline edge is one colour all round (two colours broke off at the corners); a bar keeps its own', () => {
+    const r = render(<Glass level="thin" />);
+    const s = outerStyle(r);
+    expect([s.borderTopColor, s.borderLeftColor, s.borderRightColor, s.borderBottomColor]).toEqual(Array(4).fill(glassEdge(glass.thin)));
+    const bar = outerStyle(render(<Glass level="thick" edges={{ bottom: true }} />));
+    expect(bar.borderBottomColor).toBe(glass.thick.edge[1]);
   });
 });
 
