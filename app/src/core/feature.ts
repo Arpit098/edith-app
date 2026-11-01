@@ -37,6 +37,11 @@ export interface SettingsSection {
   order?: number; // within the group, lowest first (default 100; ties by title)
   /** A React hook, called while the row renders: one short line of live state, e.g. "On · Instant". */
   summary?: () => string | null;
+  /**
+   * "card" (default): the page scrolls, its content in a glass card. "full": the content fills the page
+   * under its back header and lays itself out (an editor); it may take Android back first (core/pageBack).
+   */
+  layout?: 'card' | 'full';
 }
 
 /** A tile in the Tools launcher grid. Most features are tools; the navigation menu lists only a handful of main screens. */

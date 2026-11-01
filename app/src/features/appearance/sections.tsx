@@ -1,4 +1,4 @@
-// Appearance's sections: Theme, Background, Bubbles, Accent and Glass. Each applies a tap at once.
+// Appearance's tools' controls: Theme, Background, Bubbles, Accent and Glass (Photo is PhotoChoices). Each applies a tap at once.
 // The builders ("Custom…") hand their draft to the page (`onDraft`) so the preview shows it live;
 // it's stored only on Save.
 
@@ -30,15 +30,12 @@ import {
   type Appearance,
   type BubbleGradient,
   type GradientSpec,
-  type PhotoActions,
-  type Theme,
 } from '../../core/theme';
 import { Ambient } from '../../ui/Ambient';
 import { Icon } from '../../ui/Icon';
 import { Slider } from '../../ui/Slider';
 import { GradientBuilder } from './GradientBuilder';
 import { Heading, Hint, LinkButton, shared, Swatch, Tile } from './parts';
-import { PhotoChoices } from './PhotoChoices';
 
 export interface SectionProps {
   appearance: Appearance;
@@ -82,7 +79,7 @@ const ThemeArt = memo(function ThemeArt({ id, accent, on }: { id: string; accent
 /** The builder's state: a new gradient (id null) or an existing one being changed. */
 type Editing = { id: string | null; spec: GradientSpec } | null;
 
-export function BackgroundSection({ appearance, set, onDraft, photos, preview }: SectionProps & { onDraft: (d: Partial<Appearance> | null) => void; photos: PhotoActions | undefined; preview: Theme }) {
+export function BackgroundSection({ appearance, set, onDraft }: SectionProps & { onDraft: (d: Partial<Appearance> | null) => void }) {
   const { preset } = useTheme();
   const [editing, setEditing] = useState<Editing>(null);
   const customs = appearance.customGradients;
@@ -152,7 +149,6 @@ export function BackgroundSection({ appearance, set, onDraft, photos, preview }:
   );
   return (
     <>
-      <PhotoChoices appearance={appearance} set={set} photos={photos} preview={preview} onDraft={onDraft} />
       <Heading>In the theme’s colours</Heading>
       <View style={shared.tiles} accessibilityRole="radiogroup">
         {themed.map(tile)}
@@ -181,7 +177,8 @@ export function BackgroundSection({ appearance, set, onDraft, photos, preview }:
 
 // ---- Bubbles ----
 
-export function BubblesSection({ appearance, set, onDraft }: SectionProps & { onDraft: (d: Partial<Appearance> | null) => void }) {
+/** `only`: one side's choices (the editor switches My / EDITH); both when absent. */
+export function BubblesSection({ appearance, set, onDraft, only }: SectionProps & { onDraft: (d: Partial<Appearance> | null) => void; only?: 'my' | 'edith' }) {
   const live = useTheme();
   const [editing, setEditing] = useState<{ side: 'my' | 'edith'; gradient: BubbleGradient } | null>(null);
   const edit = (next: typeof editing) => {
@@ -206,24 +203,28 @@ export function BubblesSection({ appearance, set, onDraft }: SectionProps & { on
   }
   return (
     <>
-      <Side
-        title="My messages"
-        who="my messages"
-        value={appearance.myBubble}
-        own={appearance.myGradient}
-        themeDefault={live.accent}
-        onPick={(id) => set({ myBubble: id })}
-        onCustom={() => edit({ side: 'my', gradient: appearance.myGradient ?? NEW_BUBBLE_GRADIENT })}
-      />
-      <Side
-        title="EDITH’s messages"
-        who="EDITH’s messages"
-        value={appearance.edithBubble}
-        own={appearance.edithGradient}
-        themeDefault={INK_LIGHT}
-        onPick={(id) => set({ edithBubble: id })}
-        onCustom={() => edit({ side: 'edith', gradient: appearance.edithGradient ?? NEW_BUBBLE_GRADIENT })}
-      />
+      {only !== 'edith' ? (
+        <Side
+          title="My messages"
+          who="my messages"
+          value={appearance.myBubble}
+          own={appearance.myGradient}
+          themeDefault={live.accent}
+          onPick={(id) => set({ myBubble: id })}
+          onCustom={() => edit({ side: 'my', gradient: appearance.myGradient ?? NEW_BUBBLE_GRADIENT })}
+        />
+      ) : null}
+      {only !== 'my' ? (
+        <Side
+          title="EDITH’s messages"
+          who="EDITH’s messages"
+          value={appearance.edithBubble}
+          own={appearance.edithGradient}
+          themeDefault={INK_LIGHT}
+          onPick={(id) => set({ edithBubble: id })}
+          onCustom={() => edit({ side: 'edith', gradient: appearance.edithGradient ?? NEW_BUBBLE_GRADIENT })}
+        />
+      ) : null}
       <Hint>Text on every colour and gradient stays easy to read: they’re toned down where needed.</Hint>
     </>
   );

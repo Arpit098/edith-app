@@ -9,6 +9,7 @@ import { loadFeatures } from '../../core/feature';
 import { features } from '../../features';
 import type { FrameMeter } from '../../core/ports';
 import { createStore } from '../../core/store';
+import { usePageBack } from '../../ui/pageBack';
 import { fakeContext } from '../../testing/fakes';
 import { SettingsScreen } from '../SettingsScreen';
 
@@ -50,6 +51,34 @@ async function mount() {
 }
 
 describe('SettingsScreen', () => {
+  it('a full-page section fills the page and takes Android back first (Appearance closes its sheet, then leaves)', async () => {
+    jest.spyOn(console, 'error').mockImplementation(() => {});
+    const back = fakeBack();
+    const ctx = fakeContext();
+    let sheetOpen = true;
+    function Editor() {
+      usePageBack(() => {
+        if (!sheetOpen) return false;
+        sheetOpen = false;
+        return true;
+      });
+      return <Text>editor</Text>;
+    }
+    const sections = [{ title: 'Editor', component: Editor, group: 'app' as const, layout: 'full' as const }];
+    const page = createStore<string | null>('Editor');
+    let r!: ReactTestRenderer;
+    await act(async () => {
+      r = create(<SettingsScreen connection={ctx.connection} sections={sections} meter={null} open={page} />);
+    });
+    expect(r.root.findAll((n) => n.props.accessibilityRole === 'header' && n.props.children === 'Editor')).not.toHaveLength(0);
+    expect(r.root.findAll((n) => n.props.rim === true && n.findAll((c) => c.props.children === 'editor').length > 0)).toHaveLength(0); // no card around it
+    await act(async () => void back.press());
+    expect(page.get()).toBe('Editor'); // the page closed its sheet
+    await act(async () => void back.press());
+    expect(page.get()).toBeNull(); // then Settings left the page
+    act(() => r.unmount());
+  });
+
   it('lists the groups with each row’s title and live summary', async () => {
     const { r, loaded, row } = await mount();
     const shown = texts(r);

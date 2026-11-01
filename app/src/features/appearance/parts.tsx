@@ -1,4 +1,4 @@
-// The pieces Appearance's sections share: a collapsible section, a sub-heading, a picture tile, a
+// The pieces Appearance's tools share: a sub-heading, a hint, a picture tile, a
 // colour or gradient swatch (its check mark black or white by contrast), and a row of choices.
 
 import { memo, type ReactNode } from 'react';
@@ -7,29 +7,6 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { colors, inkOn, radius, space, type, useTheme } from '../../core/theme';
 import { Gradient } from '../../ui/Gradient';
 import { Icon } from '../../ui/Icon';
-
-/** A section of the page: its header (name, current choice, chevron) opens and closes it. */
-export function Section({ title, value, open, onToggle, children }: { title: string; value: string; open: boolean; onToggle: () => void; children: ReactNode }) {
-  return (
-    <View style={styles.section}>
-      <Pressable
-        onPress={onToggle}
-        style={styles.sectionHead}
-        accessibilityRole="button"
-        accessibilityState={{ expanded: open }}
-        accessibilityLabel={`${title}: ${value}`}
-        accessibilityHint={open ? 'Closes this section' : 'Opens this section'}
-      >
-        <Text style={styles.sectionTitle}>{title}</Text>
-        <Text style={styles.sectionValue} numberOfLines={1}>
-          {value}
-        </Text>
-        <Icon name={open ? 'chevron-up' : 'chevron-down'} size={20} color={colors.textDim} />
-      </Pressable>
-      {open ? <View style={styles.sectionBody}>{children}</View> : null}
-    </View>
-  );
-}
 
 export function Heading({ children }: { children: string }) {
   return (
@@ -118,11 +95,6 @@ export const shared = StyleSheet.create({
 });
 
 const styles = StyleSheet.create({
-  section: { borderRadius: radius.m, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.hairline, backgroundColor: colors.card },
-  sectionHead: { flexDirection: 'row', alignItems: 'center', gap: space.s, paddingHorizontal: space.m, paddingVertical: space.m, minHeight: 48 },
-  sectionTitle: { color: colors.text, fontSize: type.size.body, fontWeight: '600' },
-  sectionValue: { flex: 1, color: colors.textDim, fontSize: type.size.small, textAlign: 'right' },
-  sectionBody: { paddingHorizontal: space.m, paddingBottom: space.m, gap: space.s },
   heading: { color: colors.textDim, fontSize: type.size.caption, fontWeight: '700', letterSpacing: 0.8, textTransform: 'uppercase', marginTop: space.s },
   hint: { color: colors.textDim, fontSize: type.size.small },
   tile: { width: TILE, alignItems: 'center', gap: space.xs },
