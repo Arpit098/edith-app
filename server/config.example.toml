@@ -1,5 +1,10 @@
 # Copy to config.toml on edith. Secrets (bot token, API token) are read from files/env, never stored here.
 
+[general]
+# Arpit's timezone: Claude Code is launched with TZ set to it (its usage-limit reset times show in it),
+# and limit times still printed in UTC are rewritten into it. Applies to Claudes (re)started after this.
+timezone = "Asia/Kolkata"
+
 [adapters]
 agent = "claude_tmux"
 stt = "whisper_cpp"

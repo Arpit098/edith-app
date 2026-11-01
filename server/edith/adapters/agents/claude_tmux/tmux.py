@@ -72,8 +72,10 @@ class Tmux:
     def interrupt(self):
         self("send-keys", "-t", self.target, "Escape")  # like pressing Esc
 
-    def respawn(self, command):
-        self("respawn-pane", "-k", "-t", self.target, command)
+    def respawn(self, command, env=None):
+        """Restart the pane with `command`; `env` ({name: value}) is set for it (tmux -e)."""
+        extra = [a for k, v in (env or {}).items() for a in ("-e", f"{k}={v}")]
+        self("respawn-pane", "-k", *extra, "-t", self.target, command)
 
     def _settle(self, before):
         """Wait until the screen shows the input (it changed, then held still for one check), at most

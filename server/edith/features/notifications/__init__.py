@@ -20,6 +20,7 @@ import re
 import threading
 from collections import OrderedDict
 
+from edith.common.usertime import localize_limit_text
 from edith.core import ApiError, Context, Event, Feature, Response
 
 SEEN_MAX = 256    # tags pushed lately (oldest forgotten first)
@@ -42,7 +43,7 @@ _EMPH = re.compile(r"[*_]{2,}")
 
 def preview(text: str, limit: int = PREVIEW) -> str:
     """One line of plain text, as the app's preview(): code and markdown marks out, whitespace folded."""
-    plain = _CODE_BLOCK.sub(" [code] ", text or "")
+    plain = _CODE_BLOCK.sub(" [code] ", localize_limit_text(text or ""))  # a UTC limit time: the user's zone
     plain = _LINK.sub(r"\1", _INLINE.sub(r"\1", plain))
     plain = _EMPH.sub("", _MARKS.sub(r"\1", plain))
     plain = " ".join(plain.split())

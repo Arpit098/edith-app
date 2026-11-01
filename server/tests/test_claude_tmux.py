@@ -333,6 +333,22 @@ class SideLaneTest(unittest.TestCase):
         h.agent.send("q", "telegram", "m1")
         self.assertEqual(h.wait("turn.done", "m1", timeout=10).data["text"], "ok")
 
+    def test_side_lane_runs_in_user_tz_and_limit_times_are_local(self):
+        import subprocess
+        envs, real = [], subprocess.Popen
+
+        def popen(*a, **kw):
+            envs.append(kw.get("env") or {})
+            return real(*a, **kw)
+        h = Harness(self, busy_policy="side_lane", side_plan=plan(reply="5-hour limit reached ∙ resets 4pm (UTC)"))
+        h.agent.main_busy.set()
+        with mock.patch("edith.adapters.agents.claude_tmux.backend.subprocess.Popen", popen):
+            h.agent.send("q", "telegram", "m1")
+            done = h.wait("turn.done", "m1", timeout=10).data
+        self.assertEqual(envs[0].get("TZ"), "Asia/Kolkata")
+        self.assertEqual((done["text"], done["display_text"]),
+                         ("5-hour limit reached ∙ resets 9:30 PM IST",) * 2)
+
     def test_side_lane_command_matches_legacy(self):
         """Same `claude -p` arguments and environment as the legacy bridge's run_claude."""
         with temp_home(CLAUDE_BIN=FAKE_CLAUDE) as home, tempfile.TemporaryDirectory() as tmp:
@@ -865,6 +881,8 @@ class SessionsTest(unittest.TestCase):
         before = []
         self.assertEqual(h.agent.resume("other", before=lambda: before.append(1)), "ok")
         self.assertEqual((before, respawned), ([1], [f"{h.work_dir}/bridge/edith-claude.sh other"]))
+        respawn = next(c for c in h.fake.calls if c[0] == "respawn-pane")
+        self.assertIn("TZ=Asia/Kolkata", respawn[respawn.index("-e") + 1:])  # Claude prints limit times in IST
         self.assertEqual(h.state()["sessions"]["111"], "other")
         self.assertEqual(h.agent.name_session("x" * 80), "other")
         self.assertEqual(h.state()["session_names"]["other"], "x" * 60)

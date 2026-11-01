@@ -22,6 +22,7 @@ Read-only: never touches the git index or working tree.
 # - Git runs with GIT_OPTIONAL_LOCKS=0 (no opportunistic index refresh) and a timeout per call.
 # - The HTML report is written to a temp file created 0600 and renamed into place, so a half-written
 #   or briefly world-readable report is never sent.
+import datetime
 import html
 import os
 import subprocess
@@ -29,6 +30,7 @@ import sys
 import tempfile
 import time
 
+from edith.common import usertime
 from edith.common.paths import resolve
 
 MAX_LINES_PER_FILE = 1500
@@ -207,7 +209,7 @@ def main(argv=None):
     write_private(out, f'<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" '
                        f'content="width=device-width,initial-scale=1"><title>Changes {stamp}</title>'
                        f'<style>{CSS}</style></head><body><h1>Project changes</h1>'
-                       f'<div class="meta">{time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime())} · '
+                       f'<div class="meta">{datetime.datetime.now(usertime.user_tz()):%Y-%m-%d %H:%M %Z} · '
                        f'M modified · A added · U untracked · D deleted</div>{"".join(sections)}</body></html>')
     # keep only the 20 most recent reports
     old = sorted(n for n in os.listdir(out_dir) if n.startswith("changes-"))[:-20]

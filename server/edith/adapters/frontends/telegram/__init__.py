@@ -25,6 +25,7 @@ import time
 from edith.common.paths import resolve
 from edith.common.state import StateFile
 from edith.common.text import take_directives
+from edith.common.usertime import localize_limit_text
 from edith.core import CommandCall, Reply
 
 from .api import BotApi, allowed_ids, read_token
@@ -143,7 +144,7 @@ class TelegramFrontend:
     # ---- sending ----
 
     def send_text(self, chat_id, text, **kw):
-        text = text or "(empty reply)"
+        text = localize_limit_text(text or "") or "(empty reply)"  # a UTC limit time: the user's zone
         last = None
         for i in range(0, len(text), MAX_MSG):
             last = self.api("sendMessage", chat_id=chat_id, text=text[i:i + MAX_MSG], **kw)

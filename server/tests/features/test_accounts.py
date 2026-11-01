@@ -517,6 +517,7 @@ class SwitchTest(unittest.TestCase):
         dev = calls[respawns[0]][1]
         self.assertEqual(dev[dev.index("-c") + 1], "/w/dev")
         self.assertTrue(dev[-1].endswith(f"exec claude --resume {SID}"))
+        self.assertIn("TZ=Asia/Kolkata;", dev[-1])  # the plan's zone (default IST): limit times in it
         self.assertTrue(calls[respawns[1]][1][-1].endswith("exec claude"))  # no session id: no resume, no --continue
         remain = [c[1] for c in calls if c[0] == "run" and "remain-on-exit" in c[1]]
         self.assertEqual(len(remain), 4)  # kept while stopped, unset once respawned

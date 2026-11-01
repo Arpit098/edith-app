@@ -3,6 +3,8 @@
 a busy agent)."""
 import re
 
+from .usertime import localize_limit_text
+
 ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]")
 BOX = re.compile(r"[─-▟]+")  # box drawing and block elements (borders, separators)
 BOTTOM = 15  # lines at the end of the screen that hold Claude Code's prompt, footer and dialogs
@@ -38,7 +40,7 @@ def read_screen(screen: str) -> dict:
     blocked = ("usage_limit" if menu
                else "permission" if PERMISSION.search(bottom)
                else "usage_limit" if not busy and USAGE_LIMIT.search(newest) else None)
-    last = next((ln[1:].strip() for ln in reversed(lines) if ln.startswith("●")), None)
+    last = next((localize_limit_text(ln[1:].strip()) for ln in reversed(lines) if ln.startswith("●")), None)
     if last and len(last) > LAST_LINE:
         last = last[:LAST_LINE - 1].rstrip() + "…"
     return {"state": "blocked" if blocked else "busy" if busy else "idle", "blocked": blocked, "last": last}

@@ -5,6 +5,7 @@ read until the first notify().
 """
 from edith.adapters.frontends.telegram.api import BotApi, allowed_ids, read_token
 from edith.common.paths import resolve
+from edith.common.usertime import localize_limit_text
 
 
 class TelegramNotifier:
@@ -20,7 +21,7 @@ class TelegramNotifier:
         chat = next(iter(sorted(allowed_ids(self.paths.telegram_dir))), None)
         if chat is None:
             return False
-        text = f"{title}\n{body}" if body else title
+        text = localize_limit_text(f"{title}\n{body}" if body else title)
         return bool(self._api("sendMessage", chat_id=chat, text=text, disable_notification=priority == "low" or None))
 
 
