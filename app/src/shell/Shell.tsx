@@ -11,7 +11,7 @@ import type { FrameMeter } from '../core/ports';
 import { createStore, useStore } from '../core/store';
 import { ChromeContext, chrome, colors, space, titleGlow, type, useTheme } from '../core/theme';
 import { Ambient } from '../ui/Ambient';
-import { Glass, useBackdrop } from '../ui/Glass';
+import { Glass, useBackdrop, WallpaperContext } from '../ui/Glass';
 import { Icon } from '../ui/Icon';
 import { ConnectionPill } from './ConnectionPill';
 import { ConnectScreen } from './ConnectScreen';
@@ -109,6 +109,7 @@ function Main({ loaded, connection, meter }: { loaded: LoadedFeatures; connectio
   // The header floats over the content as glass, bending what scrolls under it. Nothing floats at
   // the bottom: screens only keep clear of the gesture area (the keyboard covers it when it's up).
   const backdrop = useBackdrop();
+  const wallpaper = useBackdrop();
   const [headerHeight, setHeaderHeight] = useState(insets.top + chrome.headerHeight);
   const onHeaderLayout = useCallback((e: LayoutChangeEvent) => setHeaderHeight(Math.round(e.nativeEvent.layout.height)), []);
   const chromeInsets = useMemo(() => ({ top: headerHeight, bottom: keyboard ? 0 : insets.bottom }), [headerHeight, insets.bottom, keyboard]);
@@ -132,9 +133,13 @@ function Main({ loaded, connection, meter }: { loaded: LoadedFeatures; connectio
   return (
     <KeyboardAvoidingView style={styles.flex} behavior="padding">
       <ChromeContext.Provider value={chromeInsets}>
+        <WallpaperContext.Provider value={wallpaper.tag}>
         {/* The glass's backdrop: the glow and the screens (never the chrome itself). */}
         <View ref={backdrop.ref} collapsable={false} style={styles.flex}>
-          <Ambient />
+          {/* The wallpaper alone, in its own view: what the chat bubbles' lens looks through. */}
+          <View ref={wallpaper.ref} collapsable={false} style={StyleSheet.absoluteFill} pointerEvents="none">
+            <Ambient />
+          </View>
           {/* Tabs stay mounted once visited (keeps scroll position and input); hidden ones don't draw. */}
           {tabs
             .filter((t) => visited.has(t.name))
@@ -149,6 +154,7 @@ function Main({ loaded, connection, meter }: { loaded: LoadedFeatures; connectio
             </View>
           ) : null}
         </View>
+        </WallpaperContext.Provider>
       </ChromeContext.Provider>
 
       <Glass level="thick" backdrop={backdrop.tag} radius={0} edges={{ bottom: true }} style={styles.header}>

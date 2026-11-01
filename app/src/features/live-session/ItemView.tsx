@@ -3,8 +3,10 @@
 //
 // The two sides' bubbles are glass in the chosen colours (Settings → Appearance): the colour as a
 // translucent tint that follows the glass amount, a thin light edge (bright top-left, dim
-// bottom-right; the lit top edge is the sheen). List glass: no live blur and no extra view per row,
-// nor any clipping, so a long chat scrolls as cheaply as before. The text is white or black per
+// bottom-right; the lit top edge is the sheen). The newest rows (`liquid`, LiveScreen LIQUID_ROWS)
+// are also liquid glass over the wallpaper (ui/Glass BubbleLens: a light blur and the lens, where
+// the device has them); older ones keep no extra view and no clipping, so scrolling far back
+// through a long chat costs what it always did. The text is white or black per
 // bubble colour (theme BubbleLook.ink), at 4.5:1 or more on every background, quotes included.
 // A gradient bubble adds one view, its fill (ui/BubbleFill), drawn in the bubble's shape inside its
 // edge; a one-colour bubble adds nothing.
@@ -13,6 +15,7 @@ import { memo, useState } from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { BubbleFill } from '../../ui/BubbleFill';
+import { BubbleLens, useLiquid } from '../../ui/Glass';
 import { DiffView } from '../../ui/DiffView';
 import { Icon } from '../../ui/Icon';
 import { ReplyButtons } from '../../ui/ReplyButtons';
@@ -48,6 +51,8 @@ export interface ItemViewProps {
   onQuote?: (itemId: number, quote: string) => void;
   /** Briefly marked: the message a tapped quote jumped to. */
   highlight?: boolean;
+  /** A newest row: its bubble is liquid glass over the wallpaper (where the device can draw it). */
+  liquid?: boolean;
 }
 
 const REPLY_ACTIONS = [{ name: 'reply', label: 'Reply' }];
@@ -56,9 +61,12 @@ const REPLY_ACTIONS = [{ name: 'reply', label: 'Reply' }];
 // slash) and the bubble, sized for one line, clips the rest. "simple" measures and draws alike.
 const BREAK = 'simple';
 
-export const ItemView = memo(function ItemView({ item, onPress, tick, status, onRetry, onReply, onQuote, highlight }: ItemViewProps) {
+export const ItemView = memo(function ItemView({ item, liquid = false, onPress, tick, status, onRetry, onReply, onQuote, highlight }: ItemViewProps) {
   const theme = useTheme();
   const ts = useBubbleStyles();
+  // A liquid bubble's rim replaces its edge; a ring (failed, a quote's target) keeps the edge, the glass inside it.
+  const myLiquid = useLiquid(theme.my) && liquid;
+  const edithLiquid = useLiquid(theme.edith) && liquid;
   const a11yReply = onReply ? { accessibilityActions: REPLY_ACTIONS, onAccessibilityAction: () => onReply(item) } : {};
   switch (item.kind) {
     case 'user': {
@@ -69,13 +77,14 @@ export const ItemView = memo(function ItemView({ item, onPress, tick, status, on
       return (
         <View style={styles.userWrap}>
           <Pressable
-            style={[styles.bubble, styles.user, ts.mine, failed && ts.failed, highlight && ts.highlight]}
+            style={[styles.bubble, styles.user, ts.mine, myLiquid && styles.noEdge, failed && ts.failed, highlight && ts.highlight]}
             onPress={retry}
             disabled={!retry}
             accessibilityHint={retry ? 'Send again' : undefined}
             {...a11yReply}
           >
-            <BubbleFill look={theme.my} tail="right" />
+            {myLiquid ? <BubbleLens look={theme.my} tail="right" inside={failed || !!highlight} /> : null}
+            <BubbleFill look={theme.my} tail="right" cover={myLiquid && !failed && !highlight} />
             {from || item.voice ? <Text style={[styles.meta, ts.mineDim]}>{[from, item.voice ? '🎙 voice' : ''].filter(Boolean).join(' · ')}</Text> : null}
             {item.replyTo ? <QuoteView quote={item.replyTo} side="mine" onPress={onQuote ? () => onQuote(item.id, item.replyTo!.text) : undefined} /> : null}
             {item.attachments.length ? <SentAttachments list={item.attachments} /> : null}
@@ -104,8 +113,9 @@ export const ItemView = memo(function ItemView({ item, onPress, tick, status, on
     }
     case 'assistant':
       return (
-        <View style={[styles.bubble, styles.assistant, ts.edith, highlight && ts.highlight]} {...a11yReply}>
-          <BubbleFill look={theme.edith} tail="left" />
+        <View style={[styles.bubble, styles.assistant, ts.edith, edithLiquid && styles.noEdge, highlight && ts.highlight]} {...a11yReply}>
+          {edithLiquid ? <BubbleLens look={theme.edith} tail="left" inside={!!highlight} /> : null}
+          <BubbleFill look={theme.edith} tail="left" cover={edithLiquid && !highlight} />
           {item.lane === 'side' ? <Text style={[styles.meta, ts.edithDim]}>⚡ Parallel answer (the main conversation was busy)</Text> : null}
           <Text style={[styles.text, ts.edithText]} selectable textBreakStrategy={BREAK}>
             {item.text}
@@ -240,6 +250,8 @@ const styles = StyleSheet.create({
   // Every bubble has a 1 dp border: its glass edge (themed), and a failed send or the jump-to mark
   // changes only its colour, so the bubble never shifts by a pixel. Nothing inside needs clipping.
   bubble: { borderRadius: radius.l, paddingHorizontal: space.m, paddingVertical: space.s + 2, marginVertical: space.xs, maxWidth: '88%', borderWidth: 1 },
+  // A liquid bubble: its rim (ui/Glass BubbleLens) is the edge; the border keeps its width, unseen.
+  noEdge: { borderTopColor: 'transparent', borderLeftColor: 'transparent', borderRightColor: 'transparent', borderBottomColor: 'transparent' },
   userWrap: { alignSelf: 'flex-end', alignItems: 'flex-end', maxWidth: '88%', marginVertical: space.xs },
   user: { borderBottomRightRadius: radius.s, maxWidth: '100%', marginVertical: 0 },
   quote: { borderLeftWidth: 3, borderRadius: radius.s, paddingHorizontal: space.s, paddingVertical: space.xs, marginBottom: space.xs },

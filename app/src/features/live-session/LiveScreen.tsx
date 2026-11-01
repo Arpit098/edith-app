@@ -103,6 +103,7 @@ export function LiveScreen({ model, voice, attach, menu, reply }: LiveScreenProp
       <SettleIn animate={index === 0 && Date.now() / 1000 - item.ts < FRESH_S}>
         <Row
           item={item}
+          liquid={index < LIQUID_ROWS}
           tick={item.kind === 'user' ? tickOf(item, turns) : null}
           status={item.kind === 'user' ? sendStatus(item, turns) : null}
           flash={flash}
@@ -175,11 +176,19 @@ export function LiveScreen({ model, voice, attach, menu, reply }: LiveScreenProp
 
 const COMPOSER_HEIGHT = 60; // until the composer has measured itself
 const FRESH_S = 4; // a message this new (by its timestamp) arrived just now
+/**
+ * The newest rows whose bubbles are liquid glass (ui/Glass BubbleLens): a native glass view each,
+ * which re-blurs while it moves. The list already detaches rows scrolled off screen
+ * (removeClippedSubviews), so only visible ones draw; this also caps how many exist at all, so
+ * scrolling far back through history costs what it always did (older bubbles are their flat tint).
+ */
+export const LIQUID_ROWS = 20;
 
 const MAX_SCROLL_TRIES = 3; // jumping to a quoted message that isn't measured yet
 
 interface RowProps {
   item: Item;
+  liquid: boolean; // among the newest LIQUID_ROWS
   tick: Tick | null;
   status: SendStatus | null;
   flash: Store<number | null>;
@@ -194,7 +203,7 @@ interface RowProps {
  * values and stable callbacks (the swipe's own is made here, per item), so the memo holds; the
  * quote-jump mark is read from `flash` for this row's id only.
  */
-const Row = memo(function Row({ item, tick, status, flash, onPress, onRetry, onReply, onQuote }: RowProps) {
+const Row = memo(function Row({ item, liquid, tick, status, flash, onPress, onRetry, onReply, onQuote }: RowProps) {
   const id = item.id;
   const marked = useCallback((f: number | null) => f === id, [id]);
   const highlight = useStore(flash, marked);
@@ -202,14 +211,14 @@ const Row = memo(function Row({ item, tick, status, flash, onPress, onRetry, onR
   if (item.kind === 'user') {
     return (
       <SwipeToReply onReply={swiped}>
-        <ItemView item={item} onPress={onPress} tick={tick} status={status} onRetry={onRetry} onReply={onReply} onQuote={onQuote} highlight={highlight} />
+        <ItemView item={item} liquid={liquid} onPress={onPress} tick={tick} status={status} onRetry={onRetry} onReply={onReply} onQuote={onQuote} highlight={highlight} />
       </SwipeToReply>
     );
   }
   if (item.kind === 'assistant') {
     return (
       <SwipeToReply onReply={swiped}>
-        <ItemView item={item} onPress={onPress} onReply={onReply} highlight={highlight} />
+        <ItemView item={item} liquid={liquid} onPress={onPress} onReply={onReply} highlight={highlight} />
       </SwipeToReply>
     );
   }

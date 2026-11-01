@@ -148,6 +148,24 @@ export const glass: Record<GlassLevel, GlassStyle> = {
 };
 
 /**
+ * The chat bubbles' liquid glass (Arpit, 1 Nov: "the liquid feel"), at 60%; themes.ts bubbleLensAt
+ * scales it with the glass amount. A light blur, then the lens: a thin band at the rounded edge bends
+ * the wallpaper behind, and the light catches the top edge, fading inward over `rimWidth`. Nothing
+ * that brightens where text sits: no saturation boost or lift, and the light stays inside the
+ * bubble's padding, so text reads exactly as the contrast checks say.
+ */
+export interface BubbleLensStyle {
+  blur: number; // dp
+  refraction: number; // dp at the very edge
+  bezel: number; // the bending band's width, dp
+  dispersion: number; // dp
+  specular: number; // 0..1: the shader's own edge line; bubbles pass 0 and draw ui/Rim on their exact outline
+  rimWidth: number; // dp: that line's reach (under the bubble's 10 dp padding)
+}
+
+export const bubbleLens: BubbleLensStyle = { blur: 8, refraction: 3, bezel: 5, dispersion: 0.3, specular: 0.35, rimWidth: 2.5 };
+
+/**
  * The halo under popup text and icons: popups are clear glass with no pane behind the labels, so
  * each glyph carries its own dark, soft shadow (centred, a little low) that separates white text from
  * a bright backdrop. Android draws one shadow per Text, so it's strong and wide rather than stacked.
