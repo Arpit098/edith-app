@@ -34,6 +34,8 @@ import { Icon } from '../../ui/Icon';
 import { Slider } from '../../ui/Slider';
 import { Heading, Hint, Labelled, LinkButton, Segment, shared, TILE, Tile } from './parts';
 
+const TILE_BLUR = 2; // screen-scale blur for the tiles, whatever the chosen one (see `tiles`)
+
 const FOCUS_NAMES: Record<'horizontal' | 'vertical', Record<PhotoFocus, string>> = {
   vertical: { start: 'Top', center: 'Centre', end: 'Bottom' },
   horizontal: { start: 'Left', center: 'Centre', end: 'Right' },
@@ -53,15 +55,19 @@ export function PhotoChoices({ appearance, set, photos: actions, preview, onDraf
   const [busy, setBusy] = useState(false);
   const chosen = isPhotoBackground(appearance.background) ? appearance.background : null;
   const adjust = chosen ?? { kind: 'photo' as const, uri: '', ...DEFAULT_PHOTO_ADJUST };
-  // Each kept photo drawn as it would be with the current blur, dim and tint (still, decoded small).
+  // Each kept photo with the current dim and tint (even layers over it: cheap to change), but a
+  // fixed small blur: a blur change would make every tile decode its image again.
+  const dim = chosen?.dim ?? DEFAULT_PHOTO_ADJUST.dim;
+  const tint = chosen?.tint ?? DEFAULT_PHOTO_ADJUST.tint;
   const tiles = useMemo(
-    () => appearance.photos.map((p, i) => ({ photo: p, name: `Photo ${i + 1}`, look: photoLook(preset, p, { ...(chosen ?? { kind: 'photo' as const, ...DEFAULT_PHOTO_ADJUST }), uri: p.uri }) })),
-    [appearance.photos, preset, chosen],
+    () => appearance.photos.map((p, i) => ({ photo: p, name: `Photo ${i + 1}`, look: photoLook(preset, p, { kind: 'photo', uri: p.uri, ...DEFAULT_PHOTO_ADJUST, blur: TILE_BLUR, dim, tint }) })),
+    [appearance.photos, preset, dim, tint],
   );
   const current = chosen ? appearance.photos.find((p) => p.uri === chosen.uri) : undefined;
 
+  // A double tap is the store's to handle (a second add joins the first); `busy` only shows it.
   const add = async () => {
-    if (!actions || busy) return;
+    if (!actions) return;
     setBusy(true);
     try {
       await actions.add();
@@ -106,7 +112,7 @@ export function PhotoChoices({ appearance, set, photos: actions, preview, onDraf
           />
         ))}
         {actions ? (
-          <Pressable onPress={add} disabled={busy} style={styles.addTile} accessibilityRole="button" accessibilityLabel="Your photo: pick one from the gallery" accessibilityState={{ disabled: busy, busy }}>
+          <Pressable onPress={add} style={styles.addTile} accessibilityRole="button" accessibilityLabel="Your photo: pick one from the gallery" accessibilityState={{ busy }}>
             <View style={styles.addArt}>
               <Icon name={busy ? 'progress-clock' : 'image-plus'} size={22} color={colors.textDim} />
             </View>

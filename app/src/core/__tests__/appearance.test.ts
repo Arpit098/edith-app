@@ -143,18 +143,73 @@ describe('wallpaper photos', () => {
     await s.load();
     expect(s.store.get()).toMatchObject({ theme: 'ocean', photos: [other], background: DEFAULT_BACKGROUND });
     expect(() => resolveTheme(s.store.get())).not.toThrow();
-    expect(files.pruned).toEqual([[other.uri]]); // the orphan (picked, never saved) is deleted
+    expect(files.pruned).toEqual([[PHOTO.uri, other.uri]]); // the saved ones and the ones in memory; the orphan (picked, never saved) is deleted
     expect([...files.disk]).toEqual([other.uri]);
     await jest.advanceTimersByTimeAsync(500);
     expect(JSON.parse(data.data.get(APPEARANCE_KEY)!)).toMatchObject({ photos: [other], background: DEFAULT_BACKGROUND });
   });
 
-  it('nothing saved and no files: the defaults, nothing pruned but strays', async () => {
-    const files = fakeWallpapers(['file:///docs/wallpapers/stray.jpg']);
-    const s = createAppearanceStore(new MemoryStorage(), files);
+  it('deletes nothing unless the saved value was read: nothing saved, a failed read, or a garbled value', async () => {
+    const saved = 'file:///docs/wallpapers/kept.jpg';
+    for (const data of [new MemoryStorage(), { get: () => Promise.reject(new Error('io')), set: async () => {}, remove: async () => {} }, Object.assign(new MemoryStorage(), { data: new Map([[APPEARANCE_KEY, '{garbled']]) })]) {
+      const files = fakeWallpapers([saved]);
+      jest.spyOn(console, 'warn').mockImplementation(() => {});
+      const s = createAppearanceStore(data, files);
+      await s.load();
+      expect(s.store.get()).toEqual(DEFAULT_APPEARANCE);
+      expect(files.pruned).toEqual([]);
+      expect([...files.disk]).toEqual([saved]); // the wallpaper survives
+    }
+  });
+
+  it('a change made before the read: the files of both the saved photos and the ones in memory are kept', async () => {
+    const data = new MemoryStorage();
+    const other = { ...PHOTO, uri: 'file:///docs/wallpapers/b.jpg' };
+    data.data.set(APPEARANCE_KEY, JSON.stringify({ photos: [PHOTO], background: ON_PHOTO }));
+    const files = fakeWallpapers([PHOTO.uri, other.uri, 'file:///docs/wallpapers/stray.jpg']);
+    const s = createAppearanceStore(data, files);
+    s.set({ photos: [other], background: { ...ON_PHOTO, uri: other.uri } }); // wins over the saved one
     await s.load();
-    expect(s.store.get()).toEqual(DEFAULT_APPEARANCE);
-    expect(files.disk.size).toBe(0);
+    expect(s.store.get().photos).toEqual([other]);
+    expect(files.pruned).toEqual([[PHOTO.uri, other.uri]]);
+    expect([...files.disk].sort()).toEqual([PHOTO.uri, other.uri]);
+  });
+
+  it('a pick in progress when the files are checked is waited for: its new file is never deleted', async () => {
+    const data = new MemoryStorage();
+    data.data.set(APPEARANCE_KEY, JSON.stringify({ theme: 'ocean' }));
+    const files = fakeWallpapers();
+    let land!: () => void;
+    const fresh = 'file:///docs/wallpapers/new.jpg';
+    files.pick.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          files.disk.add(fresh); // written to wallpapers/ before the store knows it
+          land = () => resolve({ uri: fresh, width: 1080, height: 1440, grid: [] });
+        }),
+    );
+    const s = createAppearanceStore(data, files);
+    const adding = s.photos!.add();
+    await s.load();
+    expect(files.pruned).toEqual([]); // waits
+    land();
+    expect(await adding).toBe(true);
+    await Promise.resolve();
+    expect(files.pruned).toEqual([[fresh]]);
+    expect(files.disk.has(fresh)).toBe(true);
+  });
+
+  it('a second add while one is in progress joins it: one picker, one photo', async () => {
+    const files = fakeWallpapers();
+    const s = createAppearanceStore(new MemoryStorage(), files);
+    const first = s.photos!.add();
+    const second = s.photos!.add();
+    expect(second).toBe(first);
+    await Promise.all([first, second]);
+    expect(files.pick).toHaveBeenCalledTimes(1);
+    expect(s.store.get().photos).toHaveLength(1);
+    await s.photos!.add(); // done: the next tap picks again
+    expect(files.pick).toHaveBeenCalledTimes(2);
   });
 
   it(`adding makes the photo the background; the ${MAX_PHOTOS} newest are kept and the oldest’s file is deleted`, async () => {

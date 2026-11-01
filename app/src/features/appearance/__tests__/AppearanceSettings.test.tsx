@@ -383,6 +383,9 @@ describe('Background → your photos', () => {
     expect((a.store.get().background as PhotoBackground).blur).toBe(DEFAULT_PHOTO_ADJUST.blur);
     act(() => slider(r, 'Blur').props.onChange(0.5));
     expect((a.store.get().background as PhotoBackground).blur).toBe(10);
+    // The tile keeps its own small blur (a blur change would decode every tile again); its dim follows.
+    const tilePhoto = () => byLabel(r, 'Photo 1 background').find((n) => n.props.photo && n.props.thumb).props.photo;
+    expect(tilePhoto()).toMatchObject({ blur: 2, dim: 60 });
     // A 3:4 photo on a taller screen loses its sides: the choices say left, centre, right.
     expect(pressables(r, 'Keep the top in view')).toHaveLength(0);
     tap(r, 'Keep the left in view');

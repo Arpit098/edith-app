@@ -451,6 +451,22 @@ describe('a photo background', () => {
     expect(failures).toEqual([]);
   });
 
+  it('a dim drag starts from the last raised dim and gives what a fresh search gives', () => {
+    // Warm: a drag from 0% up, then back down (the dims known to fail are skipped).
+    const drag = [0, 5, 10, 20, 40, 60, 80, 60, 30, 0];
+    const at = (dim: number, accent: string | null) => resolveTheme(on(PHOTOS[1]!, { dim }, { theme: 'aurora', accent }));
+    const raised = at(0, null).background.photo!.dim; // a cold search from 0%
+    expect(raised).toBeGreaterThan(0);
+    // Warm (each step knows where the last one failed): the same as each searched cold, with every text reading.
+    for (const dim of drag) {
+      const t = at(dim, null);
+      expect(t.background.photo!.dim).toBe(Math.max(dim, raised));
+      expect(Math.min(t.my.worst, t.edith.worst)).toBeGreaterThanOrEqual(4.5);
+    }
+    // Cold searches (an accent not seen with this photo yet) land on the same dims as the warm ones.
+    expect(at(10, 'lime').background.photo!.dim).toBe(Math.max(10, at(0, 'lime').background.photo!.dim));
+  });
+
   it('a photo’s tones: the mean first, then the brightest and darkest patches; nothing read is taken as white', () => {
     const tones = photoTones([[1, 1, 1], [0, 0, 0], [0.5, 0.5, 0.5], [1, 0, 0]]);
     expect(tones[0]).toBe('#9F6060'); // the mean of the four: (2.5, 1.5, 1.5) / 4

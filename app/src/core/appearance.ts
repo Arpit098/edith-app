@@ -6,7 +6,8 @@
 //
 // Wallpaper photos are files (WallpaperFiles): the store keeps up to MAX_PHOTOS and deletes a file
 // as soon as it's replaced or removed. At start, a kept photo whose file is gone is dropped (the
-// background falls back to the theme's own), and a file nothing refers to is deleted.
+// background falls back to the theme's own), and, once the saved value has been read, a file
+// nothing refers to is deleted (checkFiles).
 
 import type { KeyValueStore, PickedWallpaper, WallpaperFiles } from './ports';
 import { createStore, type Store } from './store';
@@ -95,25 +96,45 @@ export function createAppearanceStore(data: KeyValueStore | undefined, wallpaper
     later();
   };
 
-  /** At start: drop photos whose files are gone, and delete files no kept photo refers to. */
-  const checkFiles = () => {
+  let adding: Promise<boolean> | null = null; // a pick in progress (its file may be written before it's in photos)
+
+  /**
+   * At start: drop photos whose files are gone, and delete files nothing refers to. Deleting needs
+   * certainty, so it happens only when the saved value was read and parsed (`stored`: its photos);
+   * not when the read failed or the value was garbled, where the photos aren't known. It keeps what
+   * was saved and what's in memory now, and waits for a pick in progress to land first.
+   */
+  const checkFiles = (stored: readonly Photo[] | null) => {
     if (!wallpapers) return;
     const fixed = withoutMissing(store.get(), (uri) => wallpapers.exists(uri));
     if (fixed) {
       store.set(fixed);
       later();
     }
-    wallpapers.prune(store.get().photos.map((p) => p.uri));
+    if (!stored) return;
+    const prune = () => wallpapers.prune([...new Set([...stored.map((p) => p.uri), ...store.get().photos.map((p) => p.uri)])]);
+    if (adding) void adding.then(prune, prune);
+    else prune();
   };
 
   const photos: PhotoActions | undefined = wallpapers && {
-    async add() {
-      const picked = await wallpapers.pick();
-      if (!picked) return false;
-      const { change, dropped } = withPhoto(store.get(), photoOf(picked));
-      set(change);
-      for (const uri of dropped) wallpapers.remove(uri);
-      return true;
+    add() {
+      // A second tap while the picker is open (or the photo is being saved) joins the first.
+      if (adding) return adding;
+      const run = (async () => {
+        const picked = await wallpapers.pick();
+        if (!picked) return false;
+        const { change, dropped } = withPhoto(store.get(), photoOf(picked));
+        set(change);
+        for (const uri of dropped) wallpapers.remove(uri);
+        return true;
+      })();
+      adding = run;
+      const done = () => {
+        if (adding === run) adding = null;
+      };
+      run.then(done, done);
+      return run;
     },
     remove(uri) {
       set(withoutPhoto(store.get(), uri));
@@ -130,14 +151,17 @@ export function createAppearanceStore(data: KeyValueStore | undefined, wallpaper
       } catch (e) {
         console.warn('[edith] appearance not read', e);
       }
-      if (raw !== null && !changed) {
+      let stored: Photo[] | null = null; // the saved photos, when the saved value could be read
+      if (raw !== null) {
         try {
-          store.set(normalizeAppearance(JSON.parse(raw)));
+          const saved = normalizeAppearance(JSON.parse(raw));
+          stored = saved.photos;
+          if (!changed) store.set(saved);
         } catch {
           // garbled: keep the defaults; the next change overwrites it
         }
       }
-      checkFiles();
+      checkFiles(stored);
     },
     set,
     flush,

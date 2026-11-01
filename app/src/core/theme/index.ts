@@ -39,7 +39,10 @@ export function themedStyles<T>(make: (t: Theme) => T): () => T {
 
 /** Wallpaper photos: pick one from the gallery (it becomes the background), or remove a kept one. */
 export interface PhotoActions {
-  /** False when Arpit cancels the picker. Throws if the photo couldn't be read or saved. */
+  /**
+   * False when Arpit cancels the picker. Throws if the photo couldn't be read or saved. A call while
+   * one is in progress gets that one's promise (a double tap opens one picker).
+   */
   add(): Promise<boolean>;
   remove(uri: string): void;
 }

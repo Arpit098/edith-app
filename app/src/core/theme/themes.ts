@@ -574,7 +574,8 @@ export function resolveTheme(appearance: Appearance, reduceTransparency = false)
     my: sideLook(bubbleChoice(appearance.myBubble, appearance.myGradient), { color: accent, alpha: fitBubbleAlpha(accent, background, MY_DEFAULT_ALPHA) }, amount, background),
     edith: sideLook(bubbleChoice(appearance.edithBubble, appearance.edithGradient), { color: EDITH_DEFAULT.color, alpha: EDITH_DEFAULT.alpha }, amount, background),
   });
-  const { background, my, edith } = resolveBackground(appearance, preset, accent, bubbles);
+  const situation = JSON.stringify([amount, appearance.myBubble, appearance.myGradient, appearance.edithBubble, appearance.edithGradient]);
+  const { background, my, edith } = resolveBackground(appearance, preset, accent, bubbles, situation);
   const cache = new Map<GlassLevel, GlassStyle>();
   return {
     appearance,
@@ -611,6 +612,7 @@ function resolveBackground(
   preset: ThemePreset,
   accent: string,
   bubbles: (b: BackgroundLook) => { my: BubbleLook; edith: BubbleLook },
+  situation: string, // what else the bubbles depend on: the glass amount and both sides' choices
 ): { background: BackgroundLook; my: BubbleLook; edith: BubbleLook } {
   const chosen = appearance.background;
   const photo = isPhotoBackground(chosen) ? appearance.photos.find((p) => p.uri === chosen.uri) : undefined;
@@ -619,12 +621,29 @@ function resolveBackground(
     const background = backgroundLook(preset, typeof chosen === 'string' ? chosen : DEFAULT_BACKGROUND, appearance.customGradients);
     return { background, ...bubbles(background) };
   }
+  // What's known for this photo with everything but the dim the same (a dim slider's drag resolves
+  // many times): the highest dim seen to fail. Darker only reads better, so the search starts past
+  // it (from the last raised dim), and what's returned is still checked: a warm drag costs one
+  // check per move, not a search.
+  const key = `${photo.uri}|${preset.id}|${accent}|${chosen.tint}|${situation}`;
+  let fail = failsAt.get(key) ?? -1;
   for (let dim = chosen.dim; ; dim = Math.min(PHOTO_DIM_LIMIT, dim + DIM_STEP)) {
+    if (dim < PHOTO_DIM_LIMIT && dim <= fail) continue;
     const background = photoLook(preset, photo, chosen, dim);
     const samples = samplesOf(background);
     // The text on the background first: it's the cheap check, and the usual reason to dim more.
-    if (dim < PHOTO_DIM_LIMIT && [...ON_BACKDROP, accent].some((c) => worstOn(c, samples) < 4.5)) continue;
-    const both = bubbles(background);
-    if (dim >= PHOTO_DIM_LIMIT || (both.my.worst >= 4.5 && both.edith.worst >= 4.5)) return { background, ...both };
+    const textReads = dim >= PHOTO_DIM_LIMIT || [...ON_BACKDROP, accent].every((c) => worstOn(c, samples) >= 4.5);
+    const both = textReads ? bubbles(background) : null;
+    if (both && (dim >= PHOTO_DIM_LIMIT || (both.my.worst >= 4.5 && both.edith.worst >= 4.5))) {
+      if (fail >= 0) {
+        if (!failsAt.has(key) && failsAt.size >= FAILS_KEPT) failsAt.clear();
+        failsAt.set(key, fail);
+      }
+      return { background, ...both };
+    }
+    fail = Math.max(fail, dim);
   }
 }
+
+const FAILS_KEPT = 64; // bounded: each photo, theme, accent, tint, glass amount and bubble choice has its own
+const failsAt = new Map<string, number>(); // the highest dim known to leave text under 4.5:1
