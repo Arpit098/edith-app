@@ -4,6 +4,7 @@
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { Text } from 'react-native';
 
+import { clockIST } from '../../../common/format';
 import type { Origin } from '../../../core/events';
 import { ev } from '../../../testing/fakes';
 import { ItemView } from '../ItemView';
@@ -34,6 +35,14 @@ describe('ItemView', () => {
     expect(body).toHaveLength(1);
     expect(body[0]!.props.textBreakStrategy).toBe('simple');
     expect(body[0]!.props.numberOfLines).toBeUndefined();
+    act(() => r.unmount());
+  });
+
+  it("shows the IST time on EDITH's replies, like on Arpit's messages", () => {
+    const r = render('message.assistant', 'Done.', 'system');
+    const item = [ev('message.assistant', { text: 'Done.', cursor: 's1:1' }, { origin: 'system' })].reduce(reduce, initialLive).items[0]!;
+    const time = r.root.findAllByType(Text).filter((t) => t.props.children === clockIST(item.ts));
+    expect(time).toHaveLength(1);
     act(() => r.unmount());
   });
 });
