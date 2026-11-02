@@ -204,6 +204,46 @@ describe('StatusChip and StatusPopup', () => {
     act(() => r.unmount());
   });
 
+  it("lists EDITH's subagents above the tmux sessions, counts the running ones on the chip, and fades the finished", async () => {
+    const f = fakes();
+    f.details.mockResolvedValue(statusDetailsFrom({ ...DETAILS, edith: { ...DETAILS.edith, state: 'waiting', tool: null, step: null, ref: null, since: 990 } }));
+    const r = await mount(f);
+    const [rev, fix] = DETAILS.edith.subagents;
+    const second = { ...rev, id: 'toolu_dev', description: 'Fix what the review finds', last: null };
+    await act(async () => {
+      f.store.set((s) =>
+        [
+          ev('turn.started', { ref: 'r1', lane: 'main' }),
+          ev('background.changed', { jobs: DETAILS.edith.background }),
+          ev('subagents.changed', { agents: [rev, second, fix] }),
+          ev('turn.done', { ref: 'r1', lane: 'main', text: 'Two agents are on it' }),
+        ].reduce(reduce, s),
+      );
+    });
+    expect(texts(r)).toBe('2 agents · 1 bg'); // the background subagent is counted once, as an agent
+    expect(chip(r).props.accessibilityLabel).toBe('Connected. EDITH: Waiting on 2 agents, 2 agents · 1 bg. Show details');
+
+    await act(async () => toggle(r));
+    const shown = texts(r);
+    for (const part of ['Agents', '●', 'Review PR 61', 'general-purpose', '2 min', 'opus-5-5 · medium', '$ gh pr diff 61',
+      '✓', 'Fix PR 61 findings', 'done in 4 min', 'tmux sessions', 'edith-dev', 'Shell · Wait for PR 41 CI']) {
+      expect(shown).toContain(part);
+    }
+    expect(shown).not.toContain('Agent · Review PR 61'); // not again under Background
+    expect(shown).not.toContain('Old reviewer'); // ended over 30 minutes ago: gone
+    expect(shown.indexOf('Review PR 61')).toBeLessThan(shown.indexOf('edith-dev')); // above the sessions
+    const row = (id: string) => r.root.findAll((n) => n.props?.testID === `subagent-${id}` && n.props.accessibilityLabel)[0]!;
+    expect(row('toolu_rev').props.accessibilityLabel).toBe(
+      'Subagent Review PR 61, general-purpose, running for 2 min, opus-5-5 · medium, last step: $ gh pr diff 61',
+    );
+    expect(row('toolu_fix').props.accessibilityLabel).toBe('Subagent Fix PR 61 findings, general-purpose, done in 4 min');
+    const opacity = (id: string) => [row(id).props.style].flat().find((s: { opacity?: number } | undefined) => s?.opacity != null)!.opacity;
+    expect(opacity('toolu_rev')).toBe(1);
+    expect(opacity('toolu_fix')).toBeLessThan(1);
+    expect(r.root.findAll((n) => typeof n.props?.accessibilityLabel === 'string' && n.props.accessibilityLabel.startsWith('tmux session edith-dev'))).not.toHaveLength(0);
+    act(() => r.unmount());
+  });
+
   it('stops fetching in the background and refreshes on return', async () => {
     const f = fakes();
     const r = await mount(f);
@@ -232,7 +272,7 @@ describe('StatusChip and StatusPopup', () => {
     const r = await mount(f);
     await act(async () => toggle(r));
     const shown = texts(r);
-    for (const part of ['Idle', 'for 12m', 'Only the main lane, nothing waiting', '3 min ago', '120k of 200k', 'No coding agents running']) expect(shown).toContain(part);
+    for (const part of ['Idle', 'for 12m', 'Only the main lane, nothing waiting', '3 min ago', '120k of 200k', 'No agents running']) expect(shown).toContain(part);
     for (const gone of ['Queued', 'Approvals', 'Side lanes', 'Messages', 'Parallel']) expect(shown).not.toContain(gone);
     act(() => r.unmount());
   });

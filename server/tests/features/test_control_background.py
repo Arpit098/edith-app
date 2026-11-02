@@ -24,6 +24,9 @@ class FakeAgent:
     def background(self):
         return list(self.jobs)
 
+    def subagents(self):
+        return []
+
     def has_conversation(self):
         return True
 

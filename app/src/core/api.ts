@@ -47,6 +47,7 @@ export interface Status {
   queued: number;
   runs: Run[];
   background: BackgroundJob[];
+  subagents: Subagent[]; // without `last` (only the details carry it)
   tmux: 'running' | 'down';
   conversation: boolean;
   session: { id: string; title: string | null } | null;
@@ -63,6 +64,28 @@ export interface BackgroundJob {
   started: number | null;
 }
 
+export type SubagentState = 'running' | 'done' | 'failed' | 'stopped';
+
+/**
+ * One of EDITH's in-session subagents (contracts/status.md, "Subagents"): an Agent call, foreground
+ * or background, running or finished in the last SUBAGENT_RETAIN seconds. Times are the server's.
+ */
+export interface Subagent {
+  id: string; // the Agent tool_use id; a background one's is also its background job's id
+  description: string;
+  type: string; // subagent_type, e.g. "general-purpose"
+  model: string | null;
+  effort: string | null;
+  background: boolean | null;
+  state: SubagentState;
+  started: number | null;
+  ended: number | null;
+  last: string | null; // its latest step while it runs (the details only)
+}
+
+/** How long the server keeps a finished subagent listed (seconds): the app fades it out over it. */
+export const SUBAGENT_RETAIN = 30 * 60;
+
 /** GET /v1/status/details (contracts/status.md): the status panel. Times are unix seconds. */
 export interface StatusDetails {
   ts: number; // the server's clock when it answered
@@ -75,6 +98,7 @@ export interface StatusDetails {
     turn_started: number | null;
     tmux: 'running' | 'down';
     background: BackgroundJob[];
+    subagents: Subagent[];
   };
   lanes: { side: { ref: string; seconds: number; step: string | null; summary: string | null }[]; max_side: number; queued: number; approvals: number };
   session: { id: string; title: string | null; started: number | null; messages: number | null; context_tokens: number | null } | null;
@@ -196,6 +220,24 @@ export function backgroundFrom(v: unknown): BackgroundJob[] {
   return list(v).map((j) => ({ id: str(j.id), kind: j.kind === 'agent' ? 'agent' : 'shell', label: str(j.label), started: numOrNull(j.started) }));
 }
 
+/** A `subagents` list (GET /v1/status, the details, `subagents.changed`); [] from older servers. */
+export function subagentsFrom(v: unknown): Subagent[] {
+  return list(v)
+    .filter((a) => typeof a.id === 'string' && a.id !== '')
+    .map((a) => ({
+      id: str(a.id),
+      description: str(a.description) || 'Agent',
+      type: str(a.type) || 'general-purpose',
+      model: strOrNull(a.model),
+      effort: strOrNull(a.effort),
+      background: typeof a.background === 'boolean' ? a.background : null,
+      state: oneOf(a.state, ['running', 'done', 'failed', 'stopped'] as const, 'running'),
+      started: numOrNull(a.started),
+      ended: numOrNull(a.ended),
+      last: strOrNull(a.last),
+    }));
+}
+
 export function statusDetailsFrom(r: Obj): StatusDetails {
   const e = (r.edith ?? {}) as Obj;
   const lanes = (r.lanes ?? {}) as Obj;
@@ -212,6 +254,7 @@ export function statusDetailsFrom(r: Obj): StatusDetails {
       turn_started: numOrNull(e.turn_started),
       tmux: e.tmux === 'running' ? 'running' : 'down',
       background: backgroundFrom(e.background),
+      subagents: subagentsFrom(e.subagents),
     },
     lanes: {
       side: list(lanes.side).map((x) => ({ ref: str(x.ref), seconds: num(x.seconds), step: strOrNull(x.step), summary: strOrNull(x.summary) })),
@@ -356,6 +399,7 @@ export function createApi(t: Transport) {
           step: x.step == null ? null : str(x.step),
         })),
         background: backgroundFrom(r.background),
+        subagents: subagentsFrom(r.subagents),
         tmux: r.tmux === 'running' ? 'running' : 'down',
         conversation: bool(r.conversation),
         session: session ? { id: str(session.id), title: session.title == null ? null : str(session.title) } : null,

@@ -38,6 +38,7 @@ Every event on the bus, and on the app's `/v1/stream` WebSocket, has this shape:
 | `accounts.switch` | `{run, target, previous, state, step, detail, started, ts, agents}` | A Claude account switch starts, moves on a step and ends (contracts/accounts.md). Origin `system` |
 | `app.update_available` | `{kind, id, versionName, versionCode, runtimeVersion, sha, summary}` | A new app update is offered, once per update (contracts/app-updates.md §7). `kind`: `ota` or `apk`. Origin `system` |
 | `background.changed` | `{jobs: [{id, kind, label, started}]}` | The main session's background work changed: a job started or ended (contracts/status.md, "Background"). `jobs` is the whole list now (`[]`: none). Origin `system` |
+| `subagents.changed` | `{agents: [{id, description, type, model, effort, background, state, started, ended}]}` | The main session's subagents changed: one started, launched in the background or ended (contracts/status.md, "Subagents"). `agents` is the whole list now: running ones and those that ended in the last 30 minutes (`[]`: none; no `last`). Origin `system` |
 
 Fields the agent adds (new fields only; existing meanings unchanged):
 - `turn.started`, `turn.progress`, `turn.done`, `turn.stopped` and `turn.failed` carry `lane` (`main`
@@ -169,7 +170,7 @@ message never vanishes from the app, whichever way it reaches Claude. All carry 
 | tool | `turn.progress {step}` / `tool.call` (`step` is the tool summary, e.g. `$ npm test`) |
 | waiting_approval | `permission.request {ref, lane}`, until `permission.resolved` |
 | idle | `turn.done` / `turn.stopped` / `turn.failed` for that `ref` and `lane` |
-| waiting | idle, while the latest `background.changed` lists jobs: the turn is over, its background work isn't. Not working: no turn timer, and Stop has no turn to end |
+| waiting | idle, while the latest `background.changed` lists jobs (or `subagents.changed` a running one): the turn is over, its background work isn't. Not working: no turn timer, and Stop has no turn to end |
 
 **Message log:** `message.user` (from frontends), `message.delivered`, `message.reaction`, the side-lane
 `message.assistant`, side-lane `turn.started`/`turn.done`, and the `command.reply` answers to a typed
@@ -215,7 +216,7 @@ Base `http://<edith's Tailscale IP>:8787`, reachable over Tailscale only. Every 
 | POST | `/v1/attachments` | the raw file (image or audio), `x-filename?` | `{id, name, type, size, sha256}` (contracts/attachments.md) |
 | GET | `/v1/stream` | WebSocket | every event above as one JSON text message `{type, ts, session_id, origin, data}`; the server pings every 25 s (protocol ping) when the line is quiet. The app connects as `/v1/stream?client=app` (the push decision counts only those, contracts/push.md). The app may send `{"type": "ping", "id"?: any}`; the answer is `{"type": "pong", "ts", "session_id": null, "origin": "system", "data": {"id"?}}` (`id` echoed). Any frame from the app counts as alive; two quiet periods without one (a ping left unanswered for 25 s) and the server drops it. Other text from the app is ignored |
 | POST | `/v1/stop` | | `{running, dropped: [ref], background, ts}` (`ts`: the server's clock; contracts/status.md) |
-| GET | `/v1/status` | | `{ts, main: busy/idle, queued, runs: [{ref, lane, seconds, step}], tmux: running/down, conversation: bool, session: {id, title} \| null}` |
+| GET | `/v1/status` | | `{ts, main: busy/idle, queued, runs: [{ref, lane, seconds, step}], background, subagents, tmux: running/down, conversation: bool, session: {id, title} \| null}` (`background` and `subagents`: contracts/status.md) |
 | GET | `/v1/status/details` | | `{ts, edith, lanes, session, agents, server}`: the status panel (contracts/status.md) |
 | GET | `/v1/push/config` | | `{url, topic, token}`: edith's ntfy and the phone's read-only token, for turning push on (contracts/push.md, "Turning it on"). 404 when push isn't set up, 503 when the phone token file is unusable |
 | GET | `/v1/accounts` | | `{accounts, switch, login}`; also `PATCH /v1/accounts/{id}` (rename), `POST /v1/accounts/{id}/switch`, `POST /v1/accounts/login`, `POST`/`DELETE /v1/accounts/login/{login}`, `DELETE /v1/accounts/{id}` (contracts/accounts.md) |

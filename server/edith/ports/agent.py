@@ -46,6 +46,12 @@ class AgentBackend(Protocol):
         have ended: [{id, kind: "shell" | "agent", label, started}] oldest first. Changes also come
         as `background.changed` events."""
 
+    def subagents(self) -> list[dict]:
+        """The main session's subagents (its Agent calls, foreground or background): [{id,
+        description, type, model, effort, background, state: "running" | "done" | "failed" |
+        "stopped", started, ended, last}] oldest first, finished ones for 30 minutes after they
+        ended (contracts/status.md, "Subagents"). Changes also come as `subagents.changed` events."""
+
     def busy(self) -> bool:
         """True while the main lane is working or has messages queued."""
 

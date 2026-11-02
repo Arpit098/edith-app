@@ -1,7 +1,7 @@
 // Live session: the transcript and turn state, reduced from stream events and filled from history.
 
 import { backoffDelay, type Backoff } from '../../common/backoff';
-import { ApiError, backgroundFrom, isRetryable, type Api, type BackgroundJob, type Command, type HistoryPage, type Reply, type Status, type StatusDetails } from '../../core/api';
+import { ApiError, backgroundFrom, isRetryable, subagentsFrom, type Api, type BackgroundJob, type Command, type HistoryPage, type Reply, type Status, type StatusDetails, type Subagent } from '../../core/api';
 import { cursorOf, type ButtonRows, type EdithEvent, type EventBus, type Lane, type Origin } from '../../core/events';
 import { bool, buttonRows, num, str } from '../../core/guards';
 import type { AppVisibility, KeyValueStore } from '../../core/ports';
@@ -95,6 +95,9 @@ export interface LiveState {
   // Work EDITH started in the background that still runs, maybe after her reply ended the turn:
   // not a turn (no timer, nothing for Stop to end), shown as "waiting" (status.ts).
   background: BackgroundJob[];
+  // EDITH's in-session subagents (Agent calls), running or finished lately (contracts/status.md,
+  // "Subagents"): the chip counts the running ones.
+  subagents: Subagent[];
   // The server's clock minus the phone's (seconds), from the last answer or event that carried it:
   // background jobs are aged on the server's clock (their `started` is the server's), never the phone's.
   clockOffset: number;
@@ -124,6 +127,7 @@ export const initialLive: LiveState = {
   queued: 0,
   runs: {},
   background: [],
+  subagents: [],
   clockOffset: 0,
   session: null,
   seq: 0,
@@ -438,6 +442,8 @@ function apply(s: LiveState, e: EdithEvent): LiveState {
     }
     case 'background.changed':
       return { ...s, background: backgroundFrom(d.jobs) };
+    case 'subagents.changed':
+      return { ...s, subagents: subagentsFrom(d.agents) };
     case 'lane.status': {
       const next = { ...s, main: d.main === 'busy' ? ('busy' as const) : ('idle' as const), side: num(d.side), queued: num(d.queued) };
       // Nothing running anywhere: no turn can still be "working" (e.g. its end was missed while offline).
@@ -551,7 +557,7 @@ export function withOlder(s: LiveState, page: HistoryPage): LiveState {
 export function applyStatus(s: LiveState, st: Status): LiveState {
   const runs: Record<string, RunInfo> = {};
   for (const r of st.runs) runs[r.ref] = { lane: r.lane, step: r.step, steps: s.runs[r.ref]?.steps ?? 0, elapsed: r.seconds, active: s.runs[r.ref]?.active ?? !!r.step };
-  return { ...s, main: st.main, queued: st.queued, side: st.runs.filter((r) => r.lane === 'side').length, runs, background: st.background, session: st.session ?? s.session };
+  return { ...s, main: st.main, queued: st.queued, side: st.runs.filter((r) => r.lane === 'side').length, runs, background: st.background, subagents: st.subagents, session: st.session ?? s.session };
 }
 
 /** What the status bar shows. */
@@ -850,8 +856,9 @@ export function createLiveModel(bus: EventBus, api: Api, storage?: KeyValueStore
         }
         store.set((s) => {
           const next = reduce(s, e);
-          // The stream's ts is the server's: background.changed sets the clock its jobs are aged on.
-          return e.type === 'background.changed' ? { ...next, clockOffset: e.ts - Date.now() / 1000 } : next;
+          // The stream's ts is the server's: background.changed and subagents.changed set the clock
+          // their jobs are aged on.
+          return e.type === 'background.changed' || e.type === 'subagents.changed' ? { ...next, clockOffset: e.ts - Date.now() / 1000 } : next;
         });
       },
       'live-session',

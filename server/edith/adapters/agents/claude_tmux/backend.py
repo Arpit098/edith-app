@@ -721,6 +721,9 @@ class ClaudeTmux:
     def background(self):
         return self._live.background() if self._live else []
 
+    def subagents(self):
+        return self._live.subagents() if self._live else []
+
     def busy(self):
         return self.main_busy.is_set()
 

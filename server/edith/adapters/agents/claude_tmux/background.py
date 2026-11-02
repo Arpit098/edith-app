@@ -3,11 +3,14 @@
 A turn can end (Stop hook, reply sent) while work it started goes on: a Bash command or an Agent
 run with `run_in_background`. Claude Code writes, in the transcript:
 - the assistant's tool_use, with `input.run_in_background` and a `description`: the job starts;
+  an Agent call without it is async by default now, so it starts when its tool_result says
+  `toolUseResult.status` "async_launched" (a foreground agent's result is its answer instead);
 - its tool_result: `toolUseResult.backgroundTaskId` (a shell) or `agentId` (an agent), the job's
   task id; an error result means it never started;
 - later a user entry (`origin.kind` "task-notification") holding
   `<task-notification><task-id>…</task-id><tool-use-id>…</tool-use-id><status>…</status>`: it ended
-  (completed, failed or killed);
+  (completed, failed, stopped or killed). A resumed conversation's notice of orphans may name
+  several task ids and no tool-use id;
 - a TaskStop / KillShell / KillBash tool_use naming the task id, which ends it once its result is ok.
 
 Background.feed() takes entries in order and says whether the set of jobs changed. Only parsing
@@ -21,6 +24,7 @@ MAX_JOBS = 50
 LABEL = 80  # characters
 NOTIFICATION = re.compile(r"<task-notification>(.*?)</task-notification>", re.S)
 FIELD = re.compile(r"<(task-id|tool-use-id|status)>\s*([^<]*?)\s*</\1>")
+AGENTS = ("Agent", "Task")
 KINDS = {"Bash": "shell", "Agent": "agent", "Task": "agent"}
 STOPPERS = ("TaskStop", "KillShell", "KillBash")
 
@@ -44,6 +48,22 @@ def text_of(content):
     return ""
 
 
+def notifications(content):
+    """[(task ids, tool-use id or None, status or None)] for each <task-notification> in a user entry."""
+    out = []
+    for block in NOTIFICATION.findall(text_of(content)):
+        fields = [(k, v) for k, v in FIELD.findall(block) if v]
+        tasks = [v for k, v in fields if k == "task-id"]
+        one = dict(fields)  # tool-use-id and status appear once
+        out.append((tasks, one.get("tool-use-id"), one.get("status")))
+    return out
+
+
+def is_async_launch(e):
+    r = e.get("toolUseResult")
+    return isinstance(r, dict) and (r.get("status") == "async_launched" or r.get("isAsync") is True)
+
+
 def label_of(name, inp):
     text = inp.get("description") or (inp.get("command") if name == "Bash" else inp.get("prompt")) or name
     line = next((ln.strip() for ln in str(text).splitlines() if ln.strip()), name)
@@ -54,6 +74,7 @@ class Background:
     def __init__(self):
         self._jobs: dict[str, dict] = {}       # tool_use id -> {id, kind, label, started, task}
         self._stops: dict[str, str] = {}       # a stopper's tool_use id -> the task id it stops
+        self._agents: dict[str, dict] = {}     # an Agent call without run_in_background, until its result
 
     def jobs(self) -> list[dict]:
         """[{id, kind: shell | agent, label, started}] oldest first (`started`: unix seconds or None)."""
@@ -91,6 +112,11 @@ class Background:
                 while len(self._jobs) > MAX_JOBS:  # a job whose end we never saw
                     self._jobs.pop(min(self._jobs, key=lambda k: self._jobs[k]["started"] or 0))
                 changed = True
+            elif name in AGENTS:  # async unless its result is its answer: known from the result
+                self._agents[b["id"]] = {"id": b["id"], "kind": "agent", "label": label_of(name, inp),
+                                         "started": entry_ts(e), "task": None}
+                if len(self._agents) > MAX_JOBS:
+                    self._agents.pop(next(iter(self._agents)))
             elif name in STOPPERS:
                 task = inp.get("task_id") or inp.get("shell_id") or inp.get("bash_id")
                 if task:
@@ -106,6 +132,10 @@ class Background:
                 if not isinstance(b, dict) or b.get("type") != "tool_result":
                     continue
                 tid = b.get("tool_use_id")
+                pending = self._agents.pop(tid, None)
+                if pending and not b.get("is_error") and is_async_launch(e):
+                    self._jobs[tid] = pending
+                    changed = True
                 if tid in self._jobs:
                     if b.get("is_error"):
                         changed |= self._jobs.pop(tid, None) is not None
@@ -118,9 +148,10 @@ class Background:
                     task = self._stops.pop(tid)
                     if not b.get("is_error"):
                         changed |= self._end(task, None)
-        for block in NOTIFICATION.findall(text_of(content)):
-            fields = dict(FIELD.findall(block))
-            changed |= self._end(fields.get("task-id"), fields.get("tool-use-id"))
+        for tasks, tool_use_id, _ in notifications(content):
+            changed |= self._end(tasks[0] if tasks else None, tool_use_id)
+            for task in tasks[1:]:
+                changed |= self._end(task, None)
         return changed
 
     def _end(self, task, tool_use_id):

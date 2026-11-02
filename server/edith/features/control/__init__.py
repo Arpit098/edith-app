@@ -118,6 +118,8 @@ def setup(ctx: Context) -> None:
                 "runs": [{"ref": r.ref, "lane": r.lane, "seconds": int(time.time() - r.started), "step": r.step}
                          for r in runs],
                 "background": [{k: j[k] for k in ("id", "kind", "label", "started")} for j in agent.background()],
+                # without `last` (the status details have it), like subagents.changed
+                "subagents": [{k: v for k, v in a.items() if k != "last"} for a in agent.subagents()],
                 "tmux": "running" if agent.tmux_alive() else "down", "conversation": agent.has_conversation(),
                 "session": {"id": sid, "title": agent.session_title(sid)} if sid else None}
 

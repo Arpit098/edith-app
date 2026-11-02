@@ -1,7 +1,8 @@
 """Status details: GET /v1/status/details for the app's status panel (contracts/status.md).
 
 What EDITH's main lane is doing (thinking, a tool, waiting for approval, or waiting: her turn is
-over but background work it started still runs) and since when, that background work, the side
+over but background work it started still runs) and since when, that background work, her
+subagents (running, and finished in the last 30 minutes), the side
 lanes, the queue, pending approvals, the conversation, the coding agents in tmux and the live tag.
 
 The main lane's state comes from the bus (turn.*, tool.*, permission.*), so a request reads only
@@ -150,9 +151,12 @@ def setup(ctx: Context) -> None:
         m["tmux"] = "running" if tmux_alive.get() else "down"
         background = [{"id": j["id"], "kind": j["kind"], "label": redact(j["label"]), "started": j["started"]}
                       for j in agent.background()]
-        if m["state"] == "idle" and background:
+        subagents = [{**a, "description": redact(a["description"]), "last": redact(a.get("last"))}
+                     for a in agent.subagents()]
+        if m["state"] == "idle" and (background or any(a["state"] == "running" for a in subagents)):
             m["state"] = "waiting"  # the turn is over (`since` is when), but work it started goes on
         m["background"] = background
+        m["subagents"] = subagents
         return m
 
     def api_details(req):
