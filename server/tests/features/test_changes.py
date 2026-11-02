@@ -112,6 +112,19 @@ class ChangesTest(unittest.TestCase):
             # Read-only: the repo's own index is untouched.
             self.assertEqual((home / "Projects/alpha/.git/index").read_bytes(), index)
 
+    def test_summary_only_writes_nothing(self):
+        with projects_home() as home:
+            out_dir = home / ".cache/edith/changes"
+            text, page = run(report.main, ["--summary-only"])
+            self.assertIsNone(page)
+            self.assertNotIn("HTML:", text)
+            self.assertIn("alpha (main):", text)
+            self.assertFalse(out_dir.exists() and any(out_dir.iterdir()))
+            full, _ = run(report.main, [])
+            self.assertEqual(text, full.split("\nHTML:")[0] + "\n")  # the same summary
+            self.assertEqual(run(report.main, ["--summary-only", "BET"])[0],
+                             normalize("beta ((detached)): clean\nNo uncommitted changes.\n"))
+
     def test_git_calls_do_not_grow_with_files(self):
         with projects_home() as home:
             many = home / "Projects" / "many"

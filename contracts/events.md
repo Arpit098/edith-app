@@ -36,6 +36,9 @@ Every event on the bus, and on the app's `/v1/stream` WebSocket, has this shape:
 | `voice.turn` | `{ref}` | The App API accepted a `POST /v1/messages` with `voice: true` (sent before the turn's own events). Origin `app` |
 | `voice.reply` | `{ref, outcome, speak}` | What the app says aloud for that voice turn (see "Voice" below). Origin `app` |
 | `accounts.switch` | `{run, target, previous, state, step, detail, started, ts, agents}` | A Claude account switch starts, moves on a step and ends (contracts/accounts.md). Origin `system` |
+| `agent.limit` | `{kind, text, resets, lane}` | Claude hit its usage limit or a login/billing problem (contracts/backup.md). Origin `system` |
+| `accounts.limit` | `{account, kind, resets, action, target, next_free, detail}` | EDITH acted on an `agent.limit`: switching accounts, or none is free (contracts/accounts.md). Origin `system` |
+| `backup.changed` | `backup` (contracts/backup.md) | The backup AI's mode or state changed (took over, handed back, answered, queue). Origin `system` |
 | `app.update_available` | `{kind, id, versionName, versionCode, runtimeVersion, sha, summary}` | A new app update is offered, once per update (contracts/app-updates.md §7). `kind`: `ota` or `apk`. Origin `system` |
 | `background.changed` | `{jobs: [{id, kind, label, started}]}` | The main session's background work changed: a job started or ended (contracts/status.md, "Background"). `jobs` is the whole list now (`[]`: none). Origin `system` |
 | `subagents.changed` | `{agents: [{id, description, type, model, effort, background, state, started, ended}]}` | The main session's subagents changed: one started, launched in the background or ended (contracts/status.md, "Subagents"). `agents` is the whole list now: running ones and those that ended in the last 30 minutes (`[]`: none; no `last`). Origin `system` |
@@ -106,14 +109,16 @@ message never vanishes from the app, whichever way it reaches Claude. All carry 
     line are taken out.
   - `attachments` is the list of saved file paths (`[]` if none); `replying_to` is the quoted text or `null`.
   - `delivery` is the expected route: `main` (the main lane takes it now), `queued` (it waits for the main
-    lane), `side_lane` (a parallel lane runs it now) or `command` (see "Typed commands" below). `lane`
-    is `main`, `queued`, `side` or `command`.
+    lane), `side_lane` (a parallel lane runs it now), `command` (see "Typed commands" below) or `backup`
+    (the backup AI answers it while Claude is at its limit, contracts/backup.md). `lane` is `main`,
+    `queued`, `side`, `command` or `backup`.
 - `message.delivered.delivery` is what happened:
   - `main`: it started a main-lane turn;
   - `mid_turn`: Claude was still working, and Claude Code folded the message into the running turn
     (the transcript then has it inside a tool result, not as a user message);
   - `side_lane`: a parallel lane (a fork of the conversation) started on it;
   - `command`: the bridge ran it as a command (`rid` is `null`).
+  - `backup`: the backup AI took it (`rid` is `null`); its turn events have `lane: "backup"`.
 
   A queued message gets `message.delivered` when its turn starts. `rid` is the run id in the prompt's
   `[tg-ref <rid>]` tag.

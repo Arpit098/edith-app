@@ -27,11 +27,12 @@ LIMIT_RESET = re.compile(
 # Older Claude Code: "Claude AI usage limit reached|1761998400" (the reset as unix seconds)
 LIMIT_EPOCH = re.compile(r"(?P<lead>usage limit reached)\|(?P<ts>\d{9,11})\b", re.I)
 # Claude Code's own limit wording ("Claude usage limit reached", "5-hour limit reached ∙ resets 4pm",
-# "You've hit your limit"): never a bare "limit reached", which a reply or a tool ("rate limit
+# "You've hit your limit", "You've hit your 5-hour limit", "You've hit your weekly limit"): never a bare "limit reached", which a reply or a tool ("rate limit
 # reached") can print too. Shared with claude_screen. A reset time is rewritten only when this comes
 # at most LIMIT_BEFORE characters before it, on the same line and outside fenced code: "the cron job
 # resets at 16:00 (UTC)" in a reply is left alone.
-USAGE_LIMIT = re.compile(r"usage limit reached|\b\d+-hour limit reached|weekly limit reached|hit your limit"
+USAGE_LIMIT = re.compile(r"usage limit reached|\b\d+-hour limit reached|weekly limit reached"
+                         r"|hit your (?:\d+-hour |weekly |daily |monthly |session |usage )?limit"
                          r"|limit will reset", re.I)
 LIMIT_BEFORE = 60
 FENCE = re.compile(r"^\s*(```|~~~)")
@@ -99,6 +100,16 @@ def clock(t: dt.datetime) -> str:
 def day(t: dt.datetime) -> str:
     """Nov 2"""
     return f"{t:%b} {t.day}"
+
+
+def when(ts: float | None, now: float | None = None) -> str:
+    """A unix time for Arpit: "9:30 PM IST" today, else "Nov 3, 9:30 PM IST"; "unknown" for None."""
+    if not ts:
+        return "unknown"
+    zone = user_tz()
+    t = dt.datetime.fromtimestamp(ts, zone)
+    today = dt.datetime.fromtimestamp(now if now is not None else dt.datetime.now().timestamp(), zone).date()
+    return (day(t) + ", " if t.date() != today else "") + clock(t)
 
 
 def localize_limit_text(text: str, tz=None, now: dt.datetime | None = None) -> str:

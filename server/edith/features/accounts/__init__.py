@@ -16,8 +16,13 @@ herself (edith-claude) to the chosen account.
 - Add runs `claude auth login` headless in a private folder (login.py); folders of sign-ins older
   than login_ttl are swept at startup.
 
+- At the limit (an `agent.limit` event), the account in use is marked limited until its reset
+  (limits.py) and EDITH switches to a saved account that isn't, on her own, and tells Arpit. With
+  none free, or the switch refused, she says so in an `accounts.limit` event: the backup feature
+  takes over then (contracts/backup.md).
+
 Config [features.accounts]: root, claude_dir, claude_json, claude, service, edith_socket,
-edith_target, agents_socket, systemd_run, ready_timeout, login_ttl.
+edith_target, agents_socket, systemd_run, ready_timeout, login_ttl, auto_switch (default true).
 """
 import json
 import logging
@@ -34,8 +39,10 @@ import time
 
 from edith.common import usertime
 from edith.common.paths import resolve
+from edith.common.timer import Timers
 from edith.core import ApiError, Context, Event, Feature
 
+from .limits import Limits
 from .login import Login, LoginError
 from .panes import Panes
 from .profiles import ProfileError, Profiles, read_json, write_private
@@ -46,6 +53,8 @@ SERVER_DIR = str(pathlib.Path(__file__).resolve().parents[3])  # where `python3 
 KEEP_RESULT = 3600     # a finished switch stays in GET /v1/accounts this long (seconds)
 LISTEN_LIMIT = 1800    # the longest a switch is listened to (seconds)
 QUIET_CHECK = 30       # seconds without a report before the status file is checked
+RETRY_AFTER = (120, 240, 480, 960)  # seconds: an automatic switch refused (someone busy) is tried again
+RECENT = 120           # seconds: another limit line from the same account this soon is the same limit
 
 
 def unit_active(unit: str | None) -> bool:
@@ -239,7 +248,10 @@ def setup(ctx: Context) -> None:
                 "login": {"id": flow.id, "url": flow.url} if flow else None}
 
     def api_switch(req):
-        target = req["params"]["id"]
+        return start_switch(req["params"]["id"])
+
+    def start_switch(target, auto=False):
+        """Start a switch to `target` (see api_switch's route), or raise ApiError saying why not."""
         with lock:
             try:
                 info = profiles.get(target)
@@ -307,6 +319,8 @@ def setup(ctx: Context) -> None:
             # The runner has the switch now (and the hold, until it reports its end): nothing here may undo that.
             log.info("accounts: switching to %s (%s), restarting %d agent(s) and EDITH", target, unit, len(agents))
             first.pop("unit")
+            if auto:
+                auto_runs[run] = target
             try:
                 ctx.bus.publish(Event("accounts.switch", first, origin="system"))
             except Exception:
@@ -392,6 +406,119 @@ def setup(ctx: Context) -> None:
         if flow:
             flow.cancel()
         return {"cancelled": bool(flow)}
+
+    # ---- automatic switch at the limit (contracts/backup.md, "Account switch first") ----
+
+    auto_runs: dict[str, str] = {}  # run -> target, for the switches started here
+    retries = {"n": 0}
+
+    def name_of(pid):
+        try:
+            info = profiles.get(pid)
+        except ProfileError:
+            return pid
+        return info.get("label") or info.get("email") or pid
+
+    def tell(text):
+        ctx.bus.publish(Event("message.system", {"text": text}, origin="system"))
+
+    def limit_event(**data):
+        ctx.bus.publish(Event("accounts.limit", data, origin="system"))
+
+    def try_auto_switch(active, kind, until, first_try=True):
+        """Switch to an account that isn't limited; tell Arpit and the backup feature what happened."""
+        ids = [a["id"] for a in profiles.list()]
+        others = [a for a in ids if a != active]
+        free = limits.free(others)
+        what = {"usage_limit": "hit its usage limit", "login": "has a login problem",
+                "billing": "has a billing problem"}.get(kind, "stopped answering")
+        if not free:
+            nxt = limits.next_free(ids)
+            limit_event(account=active, kind=kind, resets=until, action="none_free", target=None, next_free=nxt,
+                        detail="no other Claude account is free")
+            if first_try:
+                tell(f"⚠️ Claude ({name_of(active)}) {what} (back {usertime.when(until)}). "
+                     + ("No other Claude account is saved." if not others else "No other Claude account is free."))
+            return
+        target = free[0]
+        try:
+            start_switch(target, auto=True)
+        except ApiError as e:
+            n = retries["n"]
+            retries["n"] += 1
+            retry = n < len(RETRY_AFTER)
+            limit_event(account=active, kind=kind, resets=until, action="refused", target=target,
+                        next_free=None, detail=e.message)
+            if retry:
+                timers.schedule("retry", time.time() + RETRY_AFTER[n], lambda: retry_switch(active, kind, until))
+            if first_try or not retry:
+                tell(f"⚠️ Claude ({name_of(active)}) {what}. I couldn't switch to {name_of(target)}: {e.message}."
+                     + (" I'll try again in a few minutes." if retry else " Switch by hand in Settings → Claude accounts."))
+            return
+        retries["n"] = 0
+        limit_event(account=active, kind=kind, resets=until, action="switching", target=target, next_free=None,
+                    detail=None)
+        tell(f"🔁 Claude ({name_of(active)}) {what} (back {usertime.when(until)}). Switching to {name_of(target)} "
+             "automatically; the chat pauses for about 30 s.")
+
+    def retry_switch(account, kind, until):
+        if profiles.active() == account and limits.get(account):
+            try_auto_switch(account, kind, until, first_try=False)
+
+    def on_limit(item):
+        kind, resets = item.get("kind"), item.get("resets")
+        active = profiles.active()
+        if active is None:
+            limit_event(account=None, kind=kind, resets=resets, action="none_free", target=None, next_free=None,
+                        detail="no Claude account is saved")
+            return
+        running = current_switch()
+        if running and running.get("state") == "running":
+            return  # a switch is already moving everyone
+        seen = limits.get(active)
+        if seen and time.time() - float(seen.get("seen") or 0) < RECENT:
+            return  # the same limit, reported again
+        until = limits.mark(active, kind, resets)
+        timers.cancel("retry")
+        retries["n"] = 0
+        # The backup's hand-back check (lane "probe") repeats every 15-60 minutes: only a switch is news then.
+        try_auto_switch(active, kind, until, first_try=item.get("lane") != "probe")
+
+    timers = Timers("accounts")
+    limits = Limits(os.path.join(private, "limits.json"), ensure_dir=private_dir)
+    if cfg.get("auto_switch", True):
+        submit_limit = ctx.add_worker("auto_switch", on_limit, maxsize=5)
+
+        def on_agent_limit(ev):
+            try:
+                submit_limit(dict(ev.data))
+            except Exception:
+                log.warning("accounts: too many limit reports waiting; one dropped")
+
+        ctx.subscribe("agent.limit", on_agent_limit)
+    else:
+        def on_limit_no_switch(ev):  # no automatic switch: say so, so the backup can take over
+            d = ev.data
+            limit_event(account=profiles.active(), kind=d.get("kind"), resets=d.get("resets"), action="disabled",
+                        target=None, next_free=None, detail="automatic switching is off")
+
+        ctx.subscribe("agent.limit", on_limit_no_switch)
+
+    def on_switch(ev):
+        run, state = ev.data.get("run"), ev.data.get("state")
+        if run not in auto_runs or state == "running":
+            return
+        target = auto_runs.pop(run)
+        if state == "done":
+            limits.clear(target)
+            tell(f"✅ Switched to Claude ({name_of(target)})." + (f" {ev.data['detail']}." if ev.data.get("detail") else ""))
+            return
+        limits.mark(target, "login", None)  # it didn't come up: don't pick it again for a while
+        limit_event(account=ev.data.get("previous"), kind="usage_limit", resets=None, action="switch_failed",
+                    target=target, next_free=None, detail=ev.data.get("detail"))
+        tell(f"⚠️ The automatic switch to {name_of(target)} didn't work: {ev.data.get('detail') or state}.")
+
+    ctx.subscribe("accounts.switch", on_switch)
 
     ctx.add_route("GET", "/v1/accounts", api_list)
     ctx.add_route("POST", "/v1/accounts/login", api_login_start)

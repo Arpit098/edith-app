@@ -5,6 +5,7 @@ import type { FeatureModule } from '../core/feature';
 import appearance from './appearance';
 import appUpdate from './app-update';
 import approvals from './approvals';
+import backup from './backup';
 import claudeAccounts from './claude-accounts';
 import commands from './commands';
 import liveSession from './live-session';
@@ -18,6 +19,7 @@ export const features: FeatureModule[] = [
   liveSession,
   sessions,
   approvals,
+  backup, // the backup AI's pill while Claude is at its limit
   commands,
   appUpdate,
   appearance, // Settings → Appearance: themes, bubble colours, background, glass

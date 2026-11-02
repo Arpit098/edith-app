@@ -11,7 +11,7 @@ import threading
 import tomllib
 
 from .common import usertime
-from .core import EventBus, JobRunner, Ports, Registry, load_adapter, load_features, load_port
+from .core import DivertingAgent, EventBus, JobRunner, Ports, Registry, load_adapter, load_features, load_port
 
 log = logging.getLogger("edith.main")
 
@@ -28,7 +28,9 @@ def build(config: dict):
         return load_port(name, folder, chosen, settings.get(chosen, {}), shared) if chosen else None
 
     ports = Ports(agent=port("agent", "agents"), stt=port("stt", "stt"),
-                  mail=port("mail", "mail"), calendar=port("calendar", "calendar"))
+                  mail=port("mail", "mail"), calendar=port("calendar", "calendar"), llm=port("llm", "llm"))
+    if ports.agent:  # every message to the agent is first offered to the features' diverters (the backup AI)
+        ports.agent = DivertingAgent(ports.agent, registry)
     ports.notifiers = [n for n in (load_adapter("notifiers", name, settings.get(name, {}))
                                    for name in adapters.get("notifiers", [])) if n]
     features = config.get("features", {})

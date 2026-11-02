@@ -43,14 +43,13 @@ import sys
 import time
 
 from edith.common import usertime
+from edith.common.claude_limits import LOGIN_ERROR
 from edith.common.claude_sessions import proc_stat, same_process
 
 from .panes import Panes
 from .profiles import Profiles, write_private
 
 READY = re.compile(r"^\s*❯", re.M)  # Claude's input box
-LOGIN_ERROR = re.compile(r"Please run /login|Invalid API key|OAuth token (?:has )?expired|authentication_error"
-                         r"|Not logged in", re.I)
 BOTTOM = 15
 
 
