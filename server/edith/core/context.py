@@ -100,6 +100,15 @@ class Job:
 
 
 @dataclass
+class Diverter:
+    """Offered every message before it reaches the agent (core/divert.py): handler(text, origin, ref,
+    force_queue, parallel) returns a TurnHandle when it takes the message (the backup AI while Claude
+    is down), None to let it through."""
+    handler: Callable
+    owner: str
+
+
+@dataclass
 class Route:
     """An App API route. `path` may hold {name} parts ("/v1/sessions/{id}/resume"). The handler gets
     {"body": parsed JSON or None, "raw": bytes, "content_type": str, "params": {name: value},
@@ -144,6 +153,7 @@ class Ports:
     calendar: Any = None   # ports.calendar.Calendar
     notifiers: list = field(default_factory=list)  # [ports.notifier.Notifier]
     presence: Any = None   # ports.presence.Presence: the App API, set once frontends are built
+    llm: Any = None        # ports.llm.ChatModels: the backup AI's chat models
 
 
 class Registry:
@@ -154,6 +164,10 @@ class Registry:
         self.routes: dict[tuple[str, str], Route] = {}
         self.actions: dict[str, Action] = {}
         self.jobs: dict[str, Job] = {}
+        self.diverters: list[Diverter] = []
+
+    def add_diverter(self, diverter: "Diverter") -> None:
+        self.diverters.append(diverter)
 
     def add_command(self, cmd: Command) -> None:
         if cmd.name in self.commands:
@@ -261,6 +275,10 @@ class Context:
             q.put(item)
         self._registry.add_job(Job(f"{self.feature}.{name}", handle, self.feature, q))
         return submit
+
+    def add_diverter(self, handler) -> None:
+        """See Diverter: take messages meant for the agent, while handler says so."""
+        self._registry.add_diverter(Diverter(handler, self.feature))
 
     def subscribe(self, pattern: str, handler) -> None:
         self.bus.subscribe(pattern, handler, owner=self.feature)
