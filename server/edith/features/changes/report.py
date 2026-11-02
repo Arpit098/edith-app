@@ -12,6 +12,8 @@ Read-only: never touches the git index or working tree.
 # `python3 -I ~/edith/bin/changes.py [filter]` (a wrapper, see deploy/shims/); the output must not change.
 #
 # Changes from legacy:
+# - `--summary-only` prints the summary and writes (and prunes) nothing: the backup AI's
+#   project_changes tool (features/backup/tools.py) uses it.
 # - A fixed number of git calls per repo instead of one per changed file: tracked changes come from
 #   one `git diff HEAD` split per file, and untracked files from one `git diff` through a throwaway
 #   index that holds them as intent-to-add entries (the repo's own index is never touched). Blocks
@@ -166,7 +168,9 @@ def write_private(path, text):
 
 
 def main(argv=None):
-    argv = sys.argv[1:] if argv is None else argv
+    argv = list(sys.argv[1:] if argv is None else argv)
+    summary_only = "--summary-only" in argv  # the summary alone: no HTML report written, none pruned
+    argv = [a for a in argv if a != "--summary-only"]
     filt = argv[0] if argv else ""
     repos = find_repos(filt)
     if not repos:
@@ -201,6 +205,8 @@ def main(argv=None):
     print("\n".join(summary))
     if not total_files:
         print("No uncommitted changes.")
+        return
+    if summary_only:
         return
     out_dir = resolve().changes_dir
     os.makedirs(out_dir, mode=0o700, exist_ok=True)

@@ -966,6 +966,24 @@ class LimitTest(unittest.TestCase):
         self.assertIsNotNone(h.wait("message.assistant"))
         self.assertIsNone(h.wait("agent.limit", timeout=0.2))
 
+    def test_a_parallel_task_at_the_5_hour_limit(self):
+        limit = "You've hit your 5-hour limit · resets 11pm (UTC)"
+        events = [{"type": "system", "subtype": "init", "session_id": "fork-1"},
+                  {"type": "result", "subtype": "success", "is_error": True, "result": limit, "session_id": "fork-1"}]
+        h = Harness(self, busy_policy="side_lane", side_plan=plan(events=events, exit_code=1))
+        h.agent.main_busy.set()  # the main lane is busy: the message runs in a side lane
+        h.agent.send("q", "telegram", "m1")
+        ev = h.wait("agent.limit")
+        self.assertIsNotNone(ev)
+        self.assertEqual((ev.data["kind"], ev.data["lane"]), ("usage_limit", "side"))
+        self.assertGreater(ev.data["resets"], time.time())
+        self.assertIn("IST", ev.data["text"])
+        h2 = Harness(self, busy_policy="side_lane", side_plan=plan(reply="The 5-hour limit reached message is fine."))
+        h2.agent.main_busy.set()
+        h2.agent.send("q", "telegram", "m2")
+        self.assertIsNotNone(h2.wait("turn.done", "m2"))
+        self.assertIsNone(h2.wait("agent.limit", timeout=0.2))  # an ordinary answer isn't a limit
+
     def probe_with(self, script):
         h = Harness(self)
         fake = h.home / "claude-probe"

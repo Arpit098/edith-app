@@ -1045,5 +1045,25 @@ class AutoSwitchTest(RoutesBase):
         with mock.patch.dict(os.environ, {"HOME": self.h.home}):
             load_features(["accounts"], self.bus, Ports(agent=self.agent), registry, {"accounts": cfg})
         self.assertNotIn("accounts.auto_switch", registry.jobs)
-        self.bus.publish(Event("agent.limit", {"kind": "usage_limit"}))
+        seen = []
+        self.bus.subscribe("accounts.limit", lambda e: seen.append(e.data), owner="test")
+        self.bus.publish(Event("agent.limit", {"kind": "usage_limit", "resets": 123.0}))
         self.assertEqual(self.launched, [])
+        self.assertEqual([(d["action"], d["kind"], d["resets"]) for d in seen], [("disabled", "usage_limit", 123.0)])
+
+    def test_an_account_that_frees_up_first_is_picked_again(self):
+        """A hit its limit, EDITH moved to B; B hits its limit while A is free again: back to A."""
+        a = self.h.profiles.active()
+        b = self.second()
+        self.h.login_as(2)  # B in use now
+        self.assertEqual(self.h.profiles.active(), b)
+        from edith.features.accounts.limits import Limits
+        Limits(os.path.join(self.state, "accounts", "limits.json"),
+               ensure_dir=lambda: os.makedirs(os.path.join(self.state, "accounts"), exist_ok=True)).mark(
+            a, "usage_limit", time.time() + 0.05)  # A's limit is about to end
+        time.sleep(0.1)
+        self.load()
+        self.limit(resets=time.time() + 7200)  # B's limit (e.g. the backup's failed hand-back check)
+        with open(self.launched[-1][-1]) as f:
+            self.assertEqual(json.load(f)["target"], a)
+        self.assertEqual(self.of("accounts.limit")[-1]["action"], "switching")

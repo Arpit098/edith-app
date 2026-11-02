@@ -10,7 +10,7 @@ from .chain import write_private
 
 MAX_QUEUE = 20
 MAX_HISTORY = 10
-DEFAULT = {"mode": "auto", "active": False, "since": None, "reason": None, "kind": None, "resets": None,
+DEFAULT = {"mode": "auto", "active": False, "waiting": False, "since": None, "reason": None, "kind": None, "resets": None,
            "provider": None, "next_check": None, "attempt": 0, "history": [], "queue": []}
 
 

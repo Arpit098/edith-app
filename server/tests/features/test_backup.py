@@ -379,7 +379,7 @@ class ToolsTest(unittest.TestCase):
         self.call("agents_status")
         self.assertEqual(self.ran[-1], ["python3", "-I", f"{bin_dir}/agent.py", "status"])
         self.call("project_changes", project="edith-app")
-        self.assertEqual(self.ran[-1], ["python3", "-I", f"{bin_dir}/changes.py", "edith-app"])
+        self.assertEqual(self.ran[-1], ["python3", "-I", f"{bin_dir}/changes.py", "--summary-only", "edith-app"])
         for bad in ("../etc", "--help", "a;rm -rf ~", "$(id)", "a b", "", "x" * 80, "-n"):
             with self.subTest(bad=bad):
                 self.assertTrue(self.call("project_changes", project=bad).startswith("error:"))
@@ -402,6 +402,10 @@ class ToolsTest(unittest.TestCase):
         self.assertEqual(out, "10:01 edith.main INFO running")
 
     def test_web_is_public_only(self):
+        urls = ("http://localhost/x", "http://metadata/computeMetadata", "http://ts.internal:8080/", "http://lan/",
+                "file:///etc/passwd", "ftp://example.com/", "http://user:pw@example.com/", "http://nowhere.invalid/",
+                "http://v6/")
+        self.tools.begin_turn("look at " + " ".join(urls))
         for url in ("http://localhost/x", "http://metadata/computeMetadata", "http://ts.internal:8080/", "http://lan/",
                     "file:///etc/passwd", "ftp://example.com/", "http://user:pw@example.com/", "http://nowhere.invalid/",
                     "http://v6/"):
@@ -436,15 +440,132 @@ class ToolsTest(unittest.TestCase):
 
         resolver = lambda host, port: [(2, 1, 0, "", ("93.184.215.14", 0))]  # noqa: E731
         tools = Tools(self.l.policy, "/x", self.queue, lambda: None, {}, opener=Op(), resolver=resolver)
-        self.assertEqual(tools.call("fetch_url", json.dumps({"url": "https://example.com/a"})), "Hello & welcome")
+        tools.begin_turn("what's on https://example.com/b ?")
+        fetch = lambda url: tools.call("fetch_url", json.dumps({"url": url}))  # noqa: E731
+        self.assertIn("only links from Arpit's message", fetch("https://example.com/a"))  # the model made it up
         self.assertEqual(tools.call("web_search", json.dumps({"query": "example"})),
                          "- Example A\n  https://example.com/a\n  An example page")
+        self.assertEqual(fetch("https://example.com/a"), "Hello & welcome")  # a search result: allowed now
+        self.assertEqual(fetch("https://example.com/b"), "Example A An example page")  # Arpit's own link
+        tools.begin_turn("next message")
+        self.assertIn("only links from Arpit's message", fetch("https://example.com/a"))  # per message
 
     def test_queue_and_status(self):
         self.assertIn("#abc123", self.call("queue_for_claude", task="restart the bridge"))
         self.assertEqual(self.queued, ["restart the bridge"])
-        self.assertEqual(json.loads(self.call("edith_status")), {"edith": {"state": "idle"}})
+        self.assertEqual(json.loads(self.call("edith_status"))["claude"], None)
         self.assertIn("disk /", self.call("system_info"))
+
+
+class WebSafetyTest(unittest.TestCase):
+    """DNS rebinding, the connected peer, and data leaving through searches the model writes."""
+
+    def setUp(self):
+        import http.server
+        import threading
+        self.l = Layout(self)
+        self.hits = []
+        hits = self.hits
+
+        class H(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                hits.append(self.headers.get("Host"))
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b"local secret page")
+
+            def log_message(self, *a):
+                pass
+
+        self.server = http.server.HTTPServer(("127.0.0.1", 0), H)
+        self.port = self.server.server_address[1]
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.addCleanup(self.server.server_close)
+        self.addCleanup(self.server.shutdown)
+
+    def tools(self, resolver, **kw):
+        return Tools(self.l.policy, "/x", lambda t: "q1", lambda: None, {}, resolver=resolver, **kw)
+
+    def test_a_host_that_rebinds_to_loopback_is_never_reached(self):
+        answers = iter(["93.184.215.14"] + ["127.0.0.1"] * 10)  # public when checked, then loopback
+        tools = self.tools(lambda host, port: [(2, 1, 0, "", (next(answers), 0))])
+        url = f"http://rebind.test:{self.port}/x"
+        tools.begin_turn(f"read {url}")
+        out = tools.call("fetch_url", json.dumps({"url": url}))
+        self.assertTrue(out.startswith("error:"), out)
+        self.assertEqual(self.hits, [])
+
+    def test_it_connects_to_the_checked_address(self):
+        seen = []
+
+        def connect(addr, timeout):
+            seen.append(addr)
+            raise OSError("stop here")
+        tools = self.tools(lambda host, port: [(2, 1, 0, "", ("93.184.215.14", 0))])
+        tools._connect = connect
+        tools.begin_turn("see http://example.com:8080/page")
+        self.assertTrue(tools.call("fetch_url", json.dumps({"url": "http://example.com:8080/page"})).startswith("error:"))
+        self.assertEqual(seen, [("93.184.215.14", 8080)])
+
+    def test_the_connected_peer_is_checked_too(self):
+        tools = self.tools(lambda host, port: [(2, 1, 0, "", ("93.184.215.14", 0))])
+        tools._connect = lambda addr, timeout: socket.create_connection(("127.0.0.1", self.port), timeout)
+        url = f"http://example.com:{self.port}/x"
+        tools.begin_turn(url)
+        out = tools.call("fetch_url", json.dumps({"url": url}))
+        self.assertIn("public internet", out)
+        self.assertEqual(self.hits, [])
+
+    def test_searches_cant_carry_what_local_tools_read(self):
+        searched = []
+
+        class Op:
+            def open(self, req, timeout):
+                searched.append(req.data)
+                return Resp(b"", "text/html")
+
+        class Resp:
+            def __init__(self, body, ctype):
+                self.body, self.headers = body, {"Content-Type": ctype}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self, n):
+                return self.body
+
+        tools = self.tools(lambda host, port: [(2, 1, 0, "", ("93.184.215.14", 0))], opener=Op())
+        search = lambda q: tools.call("web_search", json.dumps({"query": q}))  # noqa: E731
+        tools.begin_turn("q")
+        self.assertEqual(search("x" * 150), "no results")  # nothing local read yet: up to 300
+        self.assertIn("1\tdeploy notes", tools.call("read_file", json.dumps({"path": "~/edith/notes.txt"})))
+        self.assertIn("at most 100 characters", search("python " * 20))
+        self.assertIn("can't contain", search("what is Deploy  notes: all FINE about"))
+        self.assertIn("can't contain", search("SECRETWORD in notes"))
+        self.assertEqual(search("python release date"), "no results")
+        self.assertEqual(len(searched), 2)
+        tools.begin_turn("a new message")
+        self.assertEqual(search("SECRETWORD in notes"), "no results")  # a new turn starts clean
+
+
+class StatusTrimTest(unittest.TestCase):
+    def test_only_states_and_counts(self):
+        st = {"main": "busy", "queued": 1, "tmux": "running", "conversation": True, "ts": 1.0,
+              "runs": [{"ref": "r", "lane": "main", "seconds": 3, "step": "Read: mail-from-bank.txt"},
+                       {"ref": "s", "lane": "side", "seconds": 1, "step": None}],
+              "background": [{"id": "b", "kind": "shell", "label": "fetch the calendar", "started": 1}],
+              "subagents": [{"id": "a", "description": "Summarise Arpit's inbox", "state": "running"}],
+              "session": {"id": "x", "title": "Mail from the bank"}}
+        tools = Tools(PathPolicy("/", ["/nonexistent"], [], "/"), "/x", lambda t: "q", lambda: st, {})
+        out = tools.call("edith_status", "{}")
+        self.assertEqual(json.loads(out), {"claude": "busy", "tmux": "running", "queued": 1,
+                                           "running_tasks": {"main": 1, "parallel": 1}, "background_jobs": 1,
+                                           "subagents": {"running": 1, "total": 1}, "conversation": True})
+        for s in ("mail", "calendar", "inbox", "bank"):
+            self.assertNotIn(s, out.lower())
 
 
 # ---------------------------------------------------------------- the loop
@@ -816,8 +937,8 @@ class FeatureTest(unittest.TestCase):
         self.backup_cmd("on")
         self.assertEqual(self.ask("hi").lane, "backup")
         self.assertNotIn("check", self.timer.due)  # forced on: no hand-back check
-        self.backup_cmd("auto")
-        self.timer.fire("check")  # auto again: Claude answers, so hand back at once
+        self.backup_cmd("auto")  # on by hand while Claude was fine: auto hands back at once
+        self.assertIn("✅ The backup AI is back on auto", self.system()[-1])
         self.assertEqual(self.ask("hi", ref="tg:1:6").lane, "main")
         self.assertIn("Use /backup on", self.backup_cmd("maybe"))
         changed = self.of("backup.changed")[-1]
@@ -858,6 +979,61 @@ class FeatureTest(unittest.TestCase):
         self.agent.runs = [RunInfo("r1", "main", time.time() - 100, None)]
         self.timer.fire("check")
         self.assertIn("The task the limit cut off is still open", self.system()[-1])
+
+    def test_a_quoted_reply_is_never_sent(self):
+        self.limit()
+        self.ask("is this ok?\n[Arpit is replying to EDITH's message: Mail from bank: OTP 482913]")
+        sent = json.dumps(self.provider.calls)
+        self.assertNotIn("482913", sent)
+        self.assertIn("(a reply to an earlier message)", sent)
+
+    def test_takes_over_when_automatic_switching_is_off(self):
+        self.limit(action="disabled")
+        self.assertEqual(self.ask("hi").lane, "backup")
+
+    def test_a_failed_check_asks_for_another_account(self):
+        self.limit()
+        self.agent.probe_answers = [{"ok": False, "kind": "usage_limit",
+                                     "detail": "You've hit your 5-hour limit · resets 9:30 PM IST"}]
+        self.timer.fire("check")
+        lim = self.of("agent.limit")[-1]
+        self.assertEqual((lim["kind"], lim["lane"]), ("usage_limit", "probe"))
+        self.assertIsNotNone(lim["resets"])
+        self.agent.probe_answers = [{"ok": False, "kind": "error", "detail": "exit 1"}]
+        self.timer.fire("check")
+        self.assertEqual(len(self.of("agent.limit")), 1)  # not for other failures
+
+    def test_off_while_claude_is_limited_keeps_the_queue_for_claude(self):
+        resets = time.time() + 3600
+        self.limit(resets=resets)
+        self.ask("/queue deploy it", ref="tg:1:7", force_queue=True)
+        self.backup_cmd("off")
+        last = self.system()[-1]
+        self.assertTrue(last.startswith("⏸ Backup off; Claude is still limited until "), last)
+        self.assertIn("1 queued task comes once a test message", last)
+        self.assertNotIn("📥", "".join(self.system()))  # the queue waits for Claude
+        self.assertEqual(self.ask("hi", ref="tg:1:8").lane, "main")  # messages go to Claude's queue
+        self.assertIn("check", self.timer.due)  # still checking on Claude
+        self.timer.fire("check")
+        self.assertIn("✅ Claude passed a test message: Claude is answering again.", self.system()[-2])
+        self.assertTrue(self.system()[-1].startswith("📥 For Claude: "), self.system()[-1])
+        self.assertIn("deploy it", self.system()[-1])
+
+    def test_auto_again_while_claude_is_limited_answers_again(self):
+        self.limit()
+        self.backup_cmd("off")
+        self.assertEqual(self.ask("hi").lane, "main")
+        self.backup_cmd("auto")
+        self.assertEqual(self.ask("hi", ref="tg:1:6").lane, "backup")
+
+    def test_messages_taken_before_it_stops_are_still_answered(self):
+        self.limit()
+        self.provider.script = [say("answered anyway")]
+        handle = self.front.send("[Telegram message from Arpit, x]\nslow one", "telegram", "tg:1:5")
+        self.assertEqual(handle.lane, "backup")
+        self.backup_cmd("off")
+        run_workers(self.registry)
+        self.assertEqual(self.of("turn.done", "tg:1:5")[0]["text"], "Backup (Nemotron): answered anyway")
 
     def test_directives_from_the_model_are_dropped(self):
         self.limit()

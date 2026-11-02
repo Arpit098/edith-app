@@ -481,7 +481,8 @@ def setup(ctx: Context) -> None:
         until = limits.mark(active, kind, resets)
         timers.cancel("retry")
         retries["n"] = 0
-        try_auto_switch(active, kind, until)
+        # The backup's hand-back check (lane "probe") repeats every 15-60 minutes: only a switch is news then.
+        try_auto_switch(active, kind, until, first_try=item.get("lane") != "probe")
 
     timers = Timers("accounts")
     limits = Limits(os.path.join(private, "limits.json"), ensure_dir=private_dir)
@@ -495,6 +496,13 @@ def setup(ctx: Context) -> None:
                 log.warning("accounts: too many limit reports waiting; one dropped")
 
         ctx.subscribe("agent.limit", on_agent_limit)
+    else:
+        def on_limit_no_switch(ev):  # no automatic switch: say so, so the backup can take over
+            d = ev.data
+            limit_event(account=profiles.active(), kind=d.get("kind"), resets=d.get("resets"), action="disabled",
+                        target=None, next_free=None, detail="automatic switching is off")
+
+        ctx.subscribe("agent.limit", on_limit_no_switch)
 
     def on_switch(ev):
         run, state = ev.data.get("run"), ev.data.get("state")

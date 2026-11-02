@@ -14,14 +14,15 @@ sends, deploys or restarts. Anything like that goes to Claude's queue.
    conversation) is ignored.
 2. The accounts feature marks the account limited, switches to a free one and tells Arpit, or publishes
    `accounts.limit` with `action` `none_free`, `refused` or `switch_failed`.
-3. The backup takes over on that `accounts.limit` (anything but `switching`), or straight on
-   `agent.limit` when the accounts feature isn't enabled.
+3. The backup takes over on that `accounts.limit` (anything but `switching`; with `auto_switch = false`
+   the accounts feature sends `action: "disabled"`), or straight on `agent.limit` when the accounts
+   feature isn't enabled.
 
 ## Events
 
 | Type | `data` | Emitted when |
 |---|---|---|
-| `agent.limit` | `{kind, text, resets, lane}` | Claude's usage limit (`kind` `usage_limit`), login (`login`) or billing (`billing`) error. `resets`: the reset time Claude printed (unix seconds) or `null`; `text` Claude's line (≤ 300 characters, times in IST); `lane` `main` or `side`. Origin `system` |
+| `agent.limit` | `{kind, text, resets, lane}` | Claude's usage limit (`kind` `usage_limit`), login (`login`) or billing (`billing`) error. `resets`: the reset time Claude printed (unix seconds) or `null`; `text` Claude's line (≤ 300 characters, times in IST); `lane` `main`, `side`, or `probe` (the backup's hand-back check found the account in use still limited: the accounts feature then switches to one that has freed up, and tells Arpit only if it switches). Origin `system` |
 | `accounts.limit` | see contracts/accounts.md | The accounts feature acted on an `agent.limit` |
 | `backup.changed` | `backup` (below) | The mode changed, the backup took over or handed back, a provider answered, or the queue changed. Origin `system` |
 
@@ -32,7 +33,11 @@ time) on Claude's own error lines.
 
 - `auto` (the default): takes over as above; hands back on its own.
 - `on`: answers instead of Claude now, until `/backup auto` or `/backup off`. No hand-back checks.
-- `off`: never answers; at the limit Arpit is told that messages wait for Claude.
+- `off`: never answers; at the limit Arpit is told that messages wait for Claude. `/backup off` while
+  Claude is still limited sends "⏸ Backup off; Claude is still limited until 9:30 PM IST": the hand-back
+  checks go on, and Claude's queue comes (with its buttons) only once a test message to Claude works.
+  `/backup auto` while Claude is still limited makes the backup answer again. Messages the backup had
+  already taken when it stopped are still answered by it.
 
 `/backup` shows the state; `/backup on|off|auto` sets the mode (Telegram and the app's typed commands).
 The mode and the state live in `<state_dir>/backup/state.json` (folder 700, file 600), so a restart
@@ -41,6 +46,8 @@ keeps answering where it was.
 **Hand-back.** At Claude's reset time (15 minutes from the takeover when Claude named none) the agent
 runs one tiny test turn (`agent.probe()`: `claude -p` with no tools, MCP or saved session). If it works,
 the backup stops and Arpit is told; if not, it checks again after 15, 30, then every 60 minutes. A
+check that fails on the limit (or a login or billing problem) also publishes `agent.limit` (lane
+`probe`), so an account that freed up meanwhile is switched to. A
 done account switch while the backup answers makes it check a minute later. Arpit is told at both
 ends (`message.system`). If the turn the limit cut off is still open at hand-back, the message says
 to `/stop` it and send it again.
@@ -62,7 +69,8 @@ the app and buttons alike:
 - When no provider can answer, the message goes to Claude's queue and the reply says why ("Nemotron:
   rate limited until 9:31 PM IST").
 - The backup's model sees its own last 10 messages only (never Claude's replies), and no attachment
-  contents unless it reads them with its tools.
+  contents unless it reads them with its tools. A swiped reply is sent as "(a reply to an earlier
+  message)", never with the quoted text (it may be a mail or calendar reply).
 - `SEND_FILE:`/`REACT:` lines in its answer are dropped: the backup sends no files.
 
 **Claude's queue.** Things the backup won't do (the model calls `queue_for_claude`, or `/queue`) are kept
@@ -107,8 +115,8 @@ for the web), and 4 minutes for the whole answer. No shell.
 | `grep {text, path}` | Plain text, case-insensitive; ≤ 4000 files, ≤ 60 hits |
 | `service_status {unit}` / `service_logs {unit, lines?}` | `systemctl --user status` / `journalctl --user -u` (≤ 200 lines) of units named `edith…`; log lines of the mail, calendar and Google parts are dropped |
 | `system_info` | Disk, memory, load, uptime |
-| `edith_status` | `GET /v1/status` |
-| `web_search {query}` / `fetch_url {url}` | DuckDuckGo results; a public http(s) page as text (≤ 512 KB). Loopback, private, link-local, CGNAT/Tailscale and metadata addresses are refused, redirects included |
+| `edith_status` | `GET /v1/status` cut to states and counts: Claude busy or idle, tmux, queued, running main and parallel tasks, background jobs, subagents running and total. No titles, steps, labels or descriptions |
+| `web_search {query}` / `fetch_url {url}` | DuckDuckGo results; a public http(s) page as text (≤ 512 KB). See "The web" below |
 | `queue_for_claude {task}` | Puts a task in Claude's queue |
 | EDITH's tools (below) | |
 
@@ -120,11 +128,23 @@ with no shell, a 20 s timeout and a small environment (HOME, PATH, LANG, TZ). To
 | Tool | Runs | Arguments |
 |---|---|---|
 | `reminders_list` | `remind.py list` | |
-| `project_changes {project}` | `changes.py <project>`: the summary only (the HTML diff stays on the server; its path may be mentioned) | `[A-Za-z0-9][A-Za-z0-9._-]{0,63}` |
+| `project_changes {project}` | `changes.py --summary-only <project>`: the summary only; with `--summary-only` changes.py writes and prunes no HTML report | `[A-Za-z0-9][A-Za-z0-9._-]{0,63}` |
 | `agents_status` | `agent.py status` | |
 
 Never offered: `remind.py add/cancel`, `agent.py send/compact/watch/read`, or anything else that
 changes state; such requests go to Claude's queue. Adding a tool is one `BinTool(...)` line.
+
+**The web.** Nothing the model makes up can carry data out:
+- `fetch_url` opens only links that are in Arpit's message or in this answer's `web_search` results
+  (compared without the fragment and a trailing `/`); redirects from them are followed.
+- Once a local tool (files, services, logs, status, EDITH's tools) has run in an answer, a `web_search`
+  is at most 100 characters and may not share 16 characters in a row (case and spacing ignored) with
+  anything those tools returned in this answer.
+- Every host is resolved once; it must resolve only to public addresses (no loopback, private,
+  link-local/metadata, CGNAT/Tailscale, multicast or reserved), and the connection is made to that
+  checked address (the Host header, TLS SNI and the certificate check keep the URL's host), so a
+  host can't rebind to a private address between the check and the connection. The connected peer
+  is checked again before anything is sent. Redirects go through the same checks.
 
 **Paths.** Only under `~/edith`, `~/Projects` and the inbox. Both the path as written (`..` collapsed,
 `~`/`$HOME` expanded; relative paths are under `~/edith`) and its real path (every symlink followed)
@@ -159,12 +179,14 @@ Bearer token like every App API route.
 `backup`:
 
 ```json
-{ "mode": "auto", "active": true, "since": 1793351234.5, "reason": "usage_limit",
+{ "mode": "auto", "active": true, "claude_limited": true, "since": 1793351234.5, "reason": "usage_limit",
   "resets": 1793369234.0, "next_check": 1793369234.0, "provider": "Nemotron", "queued": 1,
   "providers": [{ "name": "nemotron", "label": "Nemotron", "available": true, "skipped_until": null, "why": null }] }
 ```
 
-`reason`: `usage_limit`, `login`, `billing` or `manual` (`/backup on`); `provider` the label of the last
-one that answered; `next_check` when Claude is tested next (`null` when not answering, or `on`);
+`reason`: `usage_limit`, `login`, `billing` or `manual` (`/backup on`); `claude_limited`: Claude is
+believed unavailable (hand-back checks run; the queue waits for it), also after `/backup off`; `provider`
+the label of the last one that answered; `next_check` when Claude is tested next (`null` when Claude
+isn't limited, or in mode `on`);
 `skipped_until` a unix time while a provider is skipped, `why` its reason (`rate limited`, `daily quota
 used up`, `key refused`, `3 failures in a row`).

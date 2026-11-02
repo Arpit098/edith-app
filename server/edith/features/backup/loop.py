@@ -40,6 +40,8 @@ def answer(chain: Chain, tools, history: list[dict], question: str, on_step=lamb
     """Answer `question` with the last messages `history` ([{role, content}]) as context."""
     messages = [{"role": "system", "content": SYSTEM.format(now=usertime.stamp())}] + list(history) + \
                [{"role": "user", "content": question}]
+    if hasattr(tools, "begin_turn"):
+        tools.begin_turn(question)  # which links may be opened, and what web searches may not carry
     specs, used, provider, deadline = tools.specs(), 0, None, clock() + TURN_LIMIT
     names = []
     while True:

@@ -98,11 +98,12 @@ remembers it. EDITH then switches to the first saved account that isn't limited,
 limit (back 9:30 PM IST). Switching to Spare automatically…", then "✅ Switched to Spare."). Repeats of the
 same limit within 2 minutes are ignored. A switch that can't start now (someone is busy) is tried
 again after 2, 4, 8 and 16 minutes. A switch that ends `failed` or `rolled_back` marks its target
-limited for six hours. `[features.accounts] auto_switch = false` turns this off.
+limited for six hours. `[features.accounts] auto_switch = false` turns this off: each `agent.limit`
+then only gets an `accounts.limit` with `action: "disabled"`, so the backup AI still takes over.
 
 ## Events
 
 | Type | `data` | Emitted when |
 |---|---|---|
 | `accounts.switch` | `switch` (above) | A switch starts, moves to another step, and ends. Origin `system` |
-| `accounts.limit` | `{account, kind, resets, action, target, next_free, detail}` | EDITH acted on an `agent.limit`. `action`: `switching` (to `target`), `none_free` (every saved account is limited; `next_free` is the earliest time one is free, or `null`), `refused` (the switch to `target` couldn't start: `detail` says why; retried later), `switch_failed` (an automatic switch to `target` ended `failed` or `rolled_back`). `kind` is `usage_limit`, `login` or `billing`; `resets` the limited account's reset time (unix seconds). The backup feature takes over on anything but `switching`. Origin `system` |
+| `accounts.limit` | `{account, kind, resets, action, target, next_free, detail}` | EDITH acted on an `agent.limit`. `action`: `switching` (to `target`), `none_free` (every saved account is limited; `next_free` is the earliest time one is free, or `null`), `refused` (the switch to `target` couldn't start: `detail` says why; retried later), `switch_failed` (an automatic switch to `target` ended `failed` or `rolled_back`), `disabled` (`auto_switch = false`: no switch was tried). `kind` is `usage_limit`, `login` or `billing`; `resets` the limited account's reset time (unix seconds). The backup feature takes over on anything but `switching`. Origin `system` |

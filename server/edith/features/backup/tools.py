@@ -16,6 +16,7 @@ Every result goes through redact.scrub before it is sent out (the loop does that
 MAX_RESULT characters.
 """
 import html
+import http.client
 import ipaddress
 import json
 import os
@@ -136,7 +137,7 @@ class BinTool:
 BIN_TOOLS = (
     BinTool("reminders_list", "Arpit's reminders: what is set and when it fires (IST).", ("remind.py", "list")),
     BinTool("project_changes", "Uncommitted changes in Arpit's project repos: a summary of files and +/- lines "
-            "(no diff). `project` is part of a repo name, e.g. edith-app.", ("changes.py", "{project}"),
+            "(no diff). `project` is part of a repo name, e.g. edith-app.", ("changes.py", "--summary-only", "{project}"),
             {"project": r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}"}),
     BinTool("agents_status", "The coding agents in tmux: busy, idle or blocked, and their last line.",
             ("agent.py", "status")),
@@ -181,36 +182,103 @@ def bin_argv(tool: BinTool, bin_dir: str, given: dict) -> list[str]:
 
 # ---- the web ----
 
-def public_host(host: str, resolver=socket.getaddrinfo) -> bool:
-    """Whether every address `host` resolves to is a public one (no loopback, private, link-local,
-    CGNAT/Tailscale, metadata or reserved addresses)."""
+def public_ip(ip) -> bool:
+    """Not loopback, private, link-local (cloud metadata), CGNAT/Tailscale, multicast or reserved."""
+    if isinstance(ip, str):
+        ip = ipaddress.ip_address(ip.split("%")[0])
+    if ip.version == 6 and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
+    return not (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved
+                or ip.is_unspecified or ip in ipaddress.ip_network("100.64.0.0/10"))
+
+
+def checked_address(host: str, resolver=socket.getaddrinfo) -> str:
+    """The one address `host` is reached at: resolved once, and only if every address it resolves
+    to is public. The connection is then made to this address (no second lookup to rebind)."""
     try:
         infos = resolver(host, None)
     except (socket.gaierror, UnicodeError, OSError):
-        return False
-    if not infos:
-        return False
-    for info in infos:
-        ip = ipaddress.ip_address(info[4][0].split("%")[0])
-        if (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved
-                or ip.is_unspecified or ip in ipaddress.ip_network("100.64.0.0/10")
-                or (ip.version == 6 and ip.ipv4_mapped and not public_ip(ip.ipv4_mapped))):
-            return False
-    return True
+        raise ToolError("that host can't be found") from None
+    addrs = [info[4][0] for info in infos or ()]
+    if not addrs or not all(public_ip(a) for a in addrs):
+        raise ToolError("that address isn't on the public internet")
+    return addrs[0].split("%")[0]
 
 
-def public_ip(ip) -> bool:
-    return not (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_unspecified
-                or ip in ipaddress.ip_network("100.64.0.0/10"))
+def public_host(host: str, resolver=socket.getaddrinfo) -> bool:
+    try:
+        checked_address(host, resolver)
+        return True
+    except ToolError:
+        return False
+
+
+def pinned(base, resolver, connect=socket.create_connection):
+    """An HTTP(S)Connection class that connects to the address checked_address() approved, keeping
+    the URL's host for the Host header, TLS SNI and the certificate check, and checks the connected
+    peer again before anything is sent."""
+
+    class Pinned(base):
+        def connect(self):
+            addr = checked_address(self.host, resolver)
+            sock = connect((addr, self.port), self.timeout)
+            try:
+                peer = sock.getpeername()[0]
+            except OSError:
+                peer = None
+            if peer is None or not public_ip(peer):
+                sock.close()
+                raise ToolError("that address isn't on the public internet")
+            if isinstance(self, http.client.HTTPSConnection):
+                sock = self._context.wrap_socket(sock, server_hostname=self.host)
+            self.sock = sock
+
+    return Pinned
+
+
+class PinnedHTTP(urllib.request.HTTPHandler):
+    def __init__(self, resolver, connect=socket.create_connection):
+        super().__init__()
+        self.resolver, self.connect = resolver, connect
+
+    def http_open(self, req):
+        return self.do_open(pinned(http.client.HTTPConnection, self.resolver, self.connect), req)
+
+
+class PinnedHTTPS(urllib.request.HTTPSHandler):
+    def __init__(self, resolver, connect=socket.create_connection):
+        super().__init__()
+        self.resolver, self.connect = resolver, connect
+
+    def https_open(self, req):
+        return self.do_open(pinned(http.client.HTTPSConnection, self.resolver, self.connect), req,
+                            context=self._context)
 
 
 class PublicOnly(urllib.request.HTTPRedirectHandler):
+    """Redirects are followed only to links that pass the same checks (and are pinned the same way)."""
+
     def __init__(self, check):
         self.check = check
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
-        self.check(newurl)
+        self.check(newurl, redirect=True)
         return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+URL = re.compile(r"https?://[^\s<>\"'`)\]]+", re.I)
+SEARCH_AFTER_TOOLS = 100  # characters: a web search once local data has been read this turn
+OVERLAP = 16              # characters a search may share with what local tools returned this turn
+LOCAL_TOOLS = {"read_file", "list_dir", "grep", "service_status", "service_logs", "system_info", "edith_status"}
+
+
+def norm_url(url: str) -> str:
+    u = urllib.parse.urlsplit(url.strip())
+    return urllib.parse.urlunsplit((u.scheme.lower(), (u.netloc or "").lower(), u.path.rstrip("/") or "/", u.query, ""))
+
+
+def squash(text: str) -> str:
+    return " ".join(text.lower().split())
 
 
 TAG = re.compile(r"<(script|style|noscript|svg|head)\b.*?</\1>|<[^>]+>", re.S | re.I)
@@ -223,6 +291,19 @@ def page_text(raw: bytes, ctype: str) -> str:
     return re.sub(r"[ \t]+", " ", re.sub(r"\n\s*\n+", "\n\n", text)).strip()
 
 
+def status_counts(st: dict) -> dict:
+    """EDITH's status (GET /v1/status) cut to states and counts: no titles, steps, labels or
+    descriptions, which can quote mail, calendar or anything else Claude was working on."""
+    runs = st.get("runs") or []
+    subagents = st.get("subagents") or []
+    return {"claude": st.get("main"), "tmux": st.get("tmux"), "queued": st.get("queued"),
+            "running_tasks": {"main": sum(1 for r in runs if r.get("lane") == "main"),
+                              "parallel": sum(1 for r in runs if r.get("lane") != "main")},
+            "background_jobs": len(st.get("background") or []),
+            "subagents": {"running": sum(1 for a in subagents if a.get("state") == "running"), "total": len(subagents)},
+            "conversation": bool(st.get("conversation"))}
+
+
 # ---- the tool set ----
 
 class Tools:
@@ -233,8 +314,10 @@ class Tools:
                  env: dict, opener=None, resolver=socket.getaddrinfo, run=run_cmd, bin_tools=BIN_TOOLS):
         self.policy, self.bin_dir, self.env, self.resolver, self._run = policy, bin_dir, env, resolver, run
         self._queue, self._status = queue, status
-        self._opener = opener
+        self._opener, self._connect = opener, socket.create_connection
         self.tools: dict[str, Tool] = {}
+        self.local = set(LOCAL_TOOLS)  # tools whose results are this server's data
+        self.begin_turn("")
         s = {"type": "string"}
         n = {"type": "integer"}
         self._add(Tool("read_file", "Read a text file under ~/edith, ~/Projects or the inbox. Lines are numbered.",
@@ -259,12 +342,19 @@ class Tools:
                        "Claude is back.", {"task": s}, self.queue_for_claude, ["task"]))
         for bt in bin_tools:
             if bt.read_only:  # anything else is never offered
+                self.local.add(bt.name)
                 self._add(Tool(bt.name, bt.description, {k: s for k in bt.args},
                                lambda _bt=bt, **kw: self._run(bin_argv(_bt, self.bin_dir, kw), CMD_TIMEOUT, self.env),
                                list(bt.args)))
 
     def _add(self, tool):
         self.tools[tool.name] = tool
+
+    def begin_turn(self, message: str) -> None:
+        """A new message from Arpit. fetch_url may open only links in it or in this turn's web_search
+        results; once a local tool has run, web searches are short and can't carry its output."""
+        self._links = {norm_url(u) for u in URL.findall(message or "")}
+        self._read: list[str] = []  # what local tools returned this turn (squashed)
 
     def specs(self) -> list[dict]:
         return [t.spec() for t in self.tools.values()]
@@ -293,6 +383,8 @@ class Tools:
         except Exception as e:  # a tool bug must not end the reply
             return f"error: {type(e).__name__}"
         out = str(out)
+        if name in self.local:
+            self._read.append(squash(out[:MAX_RESULT]))
         return out if len(out) <= MAX_RESULT else out[:MAX_RESULT] + "\n… (cut)"
 
     # ---- files ----
@@ -424,22 +516,23 @@ class Tools:
 
     def edith_status(self):
         st = self._status()
-        return json.dumps(st, default=str)[:MAX_RESULT] if st is not None else "status isn't available"
+        return json.dumps(status_counts(st)) if isinstance(st, dict) else "status isn't available"
 
     # ---- the web ----
 
-    def _check_url(self, url):
+    def _check_url(self, url, redirect=False):
         u = urllib.parse.urlsplit(url)
         if u.scheme not in ("http", "https") or not u.hostname:
             raise ToolError("only http and https links")
         if u.username or u.password:
             raise ToolError("no credentials in links")
-        if not public_host(u.hostname, self.resolver):
-            raise ToolError("that address isn't on the public internet")
+        checked_address(u.hostname, self.resolver)  # again when connecting: see pinned()
 
     def _get(self, url, data=None):
         self._check_url(url)
-        opener = self._opener or urllib.request.build_opener(PublicOnly(self._check_url))
+        opener = self._opener or urllib.request.build_opener(
+            PinnedHTTP(self.resolver, self._connect), PinnedHTTPS(self.resolver, self._connect),
+            PublicOnly(self._check_url))
         req = urllib.request.Request(url, data=data, headers={"User-Agent": "Mozilla/5.0 (EDITH backup)",
                                                               "Accept": "text/html,text/plain,application/json"})
         try:
@@ -453,12 +546,21 @@ class Tools:
     def fetch_url(self, url):
         if not isinstance(url, str) or len(url) > 2000:
             raise ToolError("give one link")
+        if norm_url(url) not in self._links:
+            raise ToolError("only links from Arpit's message or this answer's web_search results can be opened")
         raw, ctype = self._get(url.strip())
         return page_text(raw, ctype) or "(no text)"
 
     def web_search(self, query):
         if not isinstance(query, str) or not query.strip() or len(query) > 300:
             raise ToolError("give a search (at most 300 characters)")
+        if self._read:
+            if len(query) > SEARCH_AFTER_TOOLS:
+                raise ToolError(f"after reading local data, searches are at most {SEARCH_AFTER_TOOLS} characters")
+            q = squash(query)
+            if any(q[i:i + OVERLAP] in text for i in range(max(1, len(q) - OVERLAP + 1)) for text in self._read
+                   if len(q) >= OVERLAP):
+                raise ToolError("a search can't contain what the local tools returned")
         raw, _ = self._get("https://html.duckduckgo.com/html/", urllib.parse.urlencode({"q": query}).encode())
         page = raw.decode("utf-8", "replace")
         out = []
@@ -470,6 +572,8 @@ class Tools:
             title = html.unescape(TAG.sub("", m.group(2))).strip()
             snip = re.search(r'class="result__snippet"[^>]*>(.*?)</a>', m.group(3), re.S)
             snippet = html.unescape(TAG.sub("", snip.group(1))).strip() if snip else ""
+            if link.startswith(("http://", "https://")):
+                self._links.add(norm_url(link))
             out.append(f"- {title}\n  {link}\n  {snippet}")
             if len(out) >= 8:
                 break

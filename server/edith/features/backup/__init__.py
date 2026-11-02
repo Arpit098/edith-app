@@ -25,6 +25,7 @@ import secrets
 import time
 
 from edith.common import usertime
+from edith.common.claude_limits import reset_time
 from edith.common.paths import resolve
 from edith.common.text import clean_prompt, take_directives
 from edith.common.timer import Timers
@@ -39,6 +40,7 @@ from .tools import PathPolicy, Tools
 log = logging.getLogger("edith.feature.backup")
 
 MODES = ("auto", "on", "off")
+NOT_ANSWERING = "isn't answering"
 AFTER_SWITCH = 60.0  # seconds after a done account switch before checking Claude (she restarts)
 WHY = {"usage_limit": "hit its usage limit", "login": "has a login problem", "billing": "has a billing problem",
        "manual": "is set aside (/backup on)"}
@@ -107,53 +109,69 @@ def setup(ctx: Context) -> None:
 
     def snapshot():
         s = store.get()
-        return {"mode": s["mode"], "active": s["active"], "since": s["since"], "reason": s["kind"],
-                "resets": s["resets"], "next_check": s["next_check"] if s["active"] else None,
+        return {"mode": s["mode"], "active": s["active"], "claude_limited": s["waiting"], "since": s["since"],
+                "reason": s["kind"], "resets": s["resets"], "next_check": s["next_check"] if s["waiting"] else None,
                 "provider": s["provider"], "queued": len(s["queue"]), "providers": chain.status()}
 
     def changed():
         publish("backup.changed", snapshot())
 
     # ---- taking over and handing back ----
+    # Two flags: `waiting` (Claude is believed unavailable: hand-back checks run, the queue waits for
+    # Claude) and `active` (the backup answers). /backup off ends `active` only; a passed check ends both.
 
     def schedule_check(at):
         store.set(next_check=at)
         timers.schedule("check", at, check)
 
-    def take_over(kind, resets, forced=False):
-        s = store.get()
-        if s["active"]:
-            if resets and not forced and s["mode"] == "auto" and (not s["resets"] or resets > s["resets"]):
-                store.set(resets=resets)
-                schedule_check(resets)
-            return
-        why = WHY.get(kind, "isn't answering")
-        if s["mode"] == "off" and not forced:
-            tell(f"⚠️ Claude {why}. The backup AI is off, so messages wait for Claude (/backup auto turns it on).")
-            return
+    def start_answering(kind, resets):
+        why = WHY.get(kind, NOT_ANSWERING)
         if not chain.any_available():
             tell(f"⚠️ Claude {why}, and no backup AI is set up yet (no key files in ~/.config/edith), so messages "
                  "wait for Claude.")
-            return
-        now = time.time()
-        store.set(active=True, since=now, kind=kind, resets=resets, attempt=0, history=[], provider=None)
+            return False
+        store.set(active=True, since=time.time(), history=[], provider=None)
         active[0] = True
-        if not forced:
-            schedule_check(resets if resets and resets > now else now + checks[0])
         back = f" (back {usertime.when(resets)})" if resets else ""
         tell(f"🛟 Claude {why}{back}. The backup AI ({labels()}) answers meanwhile: it can only read and look "
              "things up; anything else is queued for Claude. /backup off stops it.")
+        return True
+
+    def take_over(kind, resets):
+        """Claude is unavailable (no other account free): wait for it, and answer unless the mode is off."""
+        s = store.get()
+        now = time.time()
+        if s["waiting"]:
+            if resets and (not s["resets"] or resets > s["resets"]):
+                store.set(resets=resets)
+                if s["mode"] != "on":
+                    schedule_check(resets)
+            return
+        store.set(waiting=True, kind=kind, resets=resets, attempt=0)
+        if s["mode"] != "on":
+            schedule_check(resets if resets and resets > now else now + checks[0])
+        if s["active"]:
+            pass  # already answering (/backup on)
+        elif s["mode"] == "off":
+            tell(f"⚠️ Claude {WHY.get(kind, NOT_ANSWERING)}. The backup AI is off, so messages wait for Claude "
+                 "(/backup auto turns it on).")
+        else:
+            start_answering(kind, resets)
         changed()
 
-    def hand_back(why):
+    def deliver_queue(queue):
+        for item in queue:
+            tell(f"📥 For Claude: {item['task'][:500]}",
+                 [[Button("Send to Claude", f"bk:send:{item['id']}"), Button("Drop", f"bk:drop:{item['id']}")]])
+
+    def claude_back(why):
+        """A check passed (or the backup was only on by hand): Claude answers again."""
         s = store.get()
-        if not s["active"]:
-            return
-        store.set(active=False, next_check=None, attempt=0)
+        store.set(active=False, waiting=False, next_check=None, attempt=0)
         active[0] = False
         timers.cancel("check")
         stuck = ""
-        if agent and s["since"]:
+        if agent and s["since"] and s["waiting"]:
             try:
                 runs, _ = agent.status()
                 if any(r.lane == "main" and r.started < s["since"] for r in runs):
@@ -161,29 +179,49 @@ def setup(ctx: Context) -> None:
             except Exception:
                 pass
         n = len(s["queue"])
-        tell(f"✅ {why}: Claude is answering again and the backup AI has stopped.{stuck}"
-             + (f" {n} task{'s' if n != 1 else ''} waited for Claude:" if n else ""))
-        for item in s["queue"]:
-            tell(f"📥 For Claude: {item['task'][:500]}",
-                 [[Button("Send to Claude", f"bk:send:{item['id']}"), Button("Drop", f"bk:drop:{item['id']}")]])
+        what = "Claude is answering again and the backup AI has stopped" if s["active"] else "Claude is answering again"
+        tell(f"✅ {why}: {what}.{stuck}" + (f" {n} task{'s' if n != 1 else ''} waited for Claude:" if n else ""))
+        deliver_queue(s["queue"])
         changed()
+
+    def stop_answering():
+        """/backup off: the backup stops; if Claude is still limited, everything else waits for it."""
+        s = store.get()
+        if not s["active"]:
+            return
+        if not s["waiting"]:  # on by hand while Claude was fine
+            claude_back("The backup AI is off")
+            return
+        store.set(active=False)
+        active[0] = False
+        until = f" until {usertime.when(s['resets'])}" if s["resets"] else ""
+        n = len(s["queue"])
+        tell(f"⏸ Backup off; Claude is still limited{until}. Messages wait for Claude"
+             + (f", and the {n} queued task{'s' if n != 1 else ''} come{'s' if n == 1 else ''} once a test message "
+                "to Claude works." if n else "."))
 
     def check():
         s = store.get()
-        if not s["active"] or s["mode"] == "on":
+        if not s["waiting"] or s["mode"] == "on":
             return
         r = agent.probe() if agent and hasattr(agent, "probe") else {"ok": False, "kind": "error", "detail": "no agent"}
         if r.get("ok"):
-            hand_back("Claude passed a test message")
+            claude_back("Claude passed a test message")
             return
         n = int(s["attempt"] or 0)
         store.set(attempt=n + 1)
         log.info("backup: Claude still unavailable (%s); checking again later", r.get("kind"))
         schedule_check(time.time() + checks[min(n, len(checks) - 1)])
         changed()
+        if r.get("kind") in ("usage_limit", "login", "billing"):
+            # The account in use is still limited: another one (say the first, freed by now) may not
+            # be. The accounts feature switches to it, as for any limit.
+            detail = r.get("detail") or ""
+            ctx.bus.publish(Event("agent.limit", {"kind": r["kind"], "text": detail[:300], "resets": reset_time(detail),
+                                                  "lane": "probe"}, origin="system"))
 
     s0 = store.get()
-    if s0["active"] and s0["mode"] != "on":  # the bridge restarted while the backup answered
+    if s0["waiting"] and s0["mode"] != "on":  # the bridge restarted while Claude was unavailable
         schedule_check(max(float(s0["next_check"] or 0), time.time() + 60))
 
     def accounts_enabled():
@@ -198,7 +236,7 @@ def setup(ctx: Context) -> None:
             take_over(ev.data.get("kind"), ev.data.get("next_free") or ev.data.get("resets"))
 
     def on_switch(ev):
-        if ev.data.get("state") == "done" and active[0] and store.get("mode") == "auto":
+        if ev.data.get("state") == "done" and store.get("waiting") and store.get("mode") != "on":
             schedule_check(time.time() + AFTER_SWITCH)  # another account: see whether Claude answers
 
     ctx.subscribe("agent.limit", on_agent_limit)
@@ -216,13 +254,15 @@ def setup(ctx: Context) -> None:
     def question_of(text):
         c = clean_prompt(text)
         q = c["text"]
-        if c.get("replying_to"):
-            q = f"(Replying to: {c['replying_to'][:500]})\n{q}"
+        if c.get("replying_to"):  # never the quoted text: it may be a mail or calendar reply
+            q = f"(a reply to an earlier message)\n{q}"
         for a in c.get("attachments") or []:
             q += f"\n[Arpit attached a file: {a}]"
         return q
 
     def answer(item):
+        """One message the backup took. Ones it took before it stopped (/backup off, or Claude back)
+        are still answered here: they were promised an answer and are never left hanging."""
         text, origin, ref = item
         started = time.time()
         publish("turn.started", {"ref": ref, "lane": "backup"}, origin)
@@ -282,12 +322,22 @@ def setup(ctx: Context) -> None:
     def set_mode(mode):
         old = store.get("mode")
         store.set(mode=mode)
+        st = store.get()
         if mode == "off":
-            hand_back("The backup AI is off")
+            stop_answering()
         elif mode == "on":
-            take_over("manual", None, forced=True)
-        elif old == "on" and active[0]:
-            schedule_check(time.time())  # auto again: hand back now if Claude answers
+            if not st["active"]:
+                start_answering(st["kind"] if st["waiting"] else "manual", st["resets"])
+                if not st["waiting"]:
+                    store.set(kind="manual")
+            timers.cancel("check")
+        elif st["waiting"]:  # auto while Claude is still unavailable: answer, and check on Claude
+            if not st["active"]:
+                start_answering(st["kind"], st["resets"])
+            if old == "on" or not timers.when("check"):
+                schedule_check(max(time.time(), float(st["resets"] or 0)) if old != "on" else time.time())
+        elif st["active"]:  # on by hand while Claude was fine: auto hands back now
+            claude_back("The backup AI is back on auto")
         changed()
 
     def describe():
@@ -296,9 +346,11 @@ def setup(ctx: Context) -> None:
                 "on": "on (answers instead of Claude)", "off": "off"}[s["mode"]]
         lines = [f"Backup AI: {mode}."]
         if s["active"]:
-            lines.append(f"Answering since {usertime.when(s['since'])}"
-                         + (f"; next check on Claude {usertime.when(s['next_check'])}" if s["next_check"] else "") + ".")
-        else:
+            lines.append(f"Answering since {usertime.when(s['since'])}.")
+        if s["claude_limited"]:
+            lines.append("Claude is unavailable" + (f"; next check {usertime.when(s['next_check'])}" if s["next_check"]
+                                                     else "") + ".")
+        elif not s["active"]:
             lines.append("Claude is answering.")
         prov = []
         for p in s["providers"]:
@@ -339,7 +391,7 @@ def setup(ctx: Context) -> None:
         args = call.args
         if len(args) != 2 or args[0] not in ("send", "drop"):
             return ActionResult(toast="Unknown button")
-        if args[0] == "send" and active[0]:
+        if args[0] == "send" and store.get("waiting"):
             return ActionResult(toast="Claude isn't back yet")
         item = take(args[1])
         if not item:
