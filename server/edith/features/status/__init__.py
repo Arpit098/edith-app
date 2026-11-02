@@ -1,7 +1,8 @@
 """Status details: GET /v1/status/details for the app's status panel (contracts/status.md).
 
 What EDITH's main lane is doing (thinking, a tool, waiting for approval, or waiting: her turn is
-over but background work it started still runs) and since when, that background work, the side
+over but background work it started still runs) and since when, that background work, her
+subagents (running, and finished in the last 30 minutes), the side
 lanes, the queue, pending approvals, the conversation, the coding agents in tmux and the live tag.
 
 The main lane's state comes from the bus (turn.*, tool.*, permission.*), so a request reads only
@@ -13,35 +14,17 @@ the bridge). Free text is redacted before it is sent.
 import collections
 import os
 import pathlib
-import re
 import subprocess
 import threading
 import time
 
+from edith.common.redact import redact
 from edith.core import Context, Event, Feature
 
 from .agents import Agents
 
 MAX_SUMMARIES = 100  # refs -> first line of the message, for side-lane summaries
 SUMMARY = 80         # characters
-KEYWORD = (r"(?:access[_-]?token|refresh[_-]?token|auth[_-]?token|token|secret|password|passwd|pwd"
-           r"|api[_-]?key|bearer|basic)")
-SECRET = re.compile(
-    rf"(?i)(?:\b|(?<=[_-])){KEYWORD}\b[\s:=\"']+\S+"      # key=value, DB_PASSWORD=x, Bearer x, Basic x
-    r"|\b(?:sk|pk|rk)-[A-Za-z0-9_-]{16,}|\bgh[pousr]_[A-Za-z0-9]{20,}|\bgithub_pat_[A-Za-z0-9_]{20,}"
-    r"|\bxox[abpr]-[A-Za-z0-9-]{10,}|\bAIza[0-9A-Za-z_-]{30,}|\bya29\.[0-9A-Za-z_.-]{20,}"
-    r"|\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"                    # AWS access key id
-    r"|\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}(?:\.[A-Za-z0-9_-]*)?"  # JWT, however short
-    r"|\b\d{8,10}:[A-Za-z0-9_-]{30,}"            # Telegram bot token
-    r"|\btk_[A-Za-z0-9]{20,}"                    # ntfy access token (the phone's and the publish one)
-    r"|\b(?=[A-Za-z0-9_-]*\d)(?=[A-Za-z0-9_-]*[A-Za-z])[A-Za-z0-9_-]{32,}\b")  # long mixed strings (also full git shas)
-URL_CREDENTIALS = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://)[^\s/@:]+:[^\s/@]+@")  # scheme://user:pass@
-
-
-def redact(text):
-    if not isinstance(text, str):
-        return text
-    return SECRET.sub("[redacted]", URL_CREDENTIALS.sub(r"\1[redacted]@", text))
 
 
 class Cached:
@@ -150,9 +133,12 @@ def setup(ctx: Context) -> None:
         m["tmux"] = "running" if tmux_alive.get() else "down"
         background = [{"id": j["id"], "kind": j["kind"], "label": redact(j["label"]), "started": j["started"]}
                       for j in agent.background()]
-        if m["state"] == "idle" and background:
+        subagents = [{**a, "description": redact(a["description"]), "last": redact(a.get("last"))}
+                     for a in agent.subagents()]
+        if m["state"] == "idle" and (background or any(a["state"] == "running" for a in subagents)):
             m["state"] = "waiting"  # the turn is over (`since` is when), but work it started goes on
         m["background"] = background
+        m["subagents"] = subagents
         return m
 
     def api_details(req):

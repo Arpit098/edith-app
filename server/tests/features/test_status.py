@@ -31,6 +31,9 @@ class FakeAgent:
     def background(self):
         return [dict(j) for j in self.jobs]
 
+    def subagents(self, with_last=True):
+        return [dict(a) for a in getattr(self, "agents", [])]
+
     def tmux_alive(self):
         return True
 
@@ -137,6 +140,20 @@ class MainLaneTest(unittest.TestCase):
         self.bus.publish(ev("permission.request", 30.0, id="p", tool="Bash", lane="main"))
         self.agent.jobs = [{"id": "tu3", "kind": "shell", "label": "x", "started": 29.0}]
         self.assertEqual(self.get()["edith"]["state"], "waiting_approval")  # a prompt still comes first
+
+    def test_subagents_are_listed_redacted(self):
+        running = {"id": "tu1", "description": "Review PR 41 token=hunter2abc", "type": "general-purpose", "model": None,
+                   "effort": "medium", "background": True, "state": "running", "started": 12.0, "ended": None,
+                   "last": "$ curl -H 'Authorization: Bearer abcdefghijkl'"}
+        done = dict(running, id="tu2", description="Fix PR 41", state="done", ended=20.0, last=None)
+        self.agent.agents = [running, done]
+        e = self.get()["edith"]
+        self.assertEqual([(a["id"], a["state"]) for a in e["subagents"]], [("tu1", "running"), ("tu2", "done")])
+        self.assertEqual(e["subagents"][0]["description"], "Review PR 41 [redacted]")
+        self.assertNotIn("abcdefghijkl", e["subagents"][0]["last"])
+        self.assertEqual(e["state"], "waiting")  # no turn runs, a subagent does
+        self.agent.agents = [done]
+        self.assertEqual(self.get()["edith"]["state"], "idle")  # a finished one is only listed
 
 
 class CachedTest(unittest.TestCase):

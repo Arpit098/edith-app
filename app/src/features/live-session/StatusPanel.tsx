@@ -1,13 +1,14 @@
 // EDITH's status in the header (plans/ui-next.md §2): a chip on the left with the connection dot,
 // the thinking bubble and, while EDITH works, the elapsed time; tapping it drops the status card.
 // When her reply is done but work it started runs on in the background ("waiting"), the chip is
-// calm: the bubble still, no timer, a small "1 bg" instead; the card lists that work.
+// calm: the bubble still, no timer, a small "2 agents · 1 bg" instead; the card lists that work.
+// Running subagents (EDITH's in-session Agent calls) are counted while she works too.
 // The chip follows stream events only (status.ts); the card fetches GET /v1/status/details while it
 // is open and EDITH is on screen, every 10 s (paused in the background, refreshed at once on return).
 //
 // The card (Arpit, 31 Oct: "needs a little improvement for showing the details") reads top-down: a
-// summary (a state dot, what EDITH is doing, the turn's time in large type), then Lanes, Session,
-// Agents and Server, each with an icon, in aligned label/value rows that wrap rather than cut off.
+// summary (a state dot, what EDITH is doing, the turn's time in large type), then Background,
+// Agents (her subagents, then the tmux sessions), Lanes, Session and Server, each with an icon, in aligned label/value rows that wrap rather than cut off.
 // Rows with nothing to say (zero queued, no approvals) are left out.
 
 import { memo, useEffect, useState, type ReactNode } from 'react';
@@ -23,7 +24,27 @@ import { Icon } from '../../ui/Icon';
 import { GrowSheet, Squish } from '../../ui/motion';
 import { ThinkingBubble } from '../../ui/ThinkingBubble';
 import type { LiveModel, LiveState } from './model';
-import { agentChip, backgroundLine, barSummary, contextUsage, formatAgo, formatElapsed, formatUptime, mainRun, pollDetails, type AgentTone, type BarSummary } from './status';
+import {
+  agentChip,
+  backgroundLine,
+  barSummary,
+  chipCounts,
+  contextUsage,
+  formatAgo,
+  formatElapsed,
+  formatUptime,
+  mainRun,
+  otherBackground,
+  pollDetails,
+  subagentLabel,
+  subagentMark,
+  subagentMeta,
+  subagentOpacity,
+  subagentTiming,
+  visibleSubagents,
+  type AgentTone,
+  type BarSummary,
+} from './status';
 
 const REFRESH_MS = 10_000;
 const BUBBLE = 22;
@@ -98,10 +119,12 @@ export const StatusChip = memo(function StatusChip({ model, connection, open, ba
       <Glass level="thin" backdrop={backdrop} radius={radius.pill} style={styles.chip}>
         <View style={[styles.dot, { backgroundColor: colors[LINK_TONE[link.link]] }]} />
         <ThinkingBubble active={bar.tone === 'busy'} size={BUBBLE} />
+        {working ? <Elapsed since={since} style={[styles.elapsed, bar.tone === 'approval' && styles.warn]} /> : null}
+        {/* Subagents count while she works too (they outlive the turn); bg jobs only when calm. */}
         {working ? (
-          <Elapsed since={since} style={[styles.elapsed, bar.tone === 'approval' && styles.warn]} />
-        ) : bar.background ? (
-          <Text style={styles.bg} testID="status-chip-bg">{`${bar.background} bg`}</Text>
+          bar.agents ? <Text style={styles.bg} testID="status-chip-bg">{chipCounts({ agents: bar.agents, background: 0 })}</Text> : null
+        ) : chipCounts(bar) ? (
+          <Text style={styles.bg} testID="status-chip-bg">{chipCounts(bar)}</Text>
         ) : null}
       </Glass>
     </Squish>
@@ -212,20 +235,18 @@ function Card({ model, connection, fetched, error, backdrop, onSettings }: CardP
           error ? null : <Text style={styles.cardDim}>Loading…</Text>
         ) : (
           <>
-            {d.edith.background.length ? (
+            {otherBackground(d.edith.background, d.edith.subagents).length ? (
               <Section title="Background" icon="progress-clock">
-                {d.edith.background.map((j) => (
+                {otherBackground(d.edith.background, d.edith.subagents).map((j) => (
                   <Text key={j.id} style={styles.bgLine} numberOfLines={2}>
                     {backgroundLine(j, serverNow!)}
                   </Text>
                 ))}
               </Section>
             ) : null}
+            <Agents subagents={visibleSubagents(d.edith.subagents, serverNow!)} sessions={d.agents} serverNow={serverNow!} />
             <Lanes lanes={d.lanes} drift={serverNow! - d.ts} />
             <Session session={d.session} serverNow={serverNow!} />
-            <Section title="Agents" icon="robot-outline">
-              {d.agents.length ? d.agents.map((a) => <AgentRow key={a.name} agent={a} />) : <Text style={styles.cardDim}>No coding agents running</Text>}
-            </Section>
             <Section title="Server" icon="server-outline">
               <Row label="Link" value={describeLink(link)} warn={link.link !== 'open'} />
               {d.server.tag ? <Row label="Version" value={d.server.tag} mono /> : null}
@@ -355,12 +376,63 @@ function Row({ label, value, mono, warn, children }: { label: string; value: str
   );
 }
 
+/**
+ * EDITH's subagents (her in-session Agent calls) first, then the coding agents in tmux, labelled as
+ * sessions. A finished subagent shows ✓ or ✗ and fades out over the server's retention.
+ */
+function Agents({ subagents, sessions, serverNow }: { subagents: StatusDetails['edith']['subagents']; sessions: StatusDetails['agents']; serverNow: number }) {
+  return (
+    <Section title="Agents" icon="robot-outline">
+      {subagents.map((a) => <SubagentRow key={a.id} agent={a} serverNow={serverNow} />)}
+      {sessions.length ? (
+        <>
+          {subagents.length ? <Text style={styles.subhead}>tmux sessions</Text> : null}
+          {sessions.map((a) => <AgentRow key={a.name} agent={a} />)}
+        </>
+      ) : null}
+      {!subagents.length && !sessions.length ? <Text style={styles.cardDim}>No agents running</Text> : null}
+    </Section>
+  );
+}
+
+function SubagentRow({ agent: a, serverNow }: { agent: StatusDetails['edith']['subagents'][number]; serverNow: number }) {
+  const mark = subagentMark(a.state);
+  const tones = chipOf(useTheme());
+  const timing = subagentTiming(a, serverNow);
+  const meta = subagentMeta(a);
+  return (
+    <View
+      style={[styles.agent, { opacity: subagentOpacity(a, serverNow) }]}
+      accessible
+      accessibilityLabel={subagentLabel(a, serverNow)}
+      testID={`subagent-${a.id}`}
+    >
+      <View style={styles.agentHead}>
+        <Text style={[styles.mark, { color: tones[mark.tone].dot }]} importantForAccessibility="no">
+          {mark.glyph}
+        </Text>
+        <Text style={styles.agentName}>{a.description}</Text>
+        <View style={[styles.agentChip, { backgroundColor: tones[mark.tone === 'busy' ? 'busy' : 'idle'].bg }]}>
+          <Text style={styles.agentState}>{a.type}</Text>
+        </View>
+        {timing ? <Text style={styles.agentBranch}>{timing}</Text> : null}
+      </View>
+      {meta ? <Text style={[styles.agentBranch, styles.mono]}>{meta}</Text> : null}
+      {a.state === 'running' && a.last ? (
+        <Text style={[styles.agentLast, styles.mono]} numberOfLines={2}>
+          {a.last}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
 function AgentRow({ agent: a }: { agent: StatusDetails['agents'][number] }) {
   const chip = agentChip(a);
   const tones = chipOf(useTheme());
   const where = a.branch ?? a.dir;
   return (
-    <View style={styles.agent} accessibilityLabel={`${a.name}, ${chip.label}${a.branch ? `, on ${a.branch}` : ''}${a.last ? `. ${a.last}` : ''}`}>
+    <View style={styles.agent} accessibilityLabel={`tmux session ${a.name}, ${chip.label}${a.branch ? `, on ${a.branch}` : ''}${a.last ? `. ${a.last}` : ''}`}>
       <View style={styles.agentHead}>
         <Text style={styles.agentName}>{a.name}</Text>
         <View style={[styles.agentChip, { backgroundColor: tones[chip.tone].bg }]}>
@@ -417,6 +489,8 @@ const styles = StyleSheet.create({
   agentBranch: { color: colors.textSecondary, fontSize: type.size.caption, fontWeight: '500', ...legibleText },
   agentState: { color: colors.text, fontSize: type.size.caption, fontWeight: '600', ...legibleText },
   agentLast: { color: colors.textSecondary, fontSize: type.size.caption, fontWeight: '500', ...legibleText },
+  mark: { fontSize: type.size.small, fontWeight: '700', width: 14, textAlign: 'center', ...legibleText },
+  subhead: { color: colors.textSecondary, fontSize: type.size.caption, fontWeight: '600', marginTop: space.xs, ...legibleText },
 });
 
 const useStyles = themedStyles((t) => StyleSheet.create({ fill: { backgroundColor: t.accent }, cardButton: { backgroundColor: t.accentSoft } }));

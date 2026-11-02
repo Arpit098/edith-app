@@ -1,16 +1,35 @@
-import { statusDetailsFrom, type StatusDetails } from '../../../core/api';
+import { statusDetailsFrom, SUBAGENT_RETAIN, type StatusDetails, type Subagent } from '../../../core/api';
 import { ev, fakeContext } from '../../../testing/fakes';
 import { createStore } from '../../../core/store';
 import { initialLive, reduce, type LiveState } from '../model';
 import { DETAILS } from './details';
-import { agentChip, backgroundLine, backgroundStopPrompt, barSummary, contextUsage, detailsLabel, formatAgo, formatElapsed, formatRunFor, formatTokens, formatUptime, mainRun, pollDetails, toolName, turnSince, nextTurnStart, trackTurnStart } from '../status';
+import {
+  agentChip, backgroundLine, backgroundStopPrompt, barSummary, chipCounts, contextUsage, detailsLabel, formatAgo, formatElapsed, formatRunFor, formatTokens, formatUptime, mainRun, otherBackground,
+  pollDetails, subagentLabel, subagentMark, subagentMeta, subagentOpacity, subagentTiming, toolName, turnSince, nextTurnStart, trackTurnStart, visibleSubagents,
+} from '../status';
 
 
 const run = (events: Parameters<typeof reduce>[1][], from: LiveState = initialLive) => events.reduce(reduce, from);
 
 describe('barSummary', () => {
   it('is idle with nothing running', () => {
-    expect(barSummary(initialLive)).toEqual({ state: 'idle', tone: 'idle', label: 'Idle', counts: '', detail: null, background: 0 });
+    expect(barSummary(initialLive)).toEqual({ state: 'idle', tone: 'idle', label: 'Idle', counts: '', detail: null, background: 0, agents: 0 });
+  });
+
+  it('counts running subagents as agents, a background subagent once, and waits on them once the reply is done', () => {
+    const rev = { id: 'tu2', description: 'Review PR 61', type: 'general-purpose', model: null, effort: null, background: true, state: 'running', started: 100, ended: null };
+    let s = [
+      ev('turn.started', { ref: 'r1', lane: 'main' }),
+      ev('background.changed', { jobs: [{ id: 'tu1', kind: 'shell', label: 'Wait for CI', started: 90 }, { id: 'tu2', kind: 'agent', label: 'Review PR 61', started: 100 }] }),
+      ev('subagents.changed', { agents: [rev, { ...rev, id: 'tu3', description: 'Look it up', background: false, state: 'done', ended: 120 }] }),
+    ].reduce(reduce, initialLive);
+    expect(barSummary(s)).toMatchObject({ tone: 'busy', counts: '1 agent · 1 bg', agents: 1, background: 1 });
+    s = reduce(s, ev('turn.done', { ref: 'r1', lane: 'main', text: 'On it' }));
+    expect(barSummary(s)).toMatchObject({ state: 'waiting', tone: 'waiting', label: 'Waiting on an agent', detail: 'Review PR 61' });
+    s = reduce(s, ev('subagents.changed', { agents: [{ ...rev, state: 'done', ended: 200 }] }));
+    expect(barSummary(s)).toMatchObject({ state: 'waiting', label: 'Waiting on background work', agents: 0, background: 1, counts: '1 bg' });
+    expect(chipCounts({ agents: 2, background: 0 })).toBe('2 agents');
+    expect(chipCounts({ agents: 0, background: 0 })).toBe('');
   });
 
   it('is waiting, not working, when the reply is done but background work runs', () => {
@@ -23,7 +42,7 @@ describe('barSummary', () => {
     // While the turn runs it's still working; the job only adds to the counts.
     expect(barSummary(s)).toMatchObject({ state: 'thinking', tone: 'busy', counts: '1 bg', background: 1 });
     s = reduce(s, ev('turn.done', { ref: 'r1', lane: 'main', text: 'Watching it' }));
-    expect(barSummary(s)).toEqual({ state: 'waiting', tone: 'waiting', label: 'Waiting on background work', counts: '1 bg', detail: 'Wait for PR 41 CI', background: 1 });
+    expect(barSummary(s)).toEqual({ state: 'waiting', tone: 'waiting', label: 'Waiting on background work', counts: '1 bg', detail: 'Wait for PR 41 CI', background: 1, agents: 0 });
     s = reduce(s, ev('background.changed', { jobs: [] }));
     expect(barSummary(s)).toMatchObject({ state: 'idle', tone: 'idle', background: 0 });
   });
@@ -114,6 +133,50 @@ describe('formatting', () => {
     expect(detailsLabel({ ...d.edith, state: 'waiting_approval' })).toBe('Waiting for approval (Bash)');
     expect(detailsLabel({ ...d.edith, state: 'idle' })).toBe('Idle');
     expect(detailsLabel({ ...d.edith, state: 'waiting' })).toBe('Reply done · waiting on background work');
+  });
+});
+
+describe('subagents', () => {
+  const a: Subagent = { id: 'tu1', description: 'Review PR 61', type: 'general-purpose', model: 'claude-opus-5-5', effort: 'medium', background: true, state: 'running', started: 1000, ended: null, last: 'Read: x.py' };
+
+  it('says the state with a mark, the time, model and effort', () => {
+    expect(subagentMark('running').glyph).toBe('●');
+    expect(subagentMark('done')).toMatchObject({ glyph: '✓', word: 'Done' });
+    expect(subagentMark('failed')).toMatchObject({ glyph: '✗', tone: 'danger' });
+    expect(subagentMark('stopped')).toMatchObject({ glyph: '✗', word: 'Stopped' });
+    expect(subagentTiming(a, 1185)).toBe('3 min');
+    expect(subagentTiming({ ...a, state: 'done', ended: 1250 }, 5000)).toBe('done in 4 min');
+    expect(subagentTiming({ ...a, state: 'failed', ended: 1030 }, 5000)).toBe('failed after <1 min');
+    expect(subagentTiming({ ...a, state: 'stopped', started: null }, 5000)).toBe('stopped');
+    expect(subagentTiming({ ...a, started: null }, 5000)).toBeNull();
+    expect(subagentMeta(a)).toBe('opus-5-5 · medium');
+    expect(subagentMeta({ ...a, model: null, effort: null })).toBeNull();
+    expect(subagentLabel({ ...a, background: false }, 1185)).toBe('Subagent Review PR 61, general-purpose, foreground, running for 3 min, opus-5-5 · medium, last step: Read: x.py');
+    expect(subagentLabel({ ...a, state: 'failed', ended: 1030, model: null, effort: null, last: 'x' }, 5000)).toBe('Subagent Review PR 61, general-purpose, failed after <1 min');
+  });
+
+  it('fades a finished one over the retention, then leaves it out; running ones first', () => {
+    const done = { ...a, id: 'tu2', state: 'done' as const, ended: 2000 };
+    const failed = { ...a, id: 'tu3', state: 'failed' as const, ended: 2100 };
+    expect(subagentOpacity(a, 99_999)).toBe(1);
+    expect(subagentOpacity(done, 2000)).toBe(1);
+    expect(subagentOpacity(done, 2000 + SUBAGENT_RETAIN / 2)).toBeCloseTo(0.7);
+    expect(subagentOpacity(done, 2000 + SUBAGENT_RETAIN)).toBeCloseTo(0.4);
+    expect(subagentOpacity(done, 2001 + SUBAGENT_RETAIN)).toBe(0);
+    expect(visibleSubagents([done, a, failed], 2200).map((x) => x.id)).toEqual(['tu1', 'tu3', 'tu2']);
+    expect(visibleSubagents([done, a, failed], 2050 + SUBAGENT_RETAIN).map((x) => x.id)).toEqual(['tu1', 'tu3']);
+  });
+
+  it('leaves a background subagent out of the other background work', () => {
+    const jobs = [{ id: 'tu1', kind: 'agent' as const, label: 'Review PR 61', started: 1000 }, { id: 'b1', kind: 'shell' as const, label: 'CI', started: 990 }];
+    expect(otherBackground(jobs, [a]).map((j) => j.id)).toEqual(['b1']);
+    expect(otherBackground(jobs, [])).toBe(jobs);
+  });
+
+  it('reads an odd or older answer safely', () => {
+    const d = statusDetailsFrom({ edith: { subagents: [null, { id: 'x', state: 'weird', background: 'yes', started: 'soon' }] } });
+    expect(d.edith.subagents).toEqual([{ id: 'x', description: 'Agent', type: 'general-purpose', model: null, effort: null, background: null, state: 'running', started: null, ended: null, last: null }]);
+    expect(statusDetailsFrom({ edith: {} }).edith.subagents).toEqual([]); // an older server
   });
 });
 

@@ -55,6 +55,8 @@ export interface EventDataMap {
   'app.update_available': { kind: 'ota' | 'apk'; id: string; versionName: string | null; versionCode: number | null; runtimeVersion: string; sha: string | null; summary: string };
   // EDITH's background work now, the whole list (contracts/status.md, "Background"); read it through backgroundFrom (core/api):
   'background.changed': { jobs: unknown[] };
+  // EDITH's subagents now, the whole list (contracts/status.md, "Subagents"); read it through subagentsFrom (core/api):
+  'subagents.changed': { agents: unknown[] };
   // App-local events (never sent by the server):
   'app.connected': { first: boolean }; // core/connection.ts: the stream (re)opened; resync what may be missed
   'app.voice': { state: 'listening' | 'speaking' | 'idle' }; // the voice feature (Phase 3): mic or TTS active

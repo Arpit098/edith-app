@@ -106,7 +106,8 @@ class LiveBackgroundTest(unittest.TestCase):
         self.claude("idle", TAIL["started"] - 1)  # idle, but before the newest job began: that one stands
         self.live._bg_checked = -1e9
         self.assertEqual(self.live.background(), [TAIL])
-        self.assertEqual(self.published, [("background.changed", "system", "s1", {"jobs": [TAIL]})])
+        self.assertEqual([p for p in self.published if p[0] == "background.changed"],
+                         [("background.changed", "system", "s1", {"jobs": [TAIL]})])
         self.claude("idle", TAIL["started"] + 1)
         self.assertEqual(self.live.background(), [TAIL])  # checked at most every max_age seconds
         self.assertEqual(self.live.background(max_age=0), [])

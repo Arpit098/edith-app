@@ -1,4 +1,4 @@
-import type { HistoryPage } from '../../../core/api';
+import type { HistoryPage, Subagent } from '../../../core/api';
 import { localEvent, type EdithEvent } from '../../../core/events';
 import { ev, fakeContext, flush } from '../../../testing/fakes';
 import { applyStatus, createLiveModel, needsArgs, fromHistory, initialLive, MAX_ITEMS, reduce, summarize, withOlder, type LiveState } from '../model';
@@ -17,6 +17,10 @@ function page(events: EdithEvent[], extra: Partial<HistoryPage> = {}): Record<st
   return { session_id: 's1', events, start: events[0]?.data.cursor ?? 's1:0', cursor: last, more: false, reset: false, ...extra };
 }
 
+const SUB: Subagent = {
+  id: 'toolu_r', description: 'Review PR 61', type: 'general-purpose', model: 'claude-opus-5-5', effort: 'medium',
+  background: true, state: 'running', started: 100, ended: null, last: null,
+};
 const STATUS = { main: 'idle', queued: 0, runs: [], tmux: 'running', conversation: true, session: null };
 
 describe('reduce', () => {
@@ -102,6 +106,7 @@ describe('reduce', () => {
       queued: 1,
       runs: [{ ref: 'r', lane: 'main', seconds: 40, step: 'Read a.ts' }],
       background: [{ id: 'tu1', kind: 'shell', label: 'Wait for PR 41 CI', started: 100 }],
+      subagents: [SUB],
       tmux: 'running',
       conversation: true,
       session: { id: 's1', title: 'T' },
@@ -109,6 +114,16 @@ describe('reduce', () => {
     expect(summarize(s)).toEqual({ busy: true, step: 'Read a.ts', elapsed: 40, running: 1, queued: 1 });
     expect(s.session).toEqual({ id: 's1', title: 'T' });
     expect(s.background).toEqual([{ id: 'tu1', kind: 'shell', label: 'Wait for PR 41 CI', started: 100 }]);
+    expect(s.subagents).toEqual([SUB]);
+  });
+
+  it('keeps the subagents from subagents.changed, whole list each time, on the server clock', () => {
+    let s = reduce(initialLive, ev('subagents.changed', { agents: [{ ...SUB, prompt: 'never kept' }, { id: '' }, 'junk', { id: 'x', state: 'odd' }] }));
+    expect(s.subagents).toEqual([SUB, { ...SUB, id: 'x', description: 'Agent', type: 'general-purpose', model: null, effort: null, background: null, state: 'running', started: null, ended: null }]);
+    s = reduce(s, ev('subagents.changed', { agents: [] })); // a conversation switch: afresh
+    expect(s.subagents).toEqual([]);
+    s = reduce(s, ev('subagents.changed', {})); // an odd event: none
+    expect(s.subagents).toEqual([]);
   });
 
   it('keeps the background work from background.changed, whole list each time', () => {

@@ -1,7 +1,7 @@
 // The status panel's logic (StatusPanel.tsx draws it): the collapsed bar from the live store, kept
 // current by stream events alone, and the open card's details fetch (contracts/status.md).
 
-import type { BackgroundJob, StatusDetails } from '../../core/api';
+import { SUBAGENT_RETAIN, type BackgroundJob, type StatusDetails, type Subagent } from '../../core/api';
 import type { Store } from '../../core/store';
 import type { LiveState, TurnStart } from './model';
 
@@ -13,8 +13,9 @@ export interface BarSummary {
   // no turn timer, and Stop has no turn to end.
   tone: 'idle' | 'busy' | 'approval' | 'waiting';
   label: string; // "Running Bash", "Thinking", "Waiting for approval", "Waiting on background work", "Idle"
-  counts: string; // "1 parallel · 2 queued · 1 approval · 1 bg", or ""
-  background: number; // background jobs running
+  counts: string; // "1 parallel · 2 queued · 1 approval · 2 agents · 1 bg", or ""
+  background: number; // background jobs running that aren't subagents (those count in `agents`)
+  agents: number; // EDITH's subagents running
   // The pill's right side: the step running ("$ npm test") or, between steps, Arpit's latest prompt.
   // Never the session's title, which is often a long first message (it's in the card, labelled).
   detail: string | null;
@@ -32,23 +33,102 @@ function plural(n: number, word: string): string {
   return `${n} ${word}${n === 1 ? '' : 's'}`;
 }
 
+/** The background jobs that aren't listed as subagents (a background subagent is both: count it once). */
+export function otherBackground(jobs: BackgroundJob[], subagents: Subagent[]): BackgroundJob[] {
+  if (!subagents.length) return jobs;
+  const ids = new Set(subagents.map((a) => a.id));
+  return jobs.filter((j) => !ids.has(j.id));
+}
+
+/** The chip's calm count: "2 agents · 1 bg", "1 agent", "1 bg" or "". */
+export function chipCounts(bar: Pick<BarSummary, 'agents' | 'background'>): string {
+  return [bar.agents ? plural(bar.agents, 'agent') : '', bar.background ? `${bar.background} bg` : ''].filter(Boolean).join(' · ');
+}
+
 export function barSummary(s: LiveState): BarSummary {
   const runs = Object.values(s.runs);
   const main = runs.find((r) => r.lane === 'main') ?? runs[0];
   const approvals = Object.keys(s.approvals).length;
   const side = runs.filter((r) => r.lane === 'side').length;
-  const background = s.background.length;
-  const counts = [side ? `${side} parallel` : '', s.queued ? `${s.queued} queued` : '', approvals ? plural(approvals, 'approval') : '', background ? `${background} bg` : '']
+  const running = s.subagents.filter((a) => a.state === 'running');
+  const others = otherBackground(s.background, s.subagents);
+  const background = others.length;
+  const agents = running.length;
+  const counts = [side ? `${side} parallel` : '', s.queued ? `${s.queued} queued` : '', approvals ? plural(approvals, 'approval') : '', chipCounts({ agents, background })]
     .filter(Boolean)
     .join(' · ');
   const prompt = s.items.find((x) => x.kind === 'user' && x.text.trim() !== ''); // newest first: stops at the latest
   const detail = main?.active && main.step ? main.step : prompt?.kind === 'user' ? prompt.text.trim() : null;
-  const bar = { counts, detail, background };
+  const bar = { counts, detail, background, agents };
   if (approvals) return { state: 'waiting_approval', tone: 'approval', label: 'Waiting for approval', ...bar };
   if (main?.active && main.step) return { state: 'tool', tone: 'busy', label: `Running ${toolName(main.step)}`, ...bar };
   if (main || s.main === 'busy') return { state: 'thinking', tone: 'busy', label: 'Thinking', ...bar };
-  if (background) return { state: 'waiting', tone: 'waiting', label: 'Waiting on background work', ...bar, detail: s.background[0]!.label };
+  if (agents) return { state: 'waiting', tone: 'waiting', label: agents === 1 ? 'Waiting on an agent' : `Waiting on ${agents} agents`, ...bar, detail: running[0]!.description };
+  if (background) return { state: 'waiting', tone: 'waiting', label: 'Waiting on background work', ...bar, detail: others[0]!.label };
   return { state: 'idle', tone: 'idle', label: 'Idle', ...bar };
+}
+
+/** A subagent's state mark: ✓ done, ✗ failed or stopped, ● running. */
+export function subagentMark(state: Subagent['state']): { glyph: string; word: string; tone: AgentTone } {
+  switch (state) {
+    case 'done':
+      return { glyph: '✓', word: 'Done', tone: 'idle' };
+    case 'failed':
+      return { glyph: '✗', word: 'Failed', tone: 'danger' };
+    case 'stopped':
+      return { glyph: '✗', word: 'Stopped', tone: 'warn' };
+    default:
+      return { glyph: '●', word: 'Running', tone: 'busy' };
+  }
+}
+
+/** "3 min" while it runs; "done in 4 min", "failed after 1 min", "stopped after 2 min" once over. `now`: the server's clock. */
+export function subagentTiming(a: Subagent, now: number): string | null {
+  if (a.started == null) return a.state === 'running' ? null : subagentMark(a.state).word.toLowerCase();
+  if (a.state === 'running') return formatRunFor(now - a.started);
+  const took = formatRunFor((a.ended ?? now) - a.started);
+  return a.state === 'done' ? `done in ${took}` : `${a.state} after ${took}`;
+}
+
+/**
+ * How visible a subagent is at `now` (the server's clock): 1 while it runs; a finished one fades
+ * from 1 to 0.4 over SUBAGENT_RETAIN after it ended, then is gone (0: not listed).
+ */
+export function subagentOpacity(a: Subagent, now: number): number {
+  if (a.state === 'running') return 1;
+  const age = now - (a.ended ?? now);
+  if (age > SUBAGENT_RETAIN) return 0;
+  return 1 - 0.6 * Math.min(1, Math.max(0, age) / SUBAGENT_RETAIN);
+}
+
+/** The subagents still to list at `now`: running ones first (oldest first), then the finished, newest first. */
+export function visibleSubagents(list: Subagent[], now: number): Subagent[] {
+  const shown = list.filter((a) => subagentOpacity(a, now) > 0);
+  const running = shown.filter((a) => a.state === 'running');
+  const over = shown.filter((a) => a.state !== 'running').sort((x, y) => (y.ended ?? 0) - (x.ended ?? 0));
+  return [...running, ...over];
+}
+
+/** Model and effort, shortened: "opus-5-5 · medium", or null. */
+export function subagentMeta(a: Subagent): string | null {
+  const model = a.model?.replace(/^claude-/, '') ?? null;
+  return [model, a.effort].filter(Boolean).join(' · ') || null;
+}
+
+/** What TalkBack reads for a subagent row. */
+export function subagentLabel(a: Subagent, now: number): string {
+  const mark = subagentMark(a.state);
+  const timing = subagentTiming(a, now);
+  const meta = subagentMeta(a);
+  return [
+    `Subagent ${a.description}`,
+    `${a.type}${a.background === false ? ', foreground' : ''}`,
+    a.state === 'running' ? `running${timing ? ` for ${timing}` : ''}` : timing ?? mark.word,
+    meta,
+    a.state === 'running' && a.last ? `last step: ${a.last}` : null,
+  ]
+    .filter(Boolean)
+    .join(', ');
 }
 
 const KIND: Record<BackgroundJob['kind'], string> = { shell: 'Shell', agent: 'Agent' };
