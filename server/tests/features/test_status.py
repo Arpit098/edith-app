@@ -31,7 +31,7 @@ class FakeAgent:
     def background(self):
         return [dict(j) for j in self.jobs]
 
-    def subagents(self):
+    def subagents(self, with_last=True):
         return [dict(a) for a in getattr(self, "agents", [])]
 
     def tmux_alive(self):

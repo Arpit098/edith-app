@@ -24,7 +24,7 @@ class FakeAgent:
     def background(self):
         return list(self.jobs)
 
-    def subagents(self):
+    def subagents(self, with_last=True):
         return []
 
     def has_conversation(self):

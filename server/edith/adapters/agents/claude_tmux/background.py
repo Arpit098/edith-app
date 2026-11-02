@@ -24,6 +24,7 @@ MAX_JOBS = 50
 LABEL = 80  # characters
 NOTIFICATION = re.compile(r"<task-notification>(.*?)</task-notification>", re.S)
 FIELD = re.compile(r"<(task-id|tool-use-id|status)>\s*([^<]*?)\s*</\1>")
+HEADER_END = re.compile(r"<(?:summary|result)>")  # free text starts here
 AGENTS = ("Agent", "Task")
 KINDS = {"Bash": "shell", "Agent": "agent", "Task": "agent"}
 STOPPERS = ("TaskStop", "KillShell", "KillBash")
@@ -49,12 +50,17 @@ def text_of(content):
 
 
 def notifications(content):
-    """[(task ids, tool-use id or None, status or None)] for each <task-notification> in a user entry."""
+    """[(task ids, tool-use id or None, status or None)] for each <task-notification> in a user entry.
+    Only its header is read, before the first <summary> or <result>: those hold free text (a
+    subagent's answer) that may quote the tags, which must not add ids or change the fields."""
     out = []
     for block in NOTIFICATION.findall(text_of(content)):
-        fields = [(k, v) for k, v in FIELD.findall(block) if v]
-        tasks = [v for k, v in fields if k == "task-id"]
-        one = dict(fields)  # tool-use-id and status appear once
+        header = HEADER_END.split(block, 1)[0]
+        fields = [(k, v) for k, v in FIELD.findall(header) if v]
+        tasks = list(dict.fromkeys(v for k, v in fields if k == "task-id"))
+        one = {}
+        for k, v in fields:
+            one.setdefault(k, v)  # the first value of each field
         out.append((tasks, one.get("tool-use-id"), one.get("status")))
     return out
 

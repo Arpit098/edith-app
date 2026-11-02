@@ -46,8 +46,9 @@ class FakeAgent:
     def background(self):
         return [{"id": "tu1", "kind": "shell", "label": "Wait for PR 41 CI", "started": 100.0}]
 
-    def subagents(self):
-        return [dict(SUBAGENT, last="$ npm test")]
+    def subagents(self, with_last=True):
+        self.with_last = with_last
+        return [dict(SUBAGENT, last="$ npm test")] if with_last else [dict(SUBAGENT)]
 
     def busy(self):
         return True
@@ -285,6 +286,7 @@ class RoutesTest(unittest.TestCase):
         job = {"id": "tu1", "kind": "shell", "label": "Wait for PR 41 CI", "started": 100.0}
         self.assertEqual(body["background"], [job])
         self.assertEqual(body["subagents"], [SUBAGENT])  # no `last`: the status details carry it
+        self.assertIs(self.a.agent.with_last, False)  # so no subagent transcript is read for it
         self.assertAlmostEqual(body["ts"], time.time(), delta=5)  # the server's clock, to age the jobs on
         # A stop says what still runs in the background (it doesn't cancel that).
         status, stopped = self.a.call("POST", "/v1/stop", {})

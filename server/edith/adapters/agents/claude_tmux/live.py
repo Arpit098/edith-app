@@ -154,6 +154,10 @@ class LiveView:
             self._bg, self._sa, self._bg_checked = Background(), Subagents(), 0.0
             self._bg_seq += 1
             self._sa_seq += 1
+        with self._files_lock:  # another session's subagent folder: nothing cached carries over
+            self._last.clear()
+            self._meta.clear()
+            self._meta_seen.clear()
         if seed:
             self._seed(path)
         self._publish_background()
@@ -173,10 +177,13 @@ class LiveView:
         if over is None:
             return jobs
         with self._bg_lock:
+            running = self._sa.running()
+        finished = {t for t, a in running if self._meta_finished(t, a)}  # files read outside the lock
+        with self._bg_lock:
             changed = self._bg.drop_started_before(over)
             if changed:
                 self._bg_seq += 1
-            stopped = self._sa.stop_running(over, over if over != float("inf") else self.now())
+            stopped = self._sa.stop_running(over, over if over != float("inf") else self.now(), finished)
             if stopped:
                 self._sa_seq += 1
             jobs = self._bg.jobs()
@@ -186,16 +193,33 @@ class LiveView:
             self._publish_subagents()
         return jobs
 
-    def subagents(self, max_age=5.0) -> list[dict]:
+    def subagents(self, max_age=5.0, with_last=True) -> list[dict]:
         """EDITH's subagents: [{id, description, type, model, effort, background, state, started,
         ended, last}] oldest first, running ones and those that ended in the last RETAIN seconds.
-        `last` is a running one's latest step, from its own transcript (None if unknown)."""
+        `last` is a running one's latest step, from its own transcript (None if unknown); left out
+        with with_last=False, which reads no subagent files."""
         self.background(max_age)  # the session-file check covers running subagents too
         with self._bg_lock:
             agents, running = self._sa.entries(self.now()), dict(self._sa.running())
-        for a in agents:
-            a["last"] = self._last_of(a["id"], running[a["id"]]) if a["id"] in running else None
+        if with_last:
+            for a in agents:
+                a["last"] = self._last_of(a["id"], running[a["id"]]) if a["id"] in running else None
         return agents
+
+    def _meta_finished(self, tool_use_id, agent_id) -> bool:
+        """Whether Claude Code marked a subagent finished in its meta file (`"finished": true`):
+        it ended though we missed how, so it is done rather than stopped."""
+        with self._files_lock:
+            folder = self._subagent_dir()
+            agent_id = agent_id or (self._agent_id(folder, tool_use_id) if folder else None)
+            if not agent_id:
+                return False
+            try:
+                with open(os.path.join(folder, f"agent-{agent_id}.meta.json")) as f:
+                    meta = json.load(f)
+            except (OSError, ValueError):
+                return False
+        return isinstance(meta, dict) and meta.get("finished") is True
 
     def _subagent_dir(self):
         path = self.following or self.session().get("transcript_path")
@@ -223,6 +247,8 @@ class LiveView:
         if cached and cached[0] == key:
             return cached[1]
         line = last_activity(path)
+        if line is None and cached:  # e.g. a last line longer than LAST_BYTES: keep what it did before
+            line = cached[1]
         self._last[path] = (key, line)
         while len(self._last) > 50:
             self._last.pop(next(iter(self._last)))

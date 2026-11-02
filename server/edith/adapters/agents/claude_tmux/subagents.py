@@ -17,8 +17,16 @@ next to agent-<agentId>.meta.json ({toolUseId, agentType, description…}); its 
 Subagents.feed() takes entries in order and says whether the list changed. Finished ones are kept
 RETAIN seconds after they ended, so the app can show ✓ or ✗ before they fade. Only parsing here.
 """
+import re
+
+from edith.common.redact import redact
+
 from .background import AGENTS, STOPPERS, entry_ts, is_async_launch, label_of, notifications
 from .transcript import describe_tool, read_backward
+
+ENV_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+URL_TAIL = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://[^\s?#]*)[?#]\S*")  # a URL's query and fragment (they carry tokens)
+WRITING = "Writing…"  # in place of a subagent's own free text
 
 RETAIN = 30 * 60  # seconds a finished subagent stays listed
 MAX_AGENTS = 50
@@ -54,13 +62,14 @@ class Subagents:
     def any_running(self) -> bool:
         return any(a["state"] == "running" for a in self._agents.values())
 
-    def stop_running(self, before: float, at: float) -> bool:
+    def stop_running(self, before: float, at: float, finished=frozenset()) -> bool:
         """The running ones started before `before` are over (Claude said it was idle then, or no
-        Claude runs the conversation): stopped, ended at `at`. True if any was."""
+        Claude runs the conversation): stopped, ended at `at`, or done if their tool_use id is in
+        `finished` (Claude Code's meta file says it finished). True if any was."""
         changed = False
         for a in self._agents.values():
             if a["state"] == "running" and (a["started"] or 0) < before:
-                a.update(state="stopped", ended=max(at, a["started"] or at))
+                a.update(state="done" if a["id"] in finished else "stopped", ended=max(at, a["started"] or at))
                 changed = True
         return changed
 
@@ -146,24 +155,49 @@ class Subagents:
         return True
 
 
+def program_of(command) -> str | None:
+    """The program a shell command runs ("npm" for "CI=1 npm test --x"), without its arguments."""
+    for word in str(command or "").split():
+        if ENV_ASSIGNMENT.match(word):
+            continue
+        name = word.strip("'\"()").rsplit("/", 1)[-1]
+        return name[:40] or None
+    return None
+
+
+def step_line(b) -> str | None:
+    """A subagent's step, safe to show: a shell command by its description, else only its program;
+    another tool by describe_tool without URL queries and fragments; free text by a fixed phrase
+    (it may quote anything). Redacted on top. None for a block that is no step."""
+    if b.get("type") == "tool_use":
+        name, inp = b.get("name", ""), b.get("input") if isinstance(b.get("input"), dict) else {}
+        if name == "Bash":
+            desc = str(inp.get("description") or "").strip()
+            program = program_of(inp.get("command"))
+            line = desc.splitlines()[0] if desc else f"$ {program}" if program else "$ …"
+        else:
+            line = describe_tool(name, inp)
+        line = URL_TAIL.sub(r"\1", line)
+    elif b.get("type") == "text" and isinstance(b.get("text"), str) and b["text"].strip():
+        line = WRITING
+    else:
+        return None
+    line = redact(line)
+    return line if len(line) <= LAST else line[:LAST - 1].rstrip() + "…"
+
+
 def last_activity(path) -> str | None:
-    """What a subagent did last, from its transcript's end: its latest tool call ("$ npm test",
-    "Read: x.py") or else the first line of its latest text; None if there is none (or no file)."""
+    """What a subagent did last, from its transcript's end (step_line of its latest step); None if
+    there is none, the file can't be read, or its last LAST_BYTES hold no whole line."""
     try:
         for e, *_ in read_backward(path, None, LAST_BYTES):
             content = (e.get("message") or {}).get("content") if isinstance(e, dict) else None
             if e.get("type") != "assistant" or not isinstance(content, list):
                 continue
             for b in reversed(content):
-                if not isinstance(b, dict):
-                    continue
-                if b.get("type") == "tool_use":
-                    line = describe_tool(b.get("name", ""), b.get("input") if isinstance(b.get("input"), dict) else {})
-                elif b.get("type") == "text" and isinstance(b.get("text"), str) and b["text"].strip():
-                    line = next(ln.strip() for ln in b["text"].splitlines() if ln.strip())
-                else:
-                    continue
-                return line if len(line) <= LAST else line[:LAST - 1].rstrip() + "…"
+                line = step_line(b) if isinstance(b, dict) else None
+                if line:
+                    return line
     except (OSError, ValueError):
         return None
     return None

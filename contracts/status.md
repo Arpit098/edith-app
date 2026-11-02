@@ -85,13 +85,17 @@ ended in the last 30 minutes (so the app can show ✓ or ✗ before they fade).
   an error result: `failed`, or `stopped` if interrupted), its `<task-notification>` (`completed`,
   `failed`, `stopped`/`killed`) or a TaskStop of it. Claude's session file has the last word, as for
   background jobs: once it says `idle` after one started, or no Claude runs the conversation, a
-  running one is `stopped` (ended then).
+  running one is `stopped` (ended then), or `done` if its `agent-<agentId>.meta.json` says
+  `"finished": true`. `<task-notification>` fields are read from its header only (before
+  `<summary>`/`<result>`, whose text may quote the tags).
 - `started` and `ended` are unix seconds on the server's clock (`ended` is `null` while it runs).
 - `last` is a running one's latest step from its own transcript (`~/.claude/projects/<project>/<session
   id>/subagents/agent-<agentId>.jsonl`, found through the `agent-<agentId>.meta.json` next to it for a
-  foreground one): its latest tool call (`$ npm test`, `Read: x.py`) or else the first line of its
-  latest text, at most 100 characters; `null` when finished or unknown. Read only while it runs, and
-  only when that file changed.
+  foreground one): its latest step, made safe to show: a shell command by its description, else only
+  its program (`$ npm`, never the arguments); another tool as `Read: x.py`, `WebFetch: <url>` with
+  any URL's query string and fragment removed; its own free text only as `Writing…`; then redacted;
+  at most 100 characters. `null` when finished or unknown. Read only while it runs, and only when
+  that file changed (a last line too long to read keeps the step before it).
 - A switch to another conversation starts the list afresh (a resumed one is seeded from its own
   transcript's last 2 MB, like the background jobs).
 Changes come as `subagents.changed` events (contracts/events.md), without `last`; the expiry after

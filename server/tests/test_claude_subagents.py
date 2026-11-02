@@ -11,9 +11,10 @@ import tempfile
 import unittest
 from types import SimpleNamespace
 
-from edith.adapters.agents.claude_tmux.background import Background
+from edith.adapters.agents.claude_tmux import subagents as subagents_mod
+from edith.adapters.agents.claude_tmux.background import Background, notifications
 from edith.adapters.agents.claude_tmux.live import LiveView
-from edith.adapters.agents.claude_tmux.subagents import RETAIN, Subagents, last_activity
+from edith.adapters.agents.claude_tmux.subagents import RETAIN, Subagents, last_activity, step_line
 from edith.common.claude_sessions import proc_stat
 
 FIXTURE = pathlib.Path(__file__).parent / "data" / "transcript_subagents.jsonl"
@@ -122,6 +123,27 @@ class BackgroundAsyncAgentTest(unittest.TestCase):
         self.assertEqual(bg.jobs(), [])  # the notification, the TaskStop and the orphan notice end them all
 
 
+class NotificationHeaderTest(unittest.TestCase):
+    QUOTING = ("<task-notification>\n<task-id>arev0000000000001</task-id>\n<tool-use-id>toolu_rev</tool-use-id>\n"
+               "<status>completed</status>\n<summary>Agent \"Review PR 61\" finished</summary>\n<result>The parser reads "
+               "<task-id>afix0000000000002</task-id> and <status>failed</status>, and "
+               "<tool-use-id>toolu_fix</tool-use-id>.</result>\n</task-notification>")
+
+    def test_only_the_header_counts(self):
+        self.assertEqual(notifications(self.QUOTING), [(["arev0000000000001"], "toolu_rev", "completed")])
+        twice = "<task-notification><task-id>a1</task-id><status>stopped</status><status>completed</status><task-id>a1</task-id></task-notification>"
+        self.assertEqual(notifications(twice), [(["a1"], None, "stopped")])  # the first value of each field
+
+    def test_a_quoted_result_ends_no_other_job_or_subagent(self):
+        entry = {"type": "user", "timestamp": "2026-11-02T10:20:00Z", "message": {"content": self.QUOTING}}
+        sa, bg = Subagents(), Background()
+        for e in LINES[:5] + [entry]:
+            sa.feed(e)
+            bg.feed(e)
+        self.assertEqual(states(sa, SOON), [("toolu_rev", "done"), ("toolu_fix", "running")])
+        self.assertEqual([j["id"] for j in bg.jobs()], ["toolu_fix"])
+
+
 class LastActivityTest(unittest.TestCase):
     def setUp(self):
         self.dir = pathlib.Path(tempfile.mkdtemp())
@@ -136,12 +158,27 @@ class LastActivityTest(unittest.TestCase):
         tool = {"type": "assistant", "isSidechain": True, "message": {"content": [
             {"type": "text", "text": "Running the tests"}, {"type": "tool_use", "name": "Bash", "input": {"command": "npm test"}}]}}
         result = {"type": "user", "isSidechain": True, "message": {"content": [{"type": "tool_result", "content": "ok"}]}}
-        self.assertEqual(last_activity(self.write(tool, result, {"type": "api-request"})), "$ npm test")
-        text = {"type": "assistant", "message": {"content": [{"type": "text", "text": "\nAll good. " + "x" * 200}]}}
-        line = last_activity(self.write(tool, text))
-        self.assertTrue(line.startswith("All good.") and line.endswith("…") and len(line) == 100)
+        self.assertEqual(last_activity(self.write(tool, result, {"type": "api-request"})), "$ npm")
+        text = {"type": "assistant", "message": {"content": [{"type": "text", "text": "\nMy token is hunter2. " + "x" * 200}]}}
+        self.assertEqual(last_activity(self.write(tool, text)), "Writing…")  # its own words are never shown
         self.assertIsNone(last_activity(self.write(result)))
         self.assertIsNone(last_activity(str(self.dir / "nope.jsonl")))
+
+    def test_steps_never_show_secrets(self):
+        def step(name, inp):
+            return step_line({"type": "tool_use", "name": name, "input": inp})
+        # A shell command: its description, else only the program (never its arguments).
+        self.assertEqual(step("Bash", {"command": "curl -H 'Authorization: Bearer abc' https://x", "description": "Fetch the build log"}),
+                         "Fetch the build log")
+        self.assertEqual(step("Bash", {"command": "GITHUB_TOKEN=ghp_x /usr/bin/gh api repos --token hunter2"}), "$ gh")
+        self.assertEqual(step("Bash", {"command": ""}), "$ …")
+        self.assertEqual(step("Bash", {"command": "ls", "description": "token=hunter2abc and more"}), "[redacted] and more")
+        # Other tools: no URL query strings or fragments, then redacted.
+        self.assertEqual(step("WebFetch", {"url": "https://api.example.com/v1/x?access_token=abc123&y=1#frag"}),
+                         "WebFetch: https://api.example.com/v1/x")
+        self.assertEqual(step("Read", {"file_path": "/home/u/.env"}), "Read: /home/u/.env")
+        self.assertEqual(step("Grep", {"pattern": "password=hunter2"}), "Grep: [redacted]")
+        self.assertIsNone(step_line({"type": "thinking", "thinking": "x"}))
 
 
 class LiveSubagentsTest(unittest.TestCase):
@@ -163,11 +200,12 @@ class LiveSubagentsTest(unittest.TestCase):
         (self.home / f".claude/sessions/{pid}.json").write_text(json.dumps(
             {"pid": pid, "sessionId": sid, "procStart": proc_stat(pid)[1], "status": status, "statusUpdatedAt": updated * 1000}))
 
-    def sub_transcript(self, agent_id, command, tool_use_id=None):
+    def sub_transcript(self, agent_id, command, tool_use_id=None, finished=None):
         (self.subdir / f"agent-{agent_id}.jsonl").write_text(json.dumps({"type": "assistant", "isSidechain": True, "message": {
             "content": [{"type": "tool_use", "name": "Bash", "input": {"command": command}}]}}) + "\n")
         if tool_use_id:
-            (self.subdir / f"agent-{agent_id}.meta.json").write_text(json.dumps({"toolUseId": tool_use_id, "agentType": "x"}))
+            meta = {"toolUseId": tool_use_id, "agentType": "x", **({"finished": finished} if finished is not None else {})}
+            (self.subdir / f"agent-{agent_id}.meta.json").write_text(json.dumps(meta))
 
     def published_of(self, kind):
         key = "agents" if kind == "subagents.changed" else "jobs"
@@ -180,10 +218,15 @@ class LiveSubagentsTest(unittest.TestCase):
         self.sub_transcript("afg00000000000003", "ls .github", tool_use_id="toolu_fg")  # its id only in the meta file
         self.live._seed(str(self.transcript))
         got = {a["id"]: (a["state"], a["last"]) for a in self.live.subagents()}
-        self.assertEqual(got, {"toolu_rev": ("running", "$ gh pr diff 61"), "toolu_fix": ("running", None),
-                               "toolu_fg": ("running", "$ ls .github")})
-        self.sub_transcript("arev0000000000001", "gh pr review 61")  # it moved on: read again
-        self.assertEqual(self.live.subagents()[0]["last"], "$ gh pr review 61")
+        self.assertEqual(got, {"toolu_rev": ("running", "$ gh"), "toolu_fix": ("running", None),
+                               "toolu_fg": ("running", "$ ls")})
+        self.sub_transcript("arev0000000000001", "git push")  # it moved on: read again
+        self.assertEqual(self.live.subagents()[0]["last"], "$ git")
+        self.assertNotIn("last", self.live.subagents(with_last=False)[0])
+        # A last line too long to read whole: what it did before stands.
+        with open(self.subdir / "agent-arev0000000000001.jsonl", "a") as f:
+            f.write(json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "x" * (subagents_mod.LAST_BYTES + 1000)}]}}) + "\n")
+        self.assertEqual(self.live.subagents()[0]["last"], "$ git")
 
         self.claude("idle", FG["started"] + 5)  # idle after all three began: they're over
         self.assertEqual({a["state"] for a in self.live.subagents(max_age=0)}, {"stopped"})
@@ -191,6 +234,16 @@ class LiveSubagentsTest(unittest.TestCase):
         self.assertEqual([(a["id"], a["state"], a["ended"]) for a in agents],
                          [(k, "stopped", FG["started"] + 5) for k in ("toolu_rev", "toolu_fix", "toolu_fg")])
         self.assertNotIn("last", agents[0])  # the event leaves it to the status details
+
+    def test_one_its_meta_file_calls_finished_is_done_not_stopped(self):
+        self.transcript.write_text("".join(json.dumps(e) + "\n" for e in LINES[:6]))
+        self.claude("busy", 0)
+        self.sub_transcript("arev0000000000001", "gh pr diff 61", tool_use_id="toolu_rev", finished=True)
+        self.sub_transcript("afg00000000000003", "ls", tool_use_id="toolu_fg", finished=False)
+        self.live._seed(str(self.transcript))
+        self.claude("idle", FG["started"] + 5)
+        got = {a["id"]: a["state"] for a in self.live.subagents(max_age=0)}
+        self.assertEqual(got, {"toolu_rev": "done", "toolu_fix": "stopped", "toolu_fg": "stopped"})
 
     def test_no_claude_running_the_conversation_stops_them(self):
         self.transcript.write_text("".join(json.dumps(e) + "\n" for e in LINES[:3]))
@@ -202,13 +255,17 @@ class LiveSubagentsTest(unittest.TestCase):
     def test_a_switch_starts_afresh(self):
         self.transcript.write_text("".join(json.dumps(e) + "\n" for e in LINES[:3]))
         self.claude("busy", 0)
+        self.sub_transcript("arev0000000000001", "gh pr diff 61", tool_use_id="toolu_rev")
         self.live._seed(str(self.transcript))
         self.assertEqual([a["id"] for a in self.live.subagents()], ["toolu_rev"])
+        self.live._agent_id(str(self.subdir), "toolu_rev")  # cached: the meta file and the last step
+        self.assertTrue(self.live._meta and self.live._meta_seen and self.live._last)
         other = self.home / "s2.jsonl"
         other.write_text("".join(json.dumps(e) + "\n" for e in LINES[3:5]))  # a resumed conversation with its own
         self.state.update(session_id="s2", transcript_path=str(other))
         self.claude("busy", 0, sid="s2")
         self.live._switch(str(other), seed=True)
+        self.assertFalse(self.live._meta or self.live._meta_seen or self.live._last)  # another session's folder
         self.assertEqual([a["id"] for a in self.live.subagents()], ["toolu_fix"])
         self.assertEqual([[a["id"] for a in x] for x in self.published_of("subagents.changed")], [["toolu_fix"]])
         self.live._switch(str(self.home / "s3.jsonl"), seed=False)  # /clear: a new conversation has none
