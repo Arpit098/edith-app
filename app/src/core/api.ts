@@ -338,6 +338,22 @@ export function accountSwitchFrom(v: unknown): AccountSwitch | null {
   };
 }
 
+/** The backup AI's state (contracts/backup.md, "API"): GET /v1/backup and backup.changed. */
+export interface BackupState {
+  mode: 'auto' | 'on' | 'off';
+  active: boolean;
+  reason: string | null; // usage_limit | login | billing | manual
+  resets: number | null; // when Claude's limit resets (unix seconds, server clock)
+  provider: string | null; // the label of the provider that answered last
+  queued: number; // tasks waiting for Claude
+}
+
+export function backupFrom(v: unknown): BackupState {
+  const o = (typeof v === 'object' && v !== null ? v : {}) as Record<string, unknown>;
+  const mode = o.mode === 'on' || o.mode === 'off' ? o.mode : 'auto';
+  return { mode, active: o.active === true, reason: strOrNull(o.reason), resets: numOrNull(o.resets), provider: strOrNull(o.provider), queued: num(o.queued) };
+}
+
 type Obj = Record<string, unknown>;
 
 export function createApi(t: Transport) {
@@ -451,6 +467,10 @@ export function createApi(t: Transport) {
 
     async removeAccount(id: string): Promise<void> {
       await t.request<Obj>('DELETE', `/v1/accounts/${seg(id)}`);
+    },
+
+    async backup(): Promise<BackupState> {
+      return backupFrom(await t.request<Obj>('GET', '/v1/backup'));
     },
 
     async sessions(): Promise<Session[]> {
