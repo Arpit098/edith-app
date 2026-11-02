@@ -60,9 +60,10 @@ the others.** Both the server and the app follow the same three rules:
 | Path | Purpose |
 |---|---|
 | `core/events.py` | `Event` and `EventBus` (publish/subscribe, per-handler isolation) |
+| `core/divert.py` | The agent as frontends see it: each message is first offered to the features' diverters (the backup AI) |
 | `core/registry.py` | Loads the enabled features and adapters by name, isolating failures |
 | `core/context.py` | `Context` passed to each feature: bus, ports, its own config, command/route registration |
-| `ports/*.py` | Interfaces: `AgentBackend`, `Frontend`, `SpeechToText`, `Notifier` |
+| `ports/*.py` | Interfaces: `AgentBackend`, `Frontend`, `SpeechToText`, `Notifier`, `ChatModels` (the backup AI's providers) |
 | `common/` | Shared helpers (e.g. `text.py`: message chunking, SEND_FILE/REACT directives, voice summary) |
 | `adapters/<port>/<name>/` | One implementation per folder, each exposing `create(config)` |
 | `features/<name>/` | One feature per folder, each exposing `FEATURE = Feature(name, setup)` |
