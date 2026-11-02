@@ -39,6 +39,7 @@ import threading
 import time
 
 from edith.common import usertime
+from edith.common.claude_limits import classify, reset_time
 from edith.common.claude_screen import read_screen
 from edith.common.paths import resolve
 from edith.common.state import StateFile
@@ -67,6 +68,8 @@ PANE_CHECK = 5.0        # seconds; /compact errors appear only on screen, which 
 MAX_TYPED = 16          # slash commands typed for frontends, remembered to skip their transcript echo
 ECHO_WINDOW = 30.0      # seconds: a matching bare "/…" transcript entry later than this was typed in tmux
 MAX_HISTORY = 500       # events per history page
+LIMIT_FRESH = 900       # seconds: a limit line older than this (read on a resume) isn't news
+PROBE_PROMPT = "Reply with just the word OK."
 SESSION_ID = re.compile(r"[A-Za-z0-9-]{1,64}")
 STOPPED_CODES = (-signal.SIGTERM, -signal.SIGKILL, 143, 137)
 NOTES_HEADER = ("[While you were busy, parallel lanes (forks of this conversation) handled these. "
@@ -226,6 +229,19 @@ class ClaudeTmux:
     def _publish_live(self, type, origin, session_id, data):
         if self.bus:
             self.bus.publish(Event(type, data, origin=origin, session_id=session_id))
+            if type == "message.assistant" and data.get("api_error"):
+                at = data.get("at")
+                if at is None or time.time() - at < LIMIT_FRESH:  # not an old line of a resumed conversation
+                    self._limit(data["api_error"], data.get("text"), "main")
+
+    def _limit(self, error, text, lane):
+        """agent.limit (contracts/backup.md) when Claude's error is its usage limit, a login or a
+        billing problem: what the accounts and backup features act on."""
+        kind = classify(error, text)
+        if kind and self.bus:
+            log.warning("claude: %s on the %s lane", kind, lane)
+            self.bus.publish(Event("agent.limit", {"kind": kind, "text": (text or "")[:300],
+                                                   "resets": reset_time(text), "lane": lane}, origin="system"))
 
     def _origin_of(self, rid):
         with self._lock:
@@ -644,6 +660,8 @@ class ClaudeTmux:
 
         self._save_fork(result.get("session_id"))
         reply, is_error, subtype = usertime.localize_limit_text(result.get("result") or ""), bool(result.get("is_error")), result.get("subtype", "unknown")
+        if is_error:
+            self._limit(None, reply, "side")
         self._remember_side_note(text, reply, is_error, subtype)
         parts = reply_parts(reply)
         if parts["text"]:  # the main transcript never has a side lane's answer: send it as a message
@@ -678,6 +696,27 @@ class ClaudeTmux:
             notes.append({"q": asked[:400], "a": text[:1200]})
             del notes[:-5]
         self.state.update(add)
+
+    def probe(self, timeout=90.0):
+        """One tiny `claude -p` turn on the current login, with no tools, MCP or saved session: whether
+        Claude answers now. -> {ok, kind (usage_limit | login | billing | error | None), detail}."""
+        cmd = [self.claude, "-p", PROBE_PROMPT, "--output-format", "json", "--no-session-persistence",
+               "--strict-mcp-config", "--tools", ""]
+        with tempfile.TemporaryDirectory(prefix="edith-probe-") as cwd:
+            try:
+                r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout,
+                                   env=usertime.env(dict(os.environ)), start_new_session=True)
+            except (OSError, subprocess.TimeoutExpired) as e:
+                return {"ok": False, "kind": "error", "detail": type(e).__name__}
+        try:
+            result = json.loads(r.stdout.strip().splitlines()[-1]) if r.stdout.strip() else {}
+        except ValueError:
+            result = {}
+        text = str(result.get("result") or r.stderr or "").strip()
+        if r.returncode == 0 and result and not result.get("is_error"):
+            return {"ok": True, "kind": None, "detail": None}
+        kind = classify(None, text) or "error"
+        return {"ok": False, "kind": kind, "detail": usertime.localize_limit_text(text)[:200] or f"exit {r.returncode}"}
 
     # ---- control ----
 

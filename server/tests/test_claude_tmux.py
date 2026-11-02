@@ -927,3 +927,59 @@ class PermissionTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LimitTest(unittest.TestCase):
+    """Claude's own error lines become agent.limit (contracts/backup.md); probe() asks Claude directly."""
+
+    def error_line(self, h, text, error, at):
+        h.transcript_line({"type": "assistant", "isApiErrorMessage": True, "error": error,
+                           "timestamp": dt.datetime.fromtimestamp(at, dt.timezone.utc).isoformat(),
+                           "message": {"model": "<synthetic>", "content": [{"type": "text", "text": text}]}})
+
+    def test_a_limit_line_in_the_transcript(self):
+        h = Harness(self)
+        self.assertTrue(h.agent._live.ready.wait(5))
+        self.error_line(h, "You've hit your limit · resets 3pm (Asia/Kolkata)", "rate_limit", time.time() - 3600)
+        self.error_line(h, "Not logged in · Please run /login", "authentication_failed", time.time())
+        ev = h.wait("agent.limit")
+        self.assertIsNotNone(ev)
+        self.assertEqual((ev.data["kind"], ev.data["lane"], ev.data["resets"]), ("login", "main", None))
+        self.assertEqual(len([e for e in h.events if e.type == "agent.limit"]), 1)  # the hour-old one isn't news
+        msg = [e for e in h.events if e.type == "message.assistant"][-1]
+        self.assertEqual(msg.data["api_error"], "authentication_failed")
+
+    def test_the_reset_time_is_read(self):
+        h = Harness(self)
+        self.assertTrue(h.agent._live.ready.wait(5))
+        self.error_line(h, "You've hit your 5-hour limit · resets 11pm (UTC)", "rate_limit", time.time())
+        ev = h.wait("agent.limit")
+        self.assertEqual(ev.data["kind"], "usage_limit")
+        self.assertGreater(ev.data["resets"], time.time())
+        self.assertIn("IST", ev.data["text"])  # shown in the user's zone
+
+    def test_an_ordinary_reply_isnt_a_limit(self):
+        h = Harness(self)
+        self.assertTrue(h.agent._live.ready.wait(5))
+        h.transcript_line({"type": "assistant", "message": {"content": [
+            {"type": "text", "text": "You've hit your limit · resets 3pm (UTC) is what Claude says."}]}})
+        self.assertIsNotNone(h.wait("message.assistant"))
+        self.assertIsNone(h.wait("agent.limit", timeout=0.2))
+
+    def probe_with(self, script):
+        h = Harness(self)
+        fake = h.home / "claude-probe"
+        fake.write_text("#!/bin/sh\n" + script)
+        fake.chmod(0o755)
+        h.agent.claude = str(fake)
+        return h.agent.probe(timeout=10)
+
+    def test_probe(self):
+        self.assertEqual(self.probe_with('echo \'{"type":"result","is_error":false,"result":"OK"}\'\n'),
+                         {"ok": True, "kind": None, "detail": None})
+        out = self.probe_with('echo \'{"type":"result","is_error":true,"result":"You\'"\'"\'ve hit your limit · resets 3pm (Asia/Kolkata)"}\'\nexit 1\n')
+        self.assertEqual((out["ok"], out["kind"]), (False, "usage_limit"))
+        out = self.probe_with("echo 'Not logged in · Please run /login' >&2\nexit 1\n")
+        self.assertEqual((out["ok"], out["kind"]), (False, "login"))
+        out = self.probe_with("exit 3\n")
+        self.assertEqual((out["ok"], out["kind"], out["detail"]), (False, "error", "exit 3"))

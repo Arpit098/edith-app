@@ -671,7 +671,7 @@ class FakeAgent:
         self.order.append("release")
 
 
-class RoutesTest(unittest.TestCase):
+class RoutesBase(unittest.TestCase):
     def setUp(self):
         self.h = Home()
         self.addCleanup(self.h.cleanup)
@@ -699,7 +699,7 @@ class RoutesTest(unittest.TestCase):
         with mock.patch.dict(os.environ, {"HOME": self.h.home}):
             report = load_features(["accounts"], self.bus, Ports(agent=self.agent), registry, {"accounts": cfg})
         self.assertEqual(report.loaded, ["accounts"], report.failed)
-        self.routes = registry.routes
+        self.routes, self.jobs = registry.routes, registry.jobs
 
     def launch(self, cmd):
         self.launched.append(cmd)
@@ -716,6 +716,11 @@ class RoutesTest(unittest.TestCase):
             time.sleep(0.02)
         return check()
 
+    def second(self):
+        return self.h.profiles.add(self.h.login_dir(2))
+
+
+class RoutesTest(RoutesBase):
     def test_list_add_and_remove(self):
         listed = self.call("GET", "/v1/accounts")
         self.assertEqual([a["email"] for a in listed["accounts"]], ["user1@example.com"])
@@ -769,9 +774,6 @@ class RoutesTest(unittest.TestCase):
         os.utime(old, (time.time() - 3600, time.time() - 3600))
         self.load()
         self.assertEqual((os.path.exists(old), os.path.exists(new)), (False, True))  # a live sign-in's folder stays
-
-    def second(self):
-        return self.h.profiles.add(self.h.login_dir(2))
 
     def refused(self, target):
         with self.assertRaises(ApiError) as e:
@@ -953,3 +955,95 @@ class RunnerMainTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AutoSwitchTest(RoutesBase):
+    """At the limit (agent.limit), EDITH switches to a saved account that isn't limited, by herself."""
+
+    def setUp(self):
+        super().setUp()
+        self.bus.subscribe("message.system", self.events.append, owner="test")
+        self.job = None
+
+    def limit(self, kind="usage_limit", resets=None):
+        """Publish agent.limit and run the worker's items (the job runner isn't started in tests)."""
+        self.bus.publish(Event("agent.limit", {"kind": kind, "text": "You've hit your limit", "resets": resets,
+                                               "lane": "main"}))
+        job = self.worker()
+        while not job.queue.empty():
+            job.run(job.queue.get_nowait())
+
+    def worker(self):
+        return self.jobs["accounts.auto_switch"]
+
+    def of(self, kind):
+        return [e.data for e in self.events if e.type == kind]
+
+    def test_switches_to_a_free_account_and_says_so(self):
+        target = self.second()
+        first = self.h.profiles.active()
+        self.limit(resets=time.time() + 3600)
+        self.assertEqual(len(self.launched), 1)
+        with open(self.launched[0][-1]) as f:
+            self.assertEqual(json.load(f)["target"], target)
+        lim = self.of("accounts.limit")[-1]
+        self.assertEqual((lim["account"], lim["action"], lim["target"]), (first, "switching", target))
+        self.assertIn("Switching to User 2 automatically", self.of("message.system")[-1]["text"])
+        with open(os.path.join(self.state, "accounts", "limits.json")) as f:
+            self.assertIn(first, json.load(f))
+        self.assertEqual(mode(os.path.join(self.state, "accounts", "limits.json")), 0o600)
+        # the same limit reported again doesn't start another switch
+        self.limit()
+        self.assertEqual(len(self.launched), 1)
+
+    def test_none_free_tells_arpit_and_the_backup(self):
+        first = self.h.profiles.active()
+        self.limit(resets=time.time() + 600)
+        self.assertEqual(self.launched, [])
+        lim = self.of("accounts.limit")[-1]
+        self.assertEqual((lim["account"], lim["action"]), (first, "none_free"))
+        self.assertIn("No other Claude account is saved", self.of("message.system")[-1]["text"])
+
+    def test_a_limited_account_isnt_picked(self):
+        target = self.second()
+        self.load()
+        # the second account hit its limit earlier (persisted); the first one hits it now
+        from edith.features.accounts.limits import Limits
+        Limits(os.path.join(self.state, "accounts", "limits.json"),
+               ensure_dir=lambda: os.makedirs(os.path.join(self.state, "accounts"), exist_ok=True)).mark(
+            target, "usage_limit", time.time() + 7200)
+        self.load()
+        self.limit()
+        self.assertEqual(self.launched, [])
+        lim = self.of("accounts.limit")[-1]
+        self.assertEqual(lim["action"], "none_free")
+        self.assertGreater(lim["next_free"], time.time() + 3000)
+
+    def test_refused_is_retried_and_reported(self):
+        target = self.second()
+        self.tmux.panes["%1"] = ("edith-dev", 101, "/w/dev", BUSY_SCREEN)
+        self.limit()
+        lim = self.of("accounts.limit")[-1]
+        self.assertEqual((lim["action"], lim["target"]), ("refused", target))
+        self.assertIn("I'll try again", self.of("message.system")[-1]["text"])
+
+    def test_a_failed_automatic_switch_hands_over(self):
+        target = self.second()
+        self.limit()
+        with open(self.launched[0][-1]) as f:
+            run = json.load(f)["run"]
+        self.bus.publish(Event("accounts.switch", {"run": run, "state": "rolled_back", "previous": "x",
+                                                   "detail": "the new account didn't come up"}))
+        lim = self.of("accounts.limit")[-1]
+        self.assertEqual((lim["action"], lim["target"]), ("switch_failed", target))
+
+    def test_off_in_config(self):
+        self.second()
+        self.bus, registry = EventBus(), Registry()
+        cfg = {"root": self.h.root, "claude_dir": self.h.claude_dir, "claude_json": self.h.claude_json,
+               "claude": fake_claude(self.h.home), "state_dir": self.state, "auto_switch": False}
+        with mock.patch.dict(os.environ, {"HOME": self.h.home}):
+            load_features(["accounts"], self.bus, Ports(agent=self.agent), registry, {"accounts": cfg})
+        self.assertNotIn("accounts.auto_switch", registry.jobs)
+        self.bus.publish(Event("agent.limit", {"kind": "usage_limit"}))
+        self.assertEqual(self.launched, [])

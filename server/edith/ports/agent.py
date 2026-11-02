@@ -112,5 +112,11 @@ class AgentBackend(Protocol):
     def resolve_permission(self, request_id: str, allow: bool) -> bool:
         """Answer a permission request; False if it has already gone (answered or timed out)."""
 
+    def probe(self, timeout: float = 90.0) -> dict:
+        """One tiny turn outside the conversation, on the current login: does Claude answer now?
+        -> {ok: bool, kind: usage_limit | login | billing | error | None, detail: str | None}. The
+        backup feature's hand-back check (contracts/backup.md). The agent also publishes
+        `agent.limit` when a turn hits Claude's usage limit or a login problem."""
+
     def shutdown(self) -> None:
         """Stop side lanes and threads. The tmux Claude keeps running."""

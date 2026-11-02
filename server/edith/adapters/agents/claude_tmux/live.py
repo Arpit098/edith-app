@@ -383,7 +383,11 @@ def events_of(e, tools, origin_of=lambda ref: None, known=lambda rid: False, typ
             if b.get("type") == "text" and b.get("text", "").strip():
                 parts = reply_parts(localize_limit_text(b["text"]))  # Claude's limit line, in the user's zone
                 if parts["text"]:
-                    out.append(("message.assistant", "system", {"text": parts["text"], "files": parts["files"], "lane": "main"}))
+                    data = {"text": parts["text"], "files": parts["files"], "lane": "main"}
+                    if e.get("isApiErrorMessage"):  # Claude Code's own error line (usage limit, login…)
+                        data["api_error"] = str(e.get("error") or "unknown")
+                        data["at"] = timestamp(e)
+                    out.append(("message.assistant", "system", data))
             elif b.get("type") == "tool_use":
                 name, inp = b.get("name", ""), b.get("input") or {}
                 remember(tools, b.get("id"), name)
