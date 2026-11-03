@@ -6,7 +6,7 @@ import { ApiError } from '../../../core/api';
 import type { MediaPicker, PickedFile } from '../../../core/ports';
 import { toPrune } from '../../../adapters/media/expo/prune';
 import { ev, fakeContext, flush, MemoryStorage } from '../../../testing/fakes';
-import { createAttachmentsModel, ID_LIFETIME_S, MAX_ATTACHMENTS, MAX_AUDIO_BYTES, MAX_IMAGE_BYTES, uploadError, type SentAttachment } from '../attachments';
+import { createAttachmentsModel, ID_LIFETIME_S, MAX_ATTACHMENTS, MAX_FILE_BYTES, MAX_IMAGE_BYTES, uploadError, type SentAttachment } from '../attachments';
 import { ATTACHMENT_EXPIRED, createLiveModel, fromHistory, initialLive, OUTBOX_KEY, outboxOf, reduce, restoreOutbox, type Item, type LiveState, type OutboxEntry } from '../model';
 
 type User = Extract<Item, { kind: 'user' }>;
@@ -14,6 +14,14 @@ const users = (s: LiveState) => s.items.filter((x): x is User => x.kind === 'use
 
 const photo = (over: Partial<PickedFile> = {}): PickedFile => ({ kind: 'image', uri: 'file:///cache/attachments/p.jpg', name: 'p.jpg', mime: 'image/jpeg', size: 1000, ...over });
 const song = (over: Partial<PickedFile> = {}): PickedFile => ({ kind: 'audio', uri: 'file:///cache/attachments/a.m4a', name: 'a.m4a', mime: 'audio/mp4', size: 2000, ...over });
+const doc = (over: Partial<PickedFile> = {}): PickedFile => ({
+  kind: 'document',
+  uri: 'file:///cache/attachments/c.docx',
+  name: 'CV final.docx',
+  mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  size: 30_000,
+  ...over,
+});
 
 type FakePicker = MediaPicker & { sources: string[]; discarded: string[]; sizes: Map<string, number> };
 
@@ -27,6 +35,7 @@ function picker(next: () => PickedFile | null | Promise<PickedFile | null>): Fak
     sizes,
     pickImage: async (source) => (sources.push(source), next()),
     pickAudio: async () => (sources.push('audio'), next()),
+    pickDocument: async () => (sources.push('document'), next()),
     stat: (uri) => sizes.get(uri) ?? null,
     discard: (uri) => void discarded.push(uri),
     prune: () => {},
@@ -58,7 +67,7 @@ describe('attachments in the composer', () => {
     expect(ctx.transport.uploads).toEqual([{ path: '/v1/attachments', file: expect.objectContaining({ uri: photo().uri, mime: 'image/jpeg', name: 'p.jpg' }), field: 'raw' }]);
     expect(a.store.get().drafts[0]).toMatchObject({ status: 'ready', id: 'att_1', error: null });
     const taken = a.take();
-    expect(taken).toEqual([{ id: 'att_1', name: 'p.jpg', kind: 'image', uri: photo().uri, uploaded: expect.any(Number) }]);
+    expect(taken).toEqual([{ id: 'att_1', name: 'p.jpg', kind: 'image', size: 1000, uri: photo().uri, uploaded: expect.any(Number) }]);
     expect(a.store.get().drafts).toEqual([]);
     expect(media.discarded).toEqual([]); // the image stays on disk as the bubble's thumbnail
   });
@@ -119,13 +128,40 @@ describe('attachments in the composer', () => {
 
   it("uses the server's byte caps exactly (binary MB, attachments.py)", () => {
     expect(MAX_IMAGE_BYTES).toBe(20 * 1024 * 1024);
-    expect(MAX_AUDIO_BYTES).toBe(25 * 1024 * 1024);
+    expect(MAX_FILE_BYTES).toBe(25 * 1024 * 1024);
     expect(ID_LIFETIME_S).toBe(7 * 86400);
+  });
+
+  it('attaches a document from the file picker, shows its size, and deletes the copy once sent', async () => {
+    const { ctx, a, media } = setup(() => doc());
+    await a.add('document');
+    expect(media.sources).toEqual(['document']);
+    expect(ctx.transport.uploads[0]?.file).toEqual(expect.objectContaining({ name: 'CV final.docx', mime: doc().mime, size: 30_000 }));
+    expect(a.store.get().drafts[0]).toMatchObject({ kind: 'document', status: 'ready', size: 30_000 });
+    expect(a.take()).toEqual([{ id: 'att_1', name: 'CV final.docx', kind: 'document', size: 30_000, uri: null, uploaded: expect.any(Number) }]);
+    expect(media.discarded).toEqual([doc().uri]);
+  });
+
+  it('a 415 on a document says the server needs an update (an older bridge), not "this kind of file"', async () => {
+    const { ctx, a } = setup(() => doc());
+    ctx.transport.on('UPLOAD /v1/attachments', () => {
+      throw new ApiError(415, 'unsupported file type');
+    });
+    await a.add('document');
+    expect(a.store.get().drafts[0]).toMatchObject({ kind: 'document', status: 'failed', error: 'edith needs a server update to take documents.' });
+    expect(uploadError(new ApiError(415, 'x'), 'audio')).toMatch(/doesn't take this kind of file/);
+  });
+
+  it('a document may be as big as audio (25 MB), more than an image', async () => {
+    const { a } = setup(() => doc({ size: MAX_FILE_BYTES }));
+    await a.add('document');
+    expect(a.store.get().drafts[0]?.status).toBe('ready');
   });
 
   it.each([
     ['an image one byte over', () => photo({ size: MAX_IMAGE_BYTES + 1 })],
-    ['audio one byte over', () => song({ size: MAX_AUDIO_BYTES + 1 })],
+    ['audio one byte over', () => song({ size: MAX_FILE_BYTES + 1 })],
+    ['a document one byte over', () => doc({ size: MAX_FILE_BYTES + 1 })],
   ])('refuses %s before uploading, and deletes the copy', async (_name, file) => {
     const { ctx, a, media } = setup(file);
     await a.add('library');
@@ -318,10 +354,11 @@ describe('a message with attachments', () => {
   });
 
   it('shows names for attachments from Telegram or history (no local file)', () => {
-    const s = reduce(initialLive, ev('message.user', { ref: 't:1', text: '', attachments: ['/inbox/voice.ogg', '/inbox/IMG_1.jpg', ''] }, { origin: 'telegram' }));
+    const s = reduce(initialLive, ev('message.user', { ref: 't:1', text: '', attachments: ['/inbox/voice.ogg', '/inbox/IMG_1.jpg', '/inbox/1_CV.docx', ''] }, { origin: 'telegram' }));
     expect(users(s)[0]?.attachments).toEqual([
       { id: '', name: 'voice.ogg', kind: 'audio', uri: null },
       { id: '', name: 'IMG_1.jpg', kind: 'image', uri: null },
+      { id: '', name: '1_CV.docx', kind: 'document', uri: null },
     ]);
   });
 });

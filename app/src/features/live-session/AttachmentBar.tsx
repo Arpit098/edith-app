@@ -1,4 +1,5 @@
-// The composer's attachments: a strip of thumbnails (images) and chips (audio), each with its upload
+// The composer's attachments: a strip of thumbnails (images) and name chips (audio and documents:
+// the type's icon, the name and the size), each with its upload
 // progress, a remove button, and tap-to-retry when its upload failed. They're added from the
 // composer's menu (ComposerMenu).
 
@@ -10,6 +11,7 @@ import { useStore } from '../../core/store';
 import { Icon } from '../../ui/Icon';
 import { colors, radius, space, useTheme } from '../../core/theme';
 import type { AttachmentsModel, Draft, DraftsState } from './attachments';
+import { attachmentIcon } from './fileIcon';
 
 const selectDrafts = (s: DraftsState) => s.drafts;
 const selectError = (s: DraftsState) => s.error;
@@ -53,9 +55,9 @@ const DraftChip = memo(function DraftChip({ draft: d, attach }: { draft: Draft; 
         <Image source={{ uri: d.uri }} style={styles.thumb} />
       ) : (
         <View style={styles.audio}>
-          <Icon name="music-note-outline" size={18} color={accent} />
+          <Icon name={attachmentIcon(d.kind, d.name)} size={18} color={accent} />
           <View style={styles.audioText}>
-            <Text style={styles.name} numberOfLines={1}>
+            <Text style={styles.name} numberOfLines={1} ellipsizeMode="middle">
               {d.name}
             </Text>
             <Text style={styles.meta}>{d.size ? formatBytes(d.size) : ''}</Text>

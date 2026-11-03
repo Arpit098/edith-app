@@ -1,9 +1,18 @@
 import unittest
 
-from edith.common.text import QUOTE_MAX, chunk, clean_prompt, reply_line, take_directives, voice_summary
+from edith.common.text import QUOTE_MAX, attachment_lines, chunk, clean_prompt, reply_line, take_directives, voice_summary
 
 
 class TextTest(unittest.TestCase):
+    def test_attachment_lines_note_office_files_and_round_trip(self):
+        lines = attachment_lines(["/inbox/a.jpg", "/inbox/b.pdf", "/inbox/c.XLSX"])
+        self.assertEqual(lines, "\n[Attached file saved at: /inbox/a.jpg]\n[Attached file saved at: /inbox/b.pdf]"
+                                "\n[Attached file saved at: /inbox/c.XLSX]\n[Attached file note: c.XLSX is an Excel workbook"
+                                " (a zip of XML: sheets in xl/worksheets/, their text in xl/sharedStrings.xml)]")
+        parsed = clean_prompt("[App message from Arpit, 2026-11-03 10:43 IST]\nsum it" + lines)
+        self.assertEqual((parsed["text"], parsed["attachments"]), ("sum it", ["/inbox/a.jpg", "/inbox/b.pdf", "/inbox/c.XLSX"]))
+        self.assertEqual(attachment_lines([]), "")
+
     def test_chunk_respects_size_and_keeps_text(self):
         text = "\n".join(f"line {i}" for i in range(500))
         parts = chunk(text, 100)

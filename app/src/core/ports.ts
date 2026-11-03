@@ -56,7 +56,7 @@ export interface Transport {
 
 /** A file Arpit picked to attach. */
 export interface PickedFile {
-  kind: 'image' | 'audio';
+  kind: 'image' | 'audio' | 'document';
   uri: string;
   name: string;
   mime: string;
@@ -71,6 +71,8 @@ export interface MediaPicker {
   /** Null when Arpit cancels. Images come back as JPEG with the long edge at most 2048 px. */
   pickImage(source: 'camera' | 'library'): Promise<PickedFile | null>;
   pickAudio(): Promise<PickedFile | null>;
+  /** A PDF, Office file, text/CSV/Markdown/JSON file or zip (contracts/attachments.md), through Android's file picker. */
+  pickDocument(): Promise<PickedFile | null>;
   /** The file's size in bytes, or null when it's gone or unreadable. */
   stat(uri: string): number | null;
   /** Delete a picked file (only the app's own copies; nothing if it's already gone). */

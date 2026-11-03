@@ -1,4 +1,5 @@
-// Adapter: MediaPicker on Expo's image picker, image manipulator and document picker.
+// Adapter: MediaPicker on Expo's image picker, image manipulator and document picker (audio files
+// and documents: Android's system picker, which needs no permission).
 // Every image is re-encoded as JPEG with the long edge at most 2048 px: small uploads, HEIC turned
 // into JPEG, and the photo's EXIF (location included) left behind.
 //
@@ -12,6 +13,7 @@ import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
 
 import type { MediaPicker, PickedFile } from '../../../core/ports';
+import { DOCUMENT_TYPES, documentMime } from './documents';
 import { toPrune } from './prune';
 
 export const LONG_EDGE = 2048;
@@ -71,6 +73,23 @@ export function createExpoMediaPicker(): MediaPicker {
     }
   }
 
+  /** A file from Android's file picker (no permission: the system picker grants this one file), adopted into our folder. */
+  async function pickFile(kind: 'audio' | 'document', type: string | string[], mimeOf: (name: string, picked: string | undefined) => string): Promise<PickedFile | null> {
+    const r = await DocumentPicker.getDocumentAsync({ type, copyToCacheDirectory: true, multiple: false });
+    const asset = r.canceled ? null : r.assets?.[0];
+    if (!asset) return null;
+    const name = asset.name || `${kind}-${Date.now()}`;
+    const file = adopt(asset.uri, extension(name));
+    // The document picker copies into a folder of its own per pick: remove it once empty.
+    try {
+      const parent = new File(asset.uri).parentDirectory;
+      if (within(parent.uri, Paths.cache) && parent.uri !== Paths.cache.uri && parent.list().length === 0) parent.delete();
+    } catch {
+      // best effort
+    }
+    return { kind, uri: file.uri, name, mime: mimeOf(name, asset.mimeType), size: stat(file.uri) ?? 0 };
+  }
+
   return {
     async pickImage(source) {
       if (source === 'camera') {
@@ -96,21 +115,8 @@ export function createExpoMediaPicker(): MediaPicker {
         deleteCacheCopy(asset.uri); // the camera's full-size original (or the gallery copy): the JPEG replaces it
       }
     },
-    async pickAudio() {
-      const r = await DocumentPicker.getDocumentAsync({ type: 'audio/*', copyToCacheDirectory: true, multiple: false });
-      const asset = r.canceled ? null : r.assets?.[0];
-      if (!asset) return null;
-      const name = asset.name || `audio-${Date.now()}`;
-      const file = adopt(asset.uri, extension(name));
-      // The document picker copies into a folder of its own per pick: remove it once empty.
-      try {
-        const parent = new File(asset.uri).parentDirectory;
-        if (within(parent.uri, Paths.cache) && parent.uri !== Paths.cache.uri && parent.list().length === 0) parent.delete();
-      } catch {
-        // best effort
-      }
-      return { kind: 'audio', uri: file.uri, name, mime: asset.mimeType ?? 'audio/mpeg', size: stat(file.uri) ?? 0 };
-    },
+    pickAudio: () => pickFile('audio', 'audio/*', (_name, mime) => mime ?? 'audio/mpeg'),
+    pickDocument: () => pickFile('document', [...DOCUMENT_TYPES], documentMime),
     stat,
     discard(uri) {
       if (within(uri, dir)) deleteCacheCopy(uri);

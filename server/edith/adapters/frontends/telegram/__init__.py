@@ -25,7 +25,7 @@ import time
 from edith.common import usertime
 from edith.common.paths import resolve
 from edith.common.state import StateFile
-from edith.common.text import take_directives
+from edith.common.text import attachment_lines, take_directives
 from edith.core import CommandCall, Reply
 
 from .api import BotApi, allowed_ids, read_token
@@ -236,9 +236,7 @@ class TelegramFrontend:
         if quoted and (quoted.get("text") or quoted.get("caption")):
             who = "EDITH's" if quoted.get("from", {}).get("is_bot") else "an earlier"
             prompt += f"\n[Arpit is replying to {who} message: {(quoted.get('text') or quoted.get('caption'))[:1500]}]"
-        for a in attachments:
-            prompt += f"\n[Attached file saved at: {a}]"
-        return prompt
+        return prompt + attachment_lines(attachments)
 
     def handle_message(self, msg):
         chat_id = msg["chat"]["id"]

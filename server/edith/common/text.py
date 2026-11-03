@@ -1,4 +1,5 @@
 """Text helpers shared by frontends and features."""
+import os
 import re
 
 
@@ -28,6 +29,7 @@ def voice_summary(text: str) -> str:
 HEADER = re.compile(r"^\[(?:App|Telegram) message from Arpit[^\]\n]*\]( \[voice\])?[ \t]*(?:\n|$)")
 TG_REF = re.compile(r"\n?\[tg-ref [0-9a-f]+\]")
 ATTACHED = re.compile(r"^\[Attached file saved at: (.+)\]$", re.M)
+ATTACHED_NOTE = re.compile(r"^\[Attached file note: [^\n]*\]$", re.M)
 REPLYING = re.compile(r"^\[Arpit is replying to (?:EDITH's|an earlier) message: ([\s\S]*?)\]$", re.M)
 NOTES = "[While you were busy, parallel lanes (forks of this conversation) handled these."
 HEADER_LINE = re.compile(r"^\[(?:App|Telegram) message from Arpit", re.M)
@@ -48,7 +50,7 @@ def clean_prompt(prompt: str) -> dict:
         text = text[m.end():]
     text = TG_REF.sub("", text)
     attachments = ATTACHED.findall(text)
-    text = ATTACHED.sub("", text)
+    text = ATTACHED_NOTE.sub("", ATTACHED.sub("", text))
     quoted = REPLYING.search(text)
     text = REPLYING.sub("", text)
     return {"text": text.strip(), "voice": voice, "attachments": attachments,
@@ -84,3 +86,29 @@ def reply_parts(reply: str) -> dict:
     files, text = take_directives(reply or "", "SEND_FILE")
     picks, text = take_directives(text, "REACT")
     return {"text": text, "files": files, "reaction": picks[-1] if picks else None}
+
+
+# What an attached document is, for files Claude can't open with its Read tool as they are (PDF,
+# text and images it reads directly): said in the prompt so it knows how to get at the text.
+DOCUMENT_NOTES = {
+    ".docx": "a Word document (a zip of XML: the text is in word/document.xml)",
+    ".xlsx": "an Excel workbook (a zip of XML: sheets in xl/worksheets/, their text in xl/sharedStrings.xml)",
+    ".pptx": "a PowerPoint deck (a zip of XML: slides in ppt/slides/)",
+    ".doc": "a Word 97-2003 document (binary OLE format)",
+    ".xls": "an Excel 97-2003 workbook (binary OLE format)",
+    ".ppt": "a PowerPoint 97-2003 deck (binary OLE format)",
+    ".zip": "a zip archive",
+}
+
+
+def attachment_lines(paths) -> str:
+    """The prompt lines for attached files, the Telegram format: "\n[Attached file saved at: <path>]"
+    each, followed for documents by "\n[Attached file note: <name> is a Word document (…)]".
+    clean_prompt takes both out again (the paths go in `attachments`)."""
+    out = ""
+    for path in paths:
+        out += f"\n[Attached file saved at: {path}]"
+        note = DOCUMENT_NOTES.get(os.path.splitext(path)[1].lower())
+        if note:
+            out += f"\n[Attached file note: {os.path.basename(path)} is {note}]"
+    return out

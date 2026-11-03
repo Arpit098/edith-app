@@ -7,6 +7,7 @@ import { bool, buttonRows, num, str } from '../../core/guards';
 import type { AppVisibility, KeyValueStore } from '../../core/ports';
 import { createStore, type Store } from '../../core/store';
 import { ID_LIFETIME_S, type SentAttachment } from './attachments';
+import { kindOfName } from './fileIcon';
 import { quoteFrom, quoteText, type Quote } from './reply';
 import { backgroundLine, trackTurnStart } from './status';
 
@@ -181,8 +182,6 @@ function setMainTool(s: LiveState, active: boolean, step: string | null): LiveSt
 
 const asLane = (v: unknown): Lane => (v === 'side' ? 'side' : 'main');
 
-const AUDIO_EXT = /\.(ogg|mp3|m4a|wav|aac)$/i;
-
 /** message.user.attachments (saved paths in edith's inbox) → what a bubble shows. */
 function savedAttachments(v: unknown): SentAttachment[] {
   if (!Array.isArray(v)) return [];
@@ -190,7 +189,7 @@ function savedAttachments(v: unknown): SentAttachment[] {
     .filter((p): p is string => typeof p === 'string' && p !== '')
     .map((p) => {
       const name = p.split('/').pop() ?? p;
-      return { id: '', name, kind: AUDIO_EXT.test(name) ? 'audio' : 'image', uri: null };
+      return { id: '', name, kind: kindOfName(name), uri: null };
     });
 }
 
