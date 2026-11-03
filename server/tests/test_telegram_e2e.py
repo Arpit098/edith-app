@@ -271,6 +271,22 @@ class TelegramEndToEndTest(unittest.TestCase):
             w.close()
             self.assertTrue(json.loads(state.read_text())["clean_exit"])
 
+    def test_documents_are_saved_and_noted_like_the_apps(self):
+        """Telegram documents of any type still go to the inbox under their own name; an Office file
+        gets the same note line as an app upload (common.text.attachment_lines)."""
+        with temp_home() as home, mock.patch.dict(os.environ, {"FAKE_CLAUDE_PLAN": str(fixture(home)),
+                                                               "FAKE_CLAUDE_LOG": str(home / "argv.jsonl")}):
+            w = New(home)
+            try:
+                w.message(message("", message_id=3, caption="read this",
+                                  document={"file_id": "F1", "file_name": "CV final.docx"}))
+                w.tg.wait(lambda: len(w.tmux.submitted) == 1)
+                saved = re.search(r"\[Attached file saved at: (.+)\]", w.tmux.submitted[0]).group(1)
+                self.assertTrue(saved.endswith("_CV_final.docx") and os.path.exists(saved))
+                self.assertIn(f"[Attached file note: {os.path.basename(saved)} is a Word document", w.tmux.submitted[0])
+            finally:
+                w.close()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2,6 +2,7 @@
 their content, then named in the message prompt. Runs the real App API in a temp HOME."""
 import hashlib
 import http.client
+import io
 import json
 import os
 import pathlib
@@ -11,6 +12,7 @@ import struct
 import tempfile
 import threading
 import unittest
+import zipfile
 from unittest import mock
 
 from edith.adapters.frontends.app_api import AppApi, attachments
@@ -28,7 +30,21 @@ HEADERS = {
     "audio/mp4": b"\x00\x00\x00\x20ftypM4A \x00\x00\x02\x00",
     "audio/wav": b"RIFF\x24\x00\x00\x00WAVEfmt ",
     "audio/aac": b"\xff\xf1\x50\x80\x02\x1f\xfc\x00\x00\x00\x00\x00",
+    "application/pdf": b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\n",
 }
+OLE = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+PPTX = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+
+
+def zipped(*parts):
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("[Content_Types].xml", "<Types/>")
+        for p in parts:
+            z.writestr(p, "<x/>")
+    return buf.getvalue()
 
 
 class Agent:
@@ -103,7 +119,12 @@ class UploadTest(unittest.TestCase):
 
     def test_refused_uploads_keep_nothing(self):
         cases = [
-            (b"%PDF-1.7\n" + b"x" * 100, {}, 415, "unsupported file type"),
+            (b"GIF89a" + b"\x00" * 100, {}, 415, "unsupported file type"),
+            (b"\x7fELF\x02\x01\x01\x00" + b"\x00" * 100, {"x-filename": "notes.txt"}, 415, "unsupported file type"),
+            (b"PK\x03\x04" + b"x" * 100, {"x-filename": "a.docx"}, 415, "unsupported file type"),  # not a real zip
+            (OLE + b"\x00" * 100, {"x-filename": "a.exe"}, 415, "unsupported file type"),  # OLE, but not doc/xls/ppt
+            (b"plain text, then\n" + b"\xff\xfe" + b"x" * 100, {}, 415, "unsupported file type"),  # not UTF-8
+            ("café".encode()[:-1], {}, 415, "unsupported file type"),  # ends inside a character
             (b"\x00\x00\x00\x18ftypqt  " + b"x" * 100, {}, 415, "unsupported file type"),  # a QuickTime video
             (b"", {}, 400, "the file is empty"),
             (HEADERS["image/png"] + b"x", {"x-content-sha256": "0" * 64}, 400, "sha256 mismatch"),
@@ -138,7 +159,7 @@ class UploadTest(unittest.TestCase):
             c.putrequest("POST", "/v1/attachments")
             c.putheader("Authorization", f"Bearer {TOKEN}")
             c.putheader("Content-Length", "5000000")
-            c.endheaders(b"%PDF" + b"x" * 65532)  # only the first 64 kB of a 5 MB body is ever sent
+            c.endheaders(b"GIF89a" + b"\x00" * 65530)  # only the first 64 kB of a 5 MB body is ever sent
             self.assertEqual(c.getresponse().status, 415)
         self.assertEqual(len(reads), 1)  # refused after the first chunk: the server never waits for the rest
 
@@ -153,6 +174,60 @@ class UploadTest(unittest.TestCase):
             self.s.api.changed.wait_for(lambda: self.s.audit.exists() and '"attachment"' in self.s.audit.read_text(), 5)
         line = json.loads(self.s.audit.read_text().splitlines()[-1])
         self.assertEqual(line["attachment"], {k: body[k] for k in ("id", "type", "size", "sha256")})
+
+
+class DocumentTest(unittest.TestCase):
+    def setUp(self):
+        self.s = Server(self)
+
+    def typed(self, data, name=None):
+        status, body = self.s.upload(data, **({"x-filename": name} if name else {}))
+        self.assertEqual(status, 200, body)
+        return body["type"], os.path.splitext(body["name"])[1]
+
+    def test_office_files_are_typed_by_their_zip_parts_not_their_name(self):
+        self.assertEqual(self.typed(zipped("word/document.xml", "word/styles.xml"), "report.xlsx"), (DOCX, ".docx"))
+        self.assertEqual(self.typed(zipped("xl/workbook.xml", "xl/worksheets/sheet1.xml"), "q3"), (XLSX, ".xlsx"))
+        self.assertEqual(self.typed(zipped("ppt/presentation.xml"), "deck.pptx"), (PPTX, ".pptx"))
+        self.assertEqual(self.typed(zipped("photos/a.jpg"), "trip.docx"), ("application/zip", ".zip"))
+
+    def test_office_97_files_take_the_names_extension(self):
+        for ext, kind in (("doc", "application/msword"), ("XLS", "application/vnd.ms-excel"), ("ppt", "application/vnd.ms-powerpoint")):
+            with self.subTest(ext):
+                self.assertEqual(self.typed(OLE + bytes(500), f"old.{ext}"), (kind, f".{ext.lower()}"))
+
+    def test_text_files(self):
+        text = "name,amount\nchai,20\nsamosa,15\n\t₹ café \U0001f600\n".encode()
+        self.assertEqual(self.typed(text, "bill.csv"), ("text/csv", ".csv"))
+        self.assertEqual(self.typed(b"# Notes\n\n- one\n", "notes.md"), ("text/markdown", ".md"))
+        self.assertEqual(self.typed(b'{"a": [1, 2]}', "data.json"), ("application/json", ".json"))
+        self.assertEqual(self.typed(b"\xef\xbb\xbfhello", "a.log"), ("text/plain", ".txt"))  # BOM is fine
+        self.assertEqual(self.typed(b"hi"), ("text/plain", ".txt"))  # shorter than the sniff needs
+        long = ("हिन्दी " * 20000).encode()  # multibyte characters across chunks
+        self.assertGreater(len(long), 2 * attachments.CHUNK)
+        self.assertEqual(self.typed(long, "hindi.txt"), ("text/plain", ".txt"))
+
+    def test_binary_after_a_text_start_is_refused_without_reading_the_rest(self):
+        data = b"x" * attachments.CHUNK + b"\x00" * attachments.CHUNK + b"x" * (5 * attachments.CHUNK)
+        self.assertEqual(self.s.upload(data, **{"x-filename": "a.txt"}), (415, {"error": "unsupported file type"}))
+        self.assertEqual(os.listdir(self.s.inbox), [])
+
+    def test_unnamed_documents_and_the_cap(self):
+        with mock.patch("time.time", return_value=1793600123):
+            body = self.s.upload(HEADERS["application/pdf"] + b"x")[1]
+        self.assertEqual(body["name"], "1793600123_document.pdf")
+        self.assertEqual(attachments.MAX_BYTES, 25 * 1024 * 1024)  # app: MAX_FILE_BYTES, byte for byte
+
+    def test_prompt_notes_what_an_office_file_is(self):
+        pdf = self.s.upload(HEADERS["application/pdf"] + b"x", **{"x-filename": "Bill.pdf"})[1]
+        docx = self.s.upload(zipped("word/document.xml"), **{"x-filename": "CV final.docx"})[1]
+        with mock.patch("edith.common.usertime.stamp", return_value="2026-11-03 10:43 IST"):
+            self.assertEqual(self.s.call("POST", "/v1/messages", {"text": "check these", "attachments": [pdf["id"], docx["id"]]})[0], 200)
+        self.assertEqual(self.s.agent.sent[-1],
+                         "[App message from Arpit, 2026-11-03 10:43 IST]\ncheck these"
+                         f"\n[Attached file saved at: {self.s.inbox / pdf['name']}]"
+                         f"\n[Attached file saved at: {self.s.inbox / docx['name']}]"
+                         f"\n[Attached file note: {docx['name']} is a Word document (a zip of XML: the text is in word/document.xml)]")
 
 
 class MessageTest(unittest.TestCase):

@@ -32,7 +32,7 @@ import urllib.parse
 
 from edith.common import usertime
 from edith.common.paths import resolve
-from edith.common.text import reply_line
+from edith.common.text import attachment_lines, reply_line
 from edith.core import ApiError, CommandCall, Event, Reply, Response, Route
 
 from . import ws
@@ -290,7 +290,7 @@ class AppApi:
 
     @staticmethod
     def _with_files(prompt, files):
-        return prompt + "".join(f"\n[Attached file saved at: {f}]" for f in files)
+        return prompt + attachment_lines(files)
 
     def _typed_command(self, command, args, text, files, voice, ref):
         """A /command typed in the chat: the registry's handler runs it, the same path as Telegram's.
