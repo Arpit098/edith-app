@@ -6,9 +6,11 @@ import { Text } from 'react-native';
 
 import { clockIST } from '../../../common/format';
 import type { Origin } from '../../../core/events';
-import { ev } from '../../../testing/fakes';
+import { ev, FakeTransport } from '../../../testing/fakes';
 import { ItemView } from '../ItemView';
 import { initialLive, reduce } from '../model';
+import { createReceivedModel } from '../received';
+import { ReceivedContext } from '../ReceivedFiles';
 
 jest.setTimeout(30_000); // the first run transforms React Native
 
@@ -43,6 +45,33 @@ describe('ItemView', () => {
     const item = [ev('message.assistant', { text: 'Done.', cursor: 's1:1' }, { origin: 'system' })].reduce(reduce, initialLive).items[0]!;
     const time = r.root.findAllByType(Text).filter((t) => t.props.children === clockIST(item.ts));
     expect(time).toHaveLength(1);
+    act(() => r.unmount());
+  });
+
+  it("shows the files EDITH sent as chips: name and size, and a refused one as not available", () => {
+    const data = {
+      text: 'Here.',
+      cursor: 's1:1',
+      files: ['/a', '/b'],
+      sent_files: [
+        { id: 'c'.repeat(32), name: 'Plan v2.pdf', size: 2048, mime: 'application/pdf' },
+        { name: 'id_rsa', error: 'in a private folder' },
+      ],
+    };
+    const item = [ev('message.assistant', data)].reduce(reduce, initialLive).items[0]!;
+    let r!: ReactTestRenderer;
+    act(() => {
+      r = create(
+        <ReceivedContext.Provider value={createReceivedModel({ transport: new FakeTransport() })}>
+          <ItemView item={item} onPress={async () => null} />
+        </ReceivedContext.Provider>,
+      );
+    });
+    const chips = r.root.findAll((n) => n.props.testID === 'sent-file' && typeof n.type !== 'string' && !!n.props.accessibilityLabel && n.props.onPress);
+    const labels = [...new Set(chips.map((c) => c.props.accessibilityLabel as string))];
+    expect(labels).toEqual(['Plan v2.pdf, 2 KB', 'id_rsa, not available: in a private folder']);
+    const shown = r.root.findAllByType(Text).map((t) => t.props.children);
+    expect(shown).toEqual(expect.arrayContaining(['Plan v2.pdf', '2 KB', 'id_rsa', 'Not available']));
     act(() => r.unmount());
   });
 });

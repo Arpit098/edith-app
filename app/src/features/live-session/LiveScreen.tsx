@@ -12,6 +12,8 @@ import { SettleIn, Squish, useReduceMotion } from '../../ui/motion';
 import { SwipeToReply } from '../../ui/SwipeToReply';
 import { toast } from '../../ui/toast';
 import { ItemView, quoteLabel } from './ItemView';
+import { FileViewer, ReceivedContext } from './ReceivedFiles';
+import type { ReceivedModel } from './received';
 import { createLiquidRows } from './liquid';
 import { WorkCard, WorkDetailContext } from './WorkCard';
 import { DEFAULT_WORK_DETAIL, groupRows, type Row, type WorkDetail, type WorkGroup } from './work';
@@ -34,6 +36,8 @@ export interface LiveScreenProps {
   model: LiveModel;
   voice: VoiceModel;
   attach: AttachmentsModel;
+  /** Files EDITH sent: their chips download through it, and its viewer shows them (none in some tests). */
+  received?: ReceivedModel | null;
   /** Whether the composer's menu is open: its button and panel share it, and the feature closes it when another screen comes up. */
   menu: Store<boolean>;
   /** The message being replied to (swipe to reply): its quote bar sits above the composer until sent or cancelled. */
@@ -52,7 +56,7 @@ const FLASH_MS = 1600; // how long the message a quote jumped to stays marked
 
 const NO_FOCUS = createStore(false);
 
-export function LiveScreen({ model, voice, attach, menu, reply, workDetail, focus = NO_FOCUS, haptic }: LiveScreenProps) {
+export function LiveScreen({ model, voice, attach, received = null, menu, reply, workDetail, focus = NO_FOCUS, haptic }: LiveScreenProps) {
   const items = useStore(model.store, selectItems);
   // The transcript's rows: messages, and each run of tool calls and edits as one Work card. Groups
   // whose members didn't change are kept as the same objects, so their rows don't re-render.
@@ -215,6 +219,7 @@ export function LiveScreen({ model, voice, attach, menu, reply, workDetail, focu
     [model],
   );
   return (
+    <ReceivedContext.Provider value={received}>
     <View style={styles.screen}>
       <Transcript menu={menu} viewRef={backdrop.ref}>
         {items.length ? (
@@ -259,7 +264,9 @@ export function LiveScreen({ model, voice, attach, menu, reply, workDetail, focu
       <View style={[styles.composerSlot, { bottom: chromeInsets.bottom }]} onLayout={onComposerLayout} pointerEvents="box-none">
         <Composer model={model} voice={voice} attach={attach} backdrop={backdrop.tag} menu={menu} reply={reply} focus={focus} handle={draft} />
       </View>
+      {received ? <FileViewer model={received} /> : null}
     </View>
+    </ReceivedContext.Provider>
   );
 }
 

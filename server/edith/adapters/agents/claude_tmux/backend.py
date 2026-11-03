@@ -664,7 +664,7 @@ class ClaudeTmux:
             self._limit(None, reply, "side")
         self._remember_side_note(text, reply, is_error, subtype)
         parts = reply_parts(reply)
-        if parts["text"]:  # the main transcript never has a side lane's answer: send it as a message
+        if parts["text"] or parts["files"]:  # the main transcript never has a side lane's answer: send it as a message
             self._publish("message.assistant", run, text=parts["text"], lane="side", ref=ref, files=parts["files"])
         self._publish("turn.done", run, ref=ref, lane="side", text=reply, steps=run.steps, elapsed=elapsed,
                       is_error=is_error, subtype=subtype, display_text=parts["text"], files=parts["files"],

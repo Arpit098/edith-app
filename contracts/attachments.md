@@ -97,3 +97,42 @@ own names with no type check (as before), and get the note when the name ends `.
   that is already taken gets `-2`, `-3`, … (never overwritten).
 - Mode 0600, written to a temp file in the inbox while hashed, then moved into place (atomic).
 - The ids are kept in `~/.cache/edith/app-attachments.json` (atomic writes), at most 500.
+
+## 4. Files EDITH sends: `sent_files` and `GET /v1/files/{id}`
+
+The other way round. EDITH sends a file with a `SEND_FILE: /path` line in its reply; Telegram attaches it.
+For the app, the App API registers each path under an opaque random id and adds `sent_files` next to the
+event's `files` paths (`message.assistant`, `turn.done`, on the stream and in history; contracts/events.md):
+
+```json
+"sent_files": [{ "id": "9f2c…(32 hex)", "name": "Plan v2.pdf", "size": 204800, "mime": "application/pdf" },
+               { "name": "id_rsa", "error": "in a private folder" }]
+```
+
+- **Download:** `GET /v1/files/{id}` with the usual `Authorization: Bearer <token>` (401 without, audited
+  with the id and size only). The answer streams the file with `Content-Type` (its `mime`), `Content-Length`,
+  `Content-Disposition: attachment; filename*=UTF-8''<name>` and `X-Content-Type-Options: nosniff`.
+  404 when the id is unknown or expired, or the file was changed, replaced or removed since it was
+  registered (the app shows "no longer available"; EDITH can send it again).
+- **Only registered ids** are served; a request never names a path. Ids are 32 hex characters, kept 7 days
+  (and across restarts) in `~/.cache/edith/app-sent-files.json` (mode 0600, atomic writes, at most 1000).
+  The same file (resolved path, inode, size and mtime) keeps its id, so the live event and history agree.
+- **What is refused** at registration, because Claude writes these lines: anything inside a folder named
+  `.config`, `.claude`, `.ssh`, `.gnupg`, `.aws`, `.azure`, `.kube`, `.docker`, `.password-store`, `.mozilla`,
+  `.pki` or `.git` (anywhere, so `~/edith/.claude` too), under `~/.local/share/keyrings` or
+  `~/.cache/edith/accounts` (saved Claude logins), or under `/proc`, `/sys` or `/dev` (checked on the path as
+  given and with symlinks resolved); `.env*`, `.netrc`, `.git-credentials`, `authorized_keys*`, `known_hosts*`,
+  `.npmrc`, `.pypirc`, `.pgpass`,
+  `id_rsa`-style keys, `client_secret*`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, `*.jks`, `*.keystore`, `*.kdbx`,
+  `*.gpg`, `*.asc`, and names whose stem ends in key(s), token(s), secret(s), credential(s), password(s) or
+  passwd (`cracker-dev-key.json`, `app-token`; `token-analysis.pdf` is fine); anything that isn't a regular
+  readable file; files over 50 MB. A refusal is logged with its reason and path, never the file's contents,
+  and the app gets `{name, error}`.
+- Relative paths are taken from EDITH's working folder (`~/edith`), `~/` from the home.
+- **The app** shows them on EDITH's bubble as chips (type icon, name, size; images as a thumbnail once
+  downloaded). Tapping downloads into the app's cache with progress (kept 7 days, at most 200 MB), then:
+  an image opens full screen, a text file (txt, md, csv, json, log, html, code; up to 1 MB) opens in a
+  reader, anything else is saved to a folder Arpit picks once (Android's folder picker, e.g. Download/EDITH;
+  no storage permission). A long press saves any file there. Opening a file in another app (a PDF viewer)
+  or the share sheet needs a native module the current APK doesn't have (expo-sharing or a FileProvider
+  intent); it comes with a later APK.

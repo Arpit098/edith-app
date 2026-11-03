@@ -10,8 +10,11 @@ Stdlib only: ThreadingHTTPServer and the small WebSocket in ws.py. Security:
 - Bounded: at most MAX_CONNECTIONS requests at once, MAX_CLIENTS stream clients, body limits per
   route, a socket timeout per connection; a stream client that can't keep up is disconnected.
 
-Routes: features register theirs with ctx.add_route; this adapter adds /v1/messages, /v1/actions,
-/v1/commands and the /v1/stream WebSocket (every bus event, as JSON). A /v1/messages text that starts
+Routes: features register theirs with ctx.add_route; this adapter adds /v1/messages, /v1/attachments,
+/v1/files/{id}, /v1/actions, /v1/commands and the /v1/stream WebSocket (every bus event, as JSON).
+Events naming SEND_FILE paths (`files`) also carry `sent_files` for the app: each file registered
+under an opaque id it downloads from /v1/files/{id} (sent_files.py), on the stream and in every JSON
+answer with an `events` list (history). A /v1/messages text that starts
 with a registered /command runs that command (registry.find_command, as Telegram does), not a turn.
 """
 import hmac
@@ -37,6 +40,7 @@ from edith.core import ApiError, CommandCall, Event, Reply, Response, Route
 
 from . import ws
 from .attachments import MAX_BYTES as MAX_ATTACHMENT, AttachmentError, Attachments
+from .sent_files import SentFiles
 
 log = logging.getLogger("edith.adapter.app_api")
 
@@ -156,6 +160,8 @@ class AppApi:
         self._slots = threading.BoundedSemaphore(MAX_CONNECTIONS)
         self._thread = None
         self.attachments = Attachments(self.paths.inbox, os.path.join(self.paths.state_dir, "app-attachments.json"))
+        self.sent_files = SentFiles(os.path.join(self.paths.state_dir, "app-sent-files.json"), self.paths.home,
+                                    self.paths.work_dir)
 
     # ---- lifecycle ----
 
@@ -222,6 +228,7 @@ class AppApi:
     def _routes(self, registry):
         own = [Route("POST", "/v1/messages", self._messages, self.name, 16 * 1024),
                Route("POST", "/v1/attachments", self._attach, self.name, MAX_ATTACHMENT, stream=True),
+               Route("GET", "/v1/files/{id}", self._file, self.name),
                Route("POST", "/v1/actions", self._actions, self.name),
                Route("GET", "/v1/commands", self._command_list, self.name),
                Route("POST", "/v1/commands/{name}", self._command, self.name, 16 * 1024)]
@@ -325,6 +332,35 @@ class AppApi:
         return Response(200, {"content-type": "application/json"}, json.dumps(record).encode(),
                         audit={"attachment": {k: record[k] for k in ("id", "type", "size", "sha256")}})
 
+    def _file(self, req):
+        """A file EDITH sent (SEND_FILE), by its registered id only; the request never names a path."""
+        found = self.sent_files.open(req["params"]["id"])
+        if found is None:
+            raise ApiError(404, "file not found or no longer available")
+        f, r = found
+        quoted = urllib.parse.quote(r["name"], safe="")
+        return Response(200, {"content-type": r["mime"], "x-content-type-options": "nosniff",
+                              "cache-control": "private, no-store",
+                              "content-disposition": f"attachment; filename*=UTF-8''{quoted}"},
+                        file=f, length=r["size"], audit={"file": {"id": req["params"]["id"], "size": r["size"]}})
+
+    def with_sent_files(self, data):
+        """An event's data with `sent_files` ({id, name, size, mime} or {name, error}) next to its
+        SEND_FILE paths in `files`; data without files comes back as it is (never changed in place)."""
+        files = data.get("files") if isinstance(data, dict) else None
+        if not files or not isinstance(files, list):
+            return data
+        return {**data, "sent_files": self.sent_files.describe(files)}
+
+    def with_sent_files_in(self, result):
+        """A JSON answer holding events (history): each event's data with its sent_files."""
+        events = result.get("events") if isinstance(result, dict) else None
+        if not isinstance(events, list) or not any(isinstance(e, dict) and isinstance(e.get("data"), dict)
+                                                   and e["data"].get("files") for e in events):
+            return result
+        return {**result, "events": [{**e, "data": self.with_sent_files(e["data"])}
+                                     if isinstance(e, dict) and isinstance(e.get("data"), dict) else e for e in events]}
+
     def _actions(self, req):
         action = (req.get("body") or {}).get("action") or ""
         ref, collected, done = f"app:{secrets.token_hex(6)}", [], [False]
@@ -360,7 +396,7 @@ class AppApi:
                 return
             clients = list(self._clients)
         frame = ws.encode(ws.OP_TEXT, json.dumps({"type": ev.type, "ts": ev.ts, "session_id": ev.session_id,
-                                                  "origin": ev.origin, "data": ev.data},
+                                                  "origin": ev.origin, "data": self.with_sent_files(ev.data)},
                                                  ensure_ascii=False, default=str).encode())
         for c in clients:
             c.push(frame)
@@ -578,14 +614,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
         """Send a handler's result (a Response, or JSON with 200). -> (status, extra audit fields)."""
         if isinstance(result, Response):
             return self._respond(result).get("status", result.status), dict(result.audit)
-        self._send(200, result if result is not None else {})
+        self._send(200, self.server.api.with_sent_files_in(result) if result is not None else {})
         return 200, {}
 
     def _respond(self, r: Response):
         """A non-JSON answer: its body, or `length` bytes of its file from `offset`, sent with
-        sendfile (zero-copy, never read into memory). -> extra audit fields."""
+        sendfile (zero-copy, never read into memory). `file` is a path, or a file the handler opened
+        (and checked), which this closes. -> extra audit fields."""
         f = None
-        if r.file:
+        if r.file is not None and not isinstance(r.file, str):
+            f = r.file
+        elif r.file:
             try:
                 f = open(r.file, "rb")
             except OSError:  # removed (e.g. pruned) since the handler looked

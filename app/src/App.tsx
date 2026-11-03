@@ -8,6 +8,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { createAndroidInstaller } from './adapters/installer/android';
 import { createAndroidGlass, type AndroidGlass } from './adapters/glass/android';
 import { createExpoMediaPicker } from './adapters/media/expo';
+import { createExpoReceivedFiles } from './adapters/media/expo/received';
 import { createExpoWallpapers } from './adapters/media/expo/wallpapers';
 import { createAndroidRecorder } from './adapters/recorder/android';
 import { createAsyncStorage } from './adapters/storage/async-storage';
@@ -41,7 +42,7 @@ function boot() {
   const bus = new EventBus();
   const api = createApi(transport);
   const connection = new Connection(transport, storage, bus);
-  const loaded = loadFeatures(features, { bus, ports: { transport, storage, data, installer, ota, recorder, stt, media: createExpoMediaPicker(), status: system?.status, notifier: system?.notifier, push: system?.push, haptics: system?.haptics, widgets: createAndroidWidgets() ?? undefined, visibility }, api, connection });
+  const loaded = loadFeatures(features, { bus, ports: { transport, storage, data, installer, ota, recorder, stt, media: createExpoMediaPicker(), files: createExpoReceivedFiles(data), status: system?.status, notifier: system?.notifier, push: system?.push, haptics: system?.haptics, widgets: createAndroidWidgets() ?? undefined, visibility }, api, connection });
   return { connection, loaded, visibility, links: createAndroidLaunchLinks(), glass: createAndroidGlass(), appearance: createAppearanceStore(data, createExpoWallpapers()) };
 }
 

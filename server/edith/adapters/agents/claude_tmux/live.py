@@ -382,7 +382,7 @@ def events_of(e, tools, origin_of=lambda ref: None, known=lambda rid: False, typ
                 continue
             if b.get("type") == "text" and b.get("text", "").strip():
                 parts = reply_parts(localize_limit_text(b["text"]))  # Claude's limit line, in the user's zone
-                if parts["text"]:
+                if parts["text"] or parts["files"]:  # a reply that is only SEND_FILE lines still shows its files
                     data = {"text": parts["text"], "files": parts["files"], "lane": "main"}
                     if e.get("isApiErrorMessage"):  # Claude Code's own error line (usage limit, login…)
                         data["api_error"] = str(e.get("error") or "unknown")

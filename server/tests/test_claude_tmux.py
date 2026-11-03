@@ -638,6 +638,13 @@ class LiveViewTest(unittest.TestCase):
             self.assertEqual(events_of(entry(text), {}, typed_echo=echo)[0][0], "message.user")
         self.assertEqual(asked, ["/compact"])  # never asked about a message with a header or a ref
 
+    def test_a_reply_of_only_send_file_lines_still_shows_its_files(self):
+        def reply(text):
+            return {"type": "assistant", "message": {"content": [{"type": "text", "text": text}]}}
+        self.assertEqual(events_of(reply("SEND_FILE: /tmp/r.pdf\nREACT: 🎉"), {}),
+                         [("message.assistant", "system", {"text": "", "files": ["/tmp/r.pdf"], "lane": "main"})])
+        self.assertEqual(events_of(reply("REACT: 🎉"), {}), [])  # nothing to show
+
     def test_follows_a_new_transcript_without_replaying_a_resumed_one(self):
         h = Harness(self)
         self.assertTrue(h.agent._live.ready.wait(5))

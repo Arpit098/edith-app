@@ -160,9 +160,14 @@ message never vanishes from the app, whichever way it reaches Claude. All carry 
 
 **Clean text everywhere:**
 - `message.assistant.text` has EDITH's `REACT:` and `SEND_FILE:` lines taken out; `files` lists the
-  `SEND_FILE` paths (`[]` if none). Also from the transcript, `lane` is `main` there.
-- `turn.done` gains `display_text` (the reply without `REACT:`/`SEND_FILE:` lines), `files` and `reaction`
-  (the `REACT:` pick or `null`). `text` stays the raw reply.
+  `SEND_FILE` paths (`[]` if none). Also from the transcript, `lane` is `main` there. A reply that is only
+  `SEND_FILE:` lines is still a `message.assistant` (empty `text`, its `files`).
+- **Files for the app:** on the App API (stream and history), an event with a non-empty `files` also has
+  `sent_files`: one entry per path, in order, `{id, name, size, mime}` to download with `GET /v1/files/{id}`,
+  or `{name, error}` when the server won't offer it (contracts/attachments.md §4). The same file keeps its
+  id across events and history pages. `files` (the paths) stays for older apps; Telegram uses the paths.
+- `turn.done` gains `display_text` (the reply without `REACT:`/`SEND_FILE:` lines), `files` (with
+  `sent_files` on the App API) and `reaction` (the `REACT:` pick or `null`). `text` stays the raw reply.
 - Transcript user messages that Claude Code wrapped in `<pasted_content …>` (long or multi-line pastes)
   are unwrapped, not skipped.
 
@@ -219,6 +224,7 @@ Base `http://<edith's Tailscale IP>:8787`, reachable over Tailscale only. Every 
 |---|---|---|---|
 | POST | `/v1/messages` | `{text, voice?: bool, queue?: bool, attachments?: [id], replying_to?: {text, from?: "edith" \| "arpit"}}` | `{ref, lane}`; the turn's events then arrive on the stream with this `ref`. A typed command answers `lane: "command"` and its replies come as `command.reply` (see "Typed commands"). `attachments`: ids from `POST /v1/attachments` (contracts/attachments.md). `replying_to`: the message Arpit swiped to reply to (see below); anything but an object with a string `text` (or `null`) is a 400 |
 | POST | `/v1/attachments` | the raw file (image or audio), `x-filename?` | `{id, name, type, size, sha256}` (contracts/attachments.md) |
+| GET | `/v1/files/{id}` | | the bytes of a file EDITH sent (`sent_files[].id`), with its `Content-Type`, `Content-Length` and `Content-Disposition`; 404 when the id is unknown, expired or the file changed or is gone (contracts/attachments.md §4) |
 | GET | `/v1/stream` | WebSocket | every event above as one JSON text message `{type, ts, session_id, origin, data}`; the server pings every 25 s (protocol ping) when the line is quiet. The app connects as `/v1/stream?client=app` (the push decision counts only those, contracts/push.md). The app may send `{"type": "ping", "id"?: any}`; the answer is `{"type": "pong", "ts", "session_id": null, "origin": "system", "data": {"id"?}}` (`id` echoed). Any frame from the app counts as alive; two quiet periods without one (a ping left unanswered for 25 s) and the server drops it. Other text from the app is ignored |
 | POST | `/v1/stop` | | `{running, dropped: [ref], background, ts}` (`ts`: the server's clock; contracts/status.md) |
 | GET | `/v1/status` | | `{ts, main: busy/idle, queued, runs: [{ref, lane, seconds, step}], background, subagents, tmux: running/down, conversation: bool, session: {id, title} \| null}` (`background` and `subagents`: contracts/status.md) |

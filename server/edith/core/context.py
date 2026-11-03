@@ -126,11 +126,12 @@ class Route:
 class Response:
     """A route answer that isn't plain JSON. The App API sends `status`, `headers` and either `body`
     or, when `file` is set, `length` bytes of that file from `offset` (streamed from disk, never read
-    into memory; None means to its end). `audit` adds fields to the request's audit log line."""
+    into memory; None means to its end). `file` may also be a file object the handler opened (and
+    checked), which the App API sends and closes. `audit` adds fields to the request's audit log line."""
     status: int = 200
     headers: dict[str, str] = field(default_factory=dict)
     body: bytes = b""
-    file: str | None = None
+    file: Any = None  # a path, or an open binary file
     offset: int = 0
     length: int | None = None
     audit: dict[str, Any] = field(default_factory=dict)
