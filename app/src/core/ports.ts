@@ -81,6 +81,32 @@ export interface MediaPicker {
   prune(): void;
 }
 
+/**
+ * Files EDITH sent (contracts/attachments.md §4), kept in the app's own cache folder. Opening one in
+ * another app needs a native module the APK doesn't have yet, so a file is shown in the app (images,
+ * text) or saved to a folder Arpit picks once through Android's folder picker (no permission).
+ */
+export interface ReceivedFiles {
+  /** The downloaded copy of this file, or null when it isn't here (or is incomplete). */
+  cached(file: { id: string; name: string; size: number }): string | null;
+  /** Download into the cache (replacing a partial copy); resolves to the local uri. Aborting `signal` cancels it. */
+  download(
+    request: { url: string; headers: Record<string, string> },
+    file: { id: string; name: string; size: number },
+    onProgress: (written: number, total: number) => void,
+    signal?: AbortSignal,
+  ): Promise<string>;
+  /** A cached text file's contents, at most `maxBytes` of it. */
+  readText(uri: string, maxBytes: number): Promise<string>;
+  /**
+   * Copy a cached file into the save folder (Android's folder picker asks for it the first time, or
+   * when its access is gone). The folder's name, or null when Arpit cancelled the picker.
+   */
+  save(uri: string, name: string, mime: string): Promise<string | null>;
+  /** Delete old downloads, bounded by age and total size. Run once at startup. */
+  prune(): void;
+}
+
 /** A photo picked as a wallpaper: the app's own downscaled copy, and its colours on a small grid. */
 export interface PickedWallpaper {
   uri: string;
@@ -401,6 +427,7 @@ export interface Ports {
   stt?: SpeechToText; // push-to-talk (and Phase 3 voice)
   recorder?: Recorder;
   media?: MediaPicker; // attachments
+  files?: ReceivedFiles; // files EDITH sends (absent in tests and on web)
   status?: OngoingStatus;
   notifier?: Notifier;
   push?: PushReceiver; // absent in tests, on web and before Android 8

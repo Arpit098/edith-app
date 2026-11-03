@@ -43,7 +43,7 @@ from edith.common.claude_limits import classify, reset_time
 from edith.common.claude_screen import read_screen
 from edith.common.paths import resolve
 from edith.common.state import StateFile
-from edith.common.text import clean_prompt, reply_parts, take_directives
+from edith.common.text import clean_prompt, reply_parts, take_directives, take_files
 from edith.core import Event
 from edith.ports.agent import RunInfo, StopResult, TurnHandle
 
@@ -685,7 +685,7 @@ class ClaudeTmux:
 
     def _remember_side_note(self, prompt, reply, is_error, subtype):
         """The main conversation never saw this turn; hand it over on its next turn."""
-        _, text = take_directives(reply, "SEND_FILE")
+        _, text = take_files(reply)
         _, text = take_directives(text, "REACT")
         if is_error and not text:
             text = f"❌ Error: {subtype}"

@@ -8,6 +8,7 @@ import type { AppVisibility, KeyValueStore } from '../../core/ports';
 import { createStore, type Store } from '../../core/store';
 import { ID_LIFETIME_S, type SentAttachment } from './attachments';
 import { kindOfName } from './fileIcon';
+import { fileOnlyText, sentFilesOf, type SentFile } from './received';
 import { quoteFrom, quoteText, type Quote } from './reply';
 import { backgroundLine, trackTurnStart } from './status';
 
@@ -58,7 +59,7 @@ export type Item =
       attachments: SentAttachment[];
       replyTo?: Quote | null; // the message this one replies to (swipe to reply; message.user.replying_to)
     }
-  | { kind: 'assistant'; id: number; ts: number; text: string; lane: 'side' | null; ref: string | null }
+  | { kind: 'assistant'; id: number; ts: number; text: string; lane: 'side' | null; ref: string | null; files?: SentFile[] } // files: what EDITH sent (SEND_FILE)
   | { kind: 'tool'; id: number; ts: number; name: string; summary: string; status: 'running' | 'ok' | 'error'; result: string | null }
   | { kind: 'diff'; id: number; ts: number; path: string; diff: string }
   | { kind: 'system'; id: number; ts: number; text: string; tone: 'info' | 'error'; buttons: ButtonRows; key: string | null; note: string | null; ref?: string } // ref: the typed /command it answers
@@ -300,6 +301,32 @@ export function failedLocal(s: LiveState, key: string, error: string, final = fa
   return setLocal(s, key, 'failed', error, final);
 }
 
+const fileKey = (f: SentFile) => f.id ?? `name:${f.name}`;
+
+/**
+ * The files not shown yet in this turn's replies (the items since Arpit's last message): message.assistant
+ * and turn.done both name a reply's files, and the server gives a file the same id in both.
+ */
+function unshown(s: LiveState, files: SentFile[]): SentFile[] {
+  if (!files.length) return files;
+  const shown = new Set<string>();
+  for (const x of s.items) {
+    if (x.kind === 'user') break;
+    if (x.kind === 'assistant') for (const f of x.files ?? []) shown.add(fileKey(f));
+  }
+  return shown.size ? files.filter((f) => !shown.has(fileKey(f))) : files;
+}
+
+/** A reply's text as the bubble shows it: the server's "📎 name" stand-in for a files-only reply is dropped (the chips show them). */
+function shownText(text: string, files: SentFile[]): string {
+  return files.length && text === fileOnlyText(files) ? '' : text;
+}
+
+/** Add files to an assistant item. */
+function withFiles(s: LiveState, id: number, files: SentFile[]): LiveState {
+  return files.length ? update(s, id, (x) => (x.kind === 'assistant' ? { ...x, files: [...(x.files ?? []), ...files] } : x)) : s;
+}
+
 /** Items only this app knows (sent messages not yet echoed, side-lane answers): a history rebuild keeps them. */
 function isLocalOnly(x: Item): boolean {
   return (x.kind === 'user' && !!x.local && !x.echoed) || (x.kind === 'assistant' && x.lane === 'side');
@@ -341,13 +368,17 @@ function apply(s: LiveState, e: EdithEvent): LiveState {
     case 'message.assistant': {
       const lane = d.lane === 'side' ? 'side' : null;
       const ref = d.ref ? str(d.ref) : null;
-      const text = str(d.text);
+      const all = sentFilesOf(d);
+      const text = shownText(str(d.text), all);
+      const files = unshown(s, all);
       const shown = lane && ref ? s.items.find((x) => x.kind === 'assistant' && x.lane === 'side' && x.ref === ref) : undefined;
       if (shown) {
         // Already shown from turn.done: message.assistant is the clean text, so it wins.
-        return shown.kind === 'assistant' && shown.text !== text && text ? update(s, shown.id, (x) => ({ ...x, text }) as Item) : s;
+        const next = shown.kind === 'assistant' && shown.text !== text && text ? update(s, shown.id, (x) => ({ ...x, text }) as Item) : s;
+        return withFiles(next, shown.id, files);
       }
-      return push(s, ts, { kind: 'assistant', text, lane, ref });
+      if (!text && !files.length) return s;
+      return push(s, ts, { kind: 'assistant', text, lane, ref, ...(files.length ? { files } : {}) });
     }
     case 'tool.call': {
       const next = push(s, ts, { kind: 'tool', name: str(d.name), summary: str(d.summary), status: 'running', result: null });
@@ -387,9 +418,18 @@ function apply(s: LiveState, e: EdithEvent): LiveState {
       let next = track(endRun(s, ref, lane === 'main'), ref, { phase: 'done', lane });
       // A side lane's reply isn't in the conversation's transcript: turn.done carries it, so show it
       // here (once: the server may also send it as message.assistant with lane "side").
-      const text = str(d.display_text) || str(d.text); // display_text: without REACT:/SEND_FILE: lines
-      if (lane === 'side' && text && !next.items.some((x) => x.kind === 'assistant' && x.lane === 'side' && x.ref === ref)) {
-        next = push(next, ts, { kind: 'assistant', text, lane: 'side', ref });
+      const all = sentFilesOf(d);
+      const text = shownText(typeof d.display_text === 'string' ? d.display_text : str(d.text), all); // display_text: without REACT:/SEND_FILE: lines
+      const files = unshown(next, all);
+      if (lane === 'side' && (text || files.length) && !next.items.some((x) => x.kind === 'assistant' && x.lane === 'side' && x.ref === ref)) {
+        next = push(next, ts, { kind: 'assistant', text, lane: 'side', ref, ...(files.length ? { files } : {}) });
+      } else if (files.length) {
+        // Files message.assistant didn't show (an older server, or a reply split over several blocks):
+        // on this turn's newest reply, or a bubble of their own.
+        const last = next.items.find((x) => x.kind !== 'tool' && x.kind !== 'diff');
+        next = last && last.kind === 'assistant' && (lane === 'main' ? last.lane === null : last.ref === ref)
+          ? withFiles(next, last.id, files)
+          : push(next, ts, { kind: 'assistant', text: '', lane: lane === 'side' ? 'side' : null, ref: lane === 'side' ? ref : null, files });
       }
       return bool(d.is_error) ? push(next, ts, system(`⚠️ The turn ended with an error${d.subtype ? ` (${str(d.subtype)})` : ''}`, 'error')) : next;
     }

@@ -13,6 +13,7 @@ import { createAttachmentsModel, type AttachmentsModel } from './attachments';
 import { createLaunch } from './launch';
 import { LiveScreen } from './LiveScreen';
 import { createLiveModel, type LiveModel } from './model';
+import { createReceivedModel, type ReceivedModel } from './received';
 import { sendWithReply, type Quote } from './reply';
 import { StatusChip, StatusPopup } from './StatusPanel';
 import { createVoiceModel, type VoiceModel } from './voice';
@@ -25,6 +26,7 @@ import { WORK_DETAILS } from './work';
 let model: LiveModel | null = null;
 let voice: VoiceModel | null = null;
 let attach: AttachmentsModel | null = null;
+let received: ReceivedModel | null = null;
 let connection: Connection | null = null;
 let openSettings: () => void = () => {};
 // The composer's menu: open or closed. Closed whenever another screen comes up, so it never stays
@@ -44,7 +46,7 @@ let haptic: (() => void) | undefined;
 let workDetail: WorkDetailSetting | null = null;
 
 function Screen() {
-  return model && voice && attach ? <LiveScreen model={model} voice={voice} attach={attach} menu={menu} reply={reply} focus={focus} haptic={haptic} workDetail={workDetail?.store} /> : null;
+  return model && voice && attach ? <LiveScreen model={model} voice={voice} attach={attach} received={received} menu={menu} reply={reply} focus={focus} haptic={haptic} workDetail={workDetail?.store} /> : null;
 }
 
 function Settings() {
@@ -87,6 +89,8 @@ const liveSession: FeatureModule = {
     const v = createVoiceModel({ bus, send: voiceSend, storage: ports.storage, recorder: ports.recorder, stt: ports.stt });
     const a = createAttachmentsModel({ api, media: ports.media });
     ports.media?.prune(); // old picked files and thumbnails: bounded by age and size
+    const r = createReceivedModel({ transport: ports.transport, files: ports.files });
+    ports.files?.prune(); // old downloads of files EDITH sent: bounded by age and size
     const w = createWorkDetailSetting(ports.data);
     void w.load();
     workDetail = w;
@@ -107,6 +111,7 @@ const liveSession: FeatureModule = {
     model = m;
     voice = v;
     attach = a;
+    received = r;
     connection = conn;
     openSettings = () => {
       status.set(false);
@@ -124,9 +129,11 @@ const liveSession: FeatureModule = {
       m.dispose();
       v.dispose();
       a.dispose();
+      r.dispose();
       if (model === m) model = null;
       if (voice === v) voice = null;
       if (attach === a) attach = null;
+      if (received === r) received = null;
       if (connection === conn) connection = null;
       if (workDetail === w) workDetail = null;
     };

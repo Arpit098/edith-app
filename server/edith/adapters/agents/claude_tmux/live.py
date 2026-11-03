@@ -28,7 +28,7 @@ import threading
 import time
 
 from edith.common.claude_sessions import by_session_id
-from edith.common.text import HEADER_LINE, clean_prompt, reply_parts
+from edith.common.text import HEADER_LINE, clean_prompt, reply_parts, take_files
 from edith.common.usertime import localize_limit_text
 
 from .background import Background
@@ -343,10 +343,12 @@ def remember(tools, tool_id, name):
         tools.pop(next(iter(tools)))
 
 
-def events_of(e, tools, origin_of=lambda ref: None, known=lambda rid: False, typed_echo=lambda text: False):
+def events_of(e, tools, origin_of=lambda ref: None, known=lambda rid: False, typed_echo=lambda text: False,
+              final=False):
     """[(type, origin, data)] for one transcript entry. `tools` maps tool_use ids to names (for
     naming results) and is updated; it is bounded to MAX_TOOL_IDS. `typed_echo` is asked only about
-    a bare "/…" entry (no ref, no header) and consumes the match: see LiveView."""
+    a bare "/…" entry (no ref, no header) and consumes the match: see LiveView. `final`: this entry is
+    known to be the turn's last assistant entry (history), so a missing stop_reason counts as the end."""
     if e.get("isSidechain") or e.get("isMeta"):
         return []
     out = []
@@ -377,12 +379,20 @@ def events_of(e, tools, origin_of=lambda ref: None, known=lambda rid: False, typ
                  {"text": clean["text"], "voice": clean["voice"], "rid": rid, "attachments": clean["attachments"],
                   "replying_to": clean["replying_to"]})]
     if e.get("type") == "assistant" and isinstance(content, list):
+        # Files come only from a turn's final reply (Telegram sends turn.done's), not from narration.
+        # stop_reason None (rare: an entry written before it was known) counts as the end only when the
+        # entry is known to be the turn's last; live, turn.done brings those files instead.
+        stop = (e.get("message") or {}).get("stop_reason")
+        narration = stop == "tool_use" or (stop is None and not final)
         for b in content:
             if not isinstance(b, dict):
                 continue
             if b.get("type") == "text" and b.get("text", "").strip():
-                parts = reply_parts(localize_limit_text(b["text"]))  # Claude's limit line, in the user's zone
-                if parts["text"]:
+                text = localize_limit_text(b["text"])  # Claude's limit line, in the user's zone
+                if narration:  # text before a tool call: its SEND_FILE lines are talk, not files to send
+                    text = take_files(text)[1]
+                parts = reply_parts(text)
+                if parts["text"]:  # a reply of only SEND_FILE lines says "📎 <name>" (reply_parts)
                     data = {"text": parts["text"], "files": parts["files"], "lane": "main"}
                     if e.get("isApiErrorMessage"):  # Claude Code's own error line (usage limit, login…)
                         data["api_error"] = str(e.get("error") or "unknown")
@@ -414,6 +424,25 @@ def timestamp(e):
         return None
 
 
+def turn_ends(entries):
+    """Indexes of assistant entries that are their turn's last: the next assistant or user entry after
+    them is Arpit's next prompt (not a tool result). One at the end of the list isn't known yet."""
+    ends, last = set(), None
+    for i, e in enumerate(entries):
+        if e.get("isSidechain") or e.get("isMeta"):
+            continue
+        if e.get("type") == "assistant":
+            last = i
+        elif e.get("type") == "user":
+            content = (e.get("message") or {}).get("content")
+            results = isinstance(content, list) and any(isinstance(b, dict) and b.get("type") == "tool_result" for b in content)
+            if not results and last is not None:
+                ends.add(last)
+            if not results:
+                last = None
+    return ends
+
+
 def history(path, after=None, before=None, limit=50, origin_of=lambda ref: None, max_bytes=HISTORY_BYTES):
     """Transcript events as the live view sends them, read by byte offset, never the whole file:
     - after=N: the events of entries after offset N, oldest first (catching up after a reconnect);
@@ -423,15 +452,16 @@ def history(path, after=None, before=None, limit=50, origin_of=lambda ref: None,
     whether more entries lie past them (after the end for after=, before the start otherwise)."""
     sid = os.path.basename(path)[:-len(".jsonl")]
 
-    def as_event(e, end, tools):
+    def as_event(e, end, tools, final=False):
         return [{"type": t, "ts": timestamp(e), "session_id": e.get("sessionId") or sid, "origin": o,
-                 "data": {**d, "cursor": cursor(path, end)}} for t, o, d in events_of(e, tools, origin_of)]
+                 "data": {**d, "cursor": cursor(path, end)}} for t, o, d in events_of(e, tools, origin_of, final=final)]
 
     if after is not None:
         found, end, more = read_forward(path, after, max_bytes)
         tools, out, done = {}, [], after
-        for e, _, _, line_end in found:
-            evs = as_event(e, line_end, tools)
+        ends = turn_ends([f[0] for f in found])
+        for i, (e, _, _, line_end) in enumerate(found):
+            evs = as_event(e, line_end, tools, i in ends)
             if out and len(out) + len(evs) > limit:
                 return {"events": out, "start": after, "end": done, "more": True}
             out.extend(evs)
@@ -448,8 +478,10 @@ def history(path, after=None, before=None, limit=50, origin_of=lambda ref: None,
         if count >= limit:
             break
     tools, out = {}, []
-    for e, line_end in reversed(picked):  # oldest first, so results are named after their calls
-        out += as_event(e, line_end, tools)
+    oldest_first = list(reversed(picked))
+    ends = turn_ends([e for e, _ in oldest_first])
+    for i, (e, line_end) in enumerate(oldest_first):  # oldest first, so results are named after their calls
+        out += as_event(e, line_end, tools, i in ends)
     if start is None:
         start = end = before or 0
     return {"events": out, "start": start, "end": end, "more": start > 0}

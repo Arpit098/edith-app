@@ -26,6 +26,7 @@ import type { SentAttachment } from './attachments';
 import { attachmentIcon } from './fileIcon';
 import type { Item, SendStatus, Tick } from './model';
 import type { Quote } from './reply';
+import { SentFileChips } from './ReceivedFiles';
 
 const ORIGIN_LABEL: Record<string, string> = { telegram: 'Telegram', terminal: 'Terminal', app: '', system: '' };
 
@@ -118,9 +119,12 @@ export const ItemView = memo(function ItemView({ item, liquid = false, onPress, 
           {edithLiquid ? <BubbleLens look={theme.edith} tail="left" inside={!!highlight} /> : null}
           <BubbleFill look={theme.edith} tail="left" cover={edithLiquid && !highlight} />
           {item.lane === 'side' ? <Text style={[styles.meta, ts.edithDim]}>⚡ Parallel answer (the main conversation was busy)</Text> : null}
-          <Text style={[styles.text, ts.edithText]} selectable textBreakStrategy={BREAK}>
-            {item.text}
-          </Text>
+          {item.text ? (
+            <Text style={[styles.text, ts.edithText]} selectable textBreakStrategy={BREAK}>
+              {item.text}
+            </Text>
+          ) : null}
+          {item.files?.length ? <SentFileChips files={item.files} /> : null}
           <View style={styles.footer}>
             <Text style={[styles.time, ts.edithDim]}>{clockIST(item.ts)}</Text>
           </View>

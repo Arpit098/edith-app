@@ -25,7 +25,7 @@ import time
 from edith.common import usertime
 from edith.common.paths import resolve
 from edith.common.state import StateFile
-from edith.common.text import attachment_lines, take_directives
+from edith.common.text import attachment_lines, take_directives, take_files
 from edith.core import CommandCall, Reply
 
 from .api import BotApi, allowed_ids, read_token
@@ -421,7 +421,7 @@ class TelegramFrontend:
     def _deliver(self, turn, d, quote=False):
         """A finished turn's reply: strip SEND_FILE/REACT lines, react, attach files. `quote`: reply
         to the message (parallel answers always do)."""
-        files, text = take_directives(d.get("text") or "", "SEND_FILE")
+        files, text = take_files(d.get("text") or "")
         picked, text = take_directives(text, "REACT")  # EDITH may pick a final reaction
         is_error = d.get("is_error")
         if is_error and not text:

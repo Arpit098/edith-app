@@ -27,7 +27,7 @@ import time
 from edith.common import usertime
 from edith.common.claude_limits import reset_time
 from edith.common.paths import resolve
-from edith.common.text import clean_prompt, take_directives
+from edith.common.text import clean_prompt, take_directives, take_files
 from edith.common.timer import Timers
 from edith.core import ActionResult, ApiError, Button, Context, Event, Feature, Reply
 from edith.ports.agent import TurnHandle
@@ -282,7 +282,7 @@ def setup(ctx: Context) -> None:
             reply_done(ref, origin, f"Backup: no backup AI can answer right now ({why}). I've queued your message "
                                     f"for Claude (#{qid}).", started)
             return
-        _, body = take_directives(ans.text, "SEND_FILE")  # the backup sends no files
+        _, body = take_files(ans.text)  # the backup sends no files
         _, body = take_directives(body, "REACT")
         body = body.strip() or "(no answer)"
         label = ans.provider.label

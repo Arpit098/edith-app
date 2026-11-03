@@ -22,15 +22,19 @@ export type ButtonRows = ReplyButton[][];
  * Live-view events (message.*, tool.*, file.diff) also carry `cursor`: "<session_id>:<offset>",
  * opaque, compared only by equality or passed back to the history API.
  */
+/** A file EDITH sent, as the App API offers it (contracts/attachments.md §4). */
+export type SentFileData = { id: string; name: string; size: number; mime: string } | { name: string; error: string };
+
 export interface EventDataMap {
   // Frontend messages (contracts/events.md, "Messages from Arpit"): accepted at once with the POST's ref; clean text.
   'message.user': { text: string; voice: boolean; cursor: string; ref?: string; delivery?: 'main' | 'queued' | 'side_lane' | 'command' | 'backup'; lane?: 'main' | 'queued' | 'side' | 'command' | 'backup'; attachments?: string[]; replying_to?: string | null };
-  'message.assistant': { text: string; cursor: string; lane?: Lane; ref?: string; files?: string[] };
+  // files: SEND_FILE paths; sent_files: each as {id, name, size, mime} to download, or {name, error} (contracts/attachments.md §4)
+  'message.assistant': { text: string; cursor: string; lane?: Lane; ref?: string; files?: string[]; sent_files?: SentFileData[] };
   'tool.call': { id: string; name: string; summary: string; cursor: string };
   'tool.result': { id: string; name: string; ok: boolean; summary: string; cursor: string };
   'file.diff': { id: string; path: string; diff: string; cursor: string };
   'turn.started': { ref: string; lane?: Lane };
-  'turn.done': { ref: string; text: string; display_text?: string; files?: string[]; reaction?: string | null; steps: number; elapsed: number; lane?: Lane; is_error?: boolean; subtype?: string };
+  'turn.done': { ref: string; text: string; display_text?: string; files?: string[]; sent_files?: SentFileData[]; reaction?: string | null; steps: number; elapsed: number; lane?: Lane; is_error?: boolean; subtype?: string };
   'turn.stopped': { ref: string; lane?: Lane | 'queued' };
   'turn.queued': { ref: string; position: number };
   'turn.progress': { ref: string; lane: Lane; steps: number; step: string; elapsed: number };

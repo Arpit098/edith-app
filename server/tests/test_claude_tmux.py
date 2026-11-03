@@ -14,7 +14,7 @@ import unittest
 from unittest import mock
 
 from edith.adapters.agents.claude_tmux.backend import NOTES_HEADER, ClaudeTmux
-from edith.adapters.agents.claude_tmux.live import events_of
+from edith.adapters.agents.claude_tmux.live import events_of, turn_ends
 from edith.adapters.agents.claude_tmux.tmux import Tmux
 from edith.common.claude_sessions import proc_stat
 from edith.core import CommandCall, EventBus, Ports, Registry, load_features
@@ -637,6 +637,26 @@ class LiveViewTest(unittest.TestCase):
         for text in ("hello", "[App message from Arpit, x]\n/compact\n[tg-ref ab12]", "/compact\n[tg-ref cd34]"):
             self.assertEqual(events_of(entry(text), {}, typed_echo=echo)[0][0], "message.user")
         self.assertEqual(asked, ["/compact"])  # never asked about a message with a header or a ref
+
+    def test_files_come_from_the_final_reply_only(self):
+        def reply(text, stop="end_turn"):
+            return {"type": "assistant", "message": {"stop_reason": stop, "content": [{"type": "text", "text": text}]}}
+        # Only SEND_FILE lines: a "📎 name" text, so an older app never shows an empty bubble.
+        self.assertEqual(events_of(reply("SEND_FILE: /tmp/My Plan.pdf\nREACT: 🎉"), {}),
+                         [("message.assistant", "system", {"text": "📎 My Plan.pdf", "files": ["/tmp/My Plan.pdf"], "lane": "main"})])
+        self.assertEqual(events_of(reply("REACT: 🎉"), {}), [])  # nothing to show
+        # Narration before a tool call: its SEND_FILE line is talk; no files, and no line left either.
+        self.assertEqual(events_of(reply("I'll make it, then\nSEND_FILE: /tmp/r.pdf", "tool_use"), {}),
+                         [("message.assistant", "system", {"text": "I'll make it, then", "files": [], "lane": "main"})])
+        self.assertEqual(events_of(reply("SEND_FILE: /tmp/r.pdf", "tool_use"), {}), [])
+        # No stop_reason: final only when known to be the turn's last assistant entry (history).
+        self.assertEqual(events_of(reply("SEND_FILE: /tmp/r.pdf", None), {}), [])
+        self.assertEqual(events_of(reply("SEND_FILE: /tmp/r.pdf", None), {}, final=True)[0][2]["files"], ["/tmp/r.pdf"])
+        prompt = {"type": "user", "message": {"content": "next"}}
+        result = {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "t"}]}}
+        self.assertEqual(turn_ends([reply("a", None), result, reply("b", None), prompt, reply("c", None)]), {2})
+        # An example in a code block is never a file.
+        self.assertEqual(events_of(reply("Use:\n```\nSEND_FILE: /tmp/x\n```"), {})[0][2]["files"], [])
 
     def test_follows_a_new_transcript_without_replaying_a_resumed_one(self):
         h = Harness(self)
