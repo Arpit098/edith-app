@@ -339,6 +339,57 @@ export interface FrameMeter {
   stop(): Promise<FrameReport | null>;
 }
 
+export type WidgetState = 'working' | 'idle' | 'waiting';
+
+/** One line on the last-message widget: a reply (`alert` false) or an alert (approval, error, reminder). */
+export interface WidgetMessage {
+  text: string; // plain, one line, at most 300 characters; "" when the text was left out
+  ts: number; // unix seconds
+  alert: boolean;
+}
+
+/**
+ * What the last-message widget draws (contracts/widgets.md, v1). The app writes it whenever its
+ * chat or status changes; a push folds itself in natively while the app isn't connected.
+ */
+export interface WidgetSnapshot {
+  v: 1;
+  at: number; // unix seconds of this write: a "working" nobody updated for hours shows as not known
+  state: WidgetState; // waiting: on Arpit (an approval)
+  messages: WidgetMessage[]; // newest first, at most 3
+  permission: { id: string; text: string } | null; // the approval waiting, for Approve / Deny at 4x3
+  hidden: boolean; // texts left out ("Show message text in widgets" off)
+}
+
+/** The home-screen widgets (android-modules/edith-widget): their saved snapshot and the privacy setting. */
+export interface HomeWidgets {
+  /** What is saved now (pushes may have added to it while the app was away); null if nothing is. */
+  read(): WidgetSnapshot | null;
+  /** Save and redraw. The native side drops the texts while "Show message text" is off. */
+  write(s: WidgetSnapshot): void;
+  showText(): boolean;
+  /** Off also wipes the texts already saved. */
+  setShowText(on: boolean): void;
+}
+
+/**
+ * The edith:// link EDITH was launched with, and whether a link is the home-screen widget's own
+ * (android-modules/edith-widget; contracts/widgets.md "Links").
+ */
+export interface LaunchLinks {
+  /** The launch link, once: cleared as it's read (a JS reload must not run it again); null after a restore from Recents. */
+  initial(): string | null;
+  /** A link that arrived while running is handled: it won't come back as the launch link. */
+  consume(url: string): void;
+  /** Whether `url` carries this install's widget key: only those may start the mic or open the attach menu. */
+  trusted(url: string): boolean;
+}
+
+/** A light tick under the finger (no VIBRATE permission: the view's own haptic feedback). */
+export interface Haptics {
+  tick(): void;
+}
+
 export interface Ports {
   transport: Transport;
   storage: SecureStorage;
@@ -352,6 +403,8 @@ export interface Ports {
   notifier?: Notifier;
   push?: PushReceiver; // absent in tests, on web and before Android 8
   visibility?: AppVisibility;
+  widgets?: HomeWidgets; // absent in tests and on web
+  haptics?: Haptics;
   // Built in later phases (PLAN.md §6); absent until then.
   tts?: TextToSpeech; // Phase 3
   wakeWord?: WakeWord; // Phase 4

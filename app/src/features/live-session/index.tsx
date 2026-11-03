@@ -1,5 +1,7 @@
 // Live session: EDITH's Claude session as it happens, with text, push-to-talk and attachments, and
 // Stop; swipe a message to reply to it. Its status chip sits in the header on every screen.
+// edith://live/type, /listen and /attach (the home-screen EDITH bar) open it ready to type, already
+// listening, or with the attach menu open (./launch).
 
 import type { Connection } from '../../core/connection';
 import { localEvent } from '../../core/events';
@@ -8,6 +10,7 @@ import type { FeatureModule, PanelProps } from '../../core/feature';
 import { useStoreOr } from '../../core/store';
 import { createStore } from '../../core/store';
 import { createAttachmentsModel, type AttachmentsModel } from './attachments';
+import { createLaunch } from './launch';
 import { LiveScreen } from './LiveScreen';
 import { createLiveModel, type LiveModel } from './model';
 import { sendWithReply, type Quote } from './reply';
@@ -32,11 +35,16 @@ const reply = createStore<Quote | null>(null);
 // The status card under the header chip; closed when another screen comes up.
 const status = createStore(false);
 
+// A link asked for the message box (edith://live/type): the composer focuses it once drawn.
+const focus = createStore(false);
+// A light tick as a swipe catches a message to reply to (ports.haptics; none in tests and on web).
+let haptic: (() => void) | undefined;
+
 // Settings → Chat → Work details (how much each turn's Work card shows).
 let workDetail: WorkDetailSetting | null = null;
 
 function Screen() {
-  return model && voice && attach ? <LiveScreen model={model} voice={voice} attach={attach} menu={menu} reply={reply} workDetail={workDetail?.store} /> : null;
+  return model && voice && attach ? <LiveScreen model={model} voice={voice} attach={attach} menu={menu} reply={reply} focus={focus} haptic={haptic} workDetail={workDetail?.store} /> : null;
 }
 
 function Settings() {
@@ -91,6 +99,11 @@ const liveSession: FeatureModule = {
       'live-session',
     );
     const offSession = bus.on('session.changed', () => reply.set(null), 'live-session');
+    const launch = createLaunch({ voice: v, menu, focus });
+    const offLink = bus.on('app.link', (e) => str(e.data.screen) === 'live' && launch(str(e.data.action), e.data.trusted === true), 'live-session');
+    const haptics = ports.haptics;
+    const tick = haptics ? () => haptics.tick() : undefined;
+    haptic = tick;
     model = m;
     voice = v;
     attach = a;
@@ -102,7 +115,10 @@ const liveSession: FeatureModule = {
     return () => {
       offScreen();
       offSession();
+      offLink();
       menu.set(false);
+      focus.set(false);
+      if (haptic === tick) haptic = undefined;
       reply.set(null);
       status.set(false);
       m.dispose();

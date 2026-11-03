@@ -7,7 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Connection, ConnectionState } from '../core/connection';
 import { localEvent } from '../core/events';
 import type { LoadedFeatures } from '../core/feature';
-import type { FrameMeter } from '../core/ports';
+import type { FrameMeter, LaunchLinks } from '../core/ports';
 import { createStore, useStore } from '../core/store';
 import { ChromeContext, chrome, colors, space, titleGlow, type, useTheme } from '../core/theme';
 import { Ambient } from '../ui/Ambient';
@@ -33,7 +33,7 @@ interface Route {
 const selectLink = (s: ConnectionState) => s.link;
 const APP_TITLE = 'E.D.I.T.H';
 
-export function Shell({ loaded, connection, meter }: { loaded: LoadedFeatures; connection: Connection; meter: FrameMeter | null }) {
+export function Shell({ loaded, connection, meter, links = null }: { loaded: LoadedFeatures; connection: Connection; meter: FrameMeter | null; links?: LaunchLinks | null }) {
   const link = useStore(connection.store, selectLink);
   const theme = useTheme();
   const brandFont = useBrandFont(); // starts loading at once; nothing waits for it
@@ -45,10 +45,10 @@ export function Shell({ loaded, connection, meter }: { loaded: LoadedFeatures; c
     );
   }
   if (link === 'unconfigured') return <ConnectScreen connection={connection} />;
-  return <Main loaded={loaded} connection={connection} meter={meter} brandFont={brandFont} />;
+  return <Main loaded={loaded} connection={connection} meter={meter} brandFont={brandFont} links={links} />;
 }
 
-function Main({ loaded, connection, meter, brandFont }: { loaded: LoadedFeatures; connection: Connection; meter: FrameMeter | null; brandFont: boolean }) {
+function Main({ loaded, connection, meter, brandFont, links }: { loaded: LoadedFeatures; connection: Connection; meter: FrameMeter | null; brandFont: boolean; links: LaunchLinks | null }) {
   const insets = useSafeAreaInsets();
   const tabNames = useMemo(() => new Set([...loaded.screens.filter((s) => s.tab).map((s) => s.name), 'tools', 'settings']), [loaded]);
   const [nav, setNav] = useState<NavState>(() => ({ tab: loaded.screens.find((s) => s.tab)?.name ?? 'tools', stack: [] }));
@@ -88,11 +88,18 @@ function Main({ loaded, connection, meter, brandFont }: { loaded: LoadedFeatures
     return () => sub.remove();
   }, [home]);
 
-  // A tapped notification or Live Alerts pill: edith://live, edith://approvals, edith://settings/updates.
+  // A tapped notification, Live Alerts pill or home-screen widget: edith://live, edith://approvals,
+  // edith://settings/updates, edith://live/type. For a screen other than Settings the second part is
+  // an action its feature carries out (app.link), e.g. the widget's Type, Mic and Attach; `trusted`
+  // when the link carries this install's widget key (any app or page can send an edith:// link).
   useDeepLinks((url) => {
     const target = linkTarget(url, (name) => routes.has(name), home);
-    if (target) open(target.screen, target.page);
-  });
+    if (!target) return;
+    open(target.screen, target.page);
+    if (target.page && target.screen !== 'settings') {
+      connection.bus.publish(localEvent('app.link', { screen: target.screen, action: target.page, trusted: links?.trusted(url) ?? false }));
+    }
+  }, links);
   // A feature's own link to a screen (e.g. Settings → Train wake word).
   useEffect(
     () => connection.bus.on('app.open', (e) => routes.has(String(e.data.screen)) && open(String(e.data.screen), typeof e.data.page === 'string' ? e.data.page : null), 'shell'),

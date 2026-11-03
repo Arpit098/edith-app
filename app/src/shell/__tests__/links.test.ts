@@ -27,4 +27,12 @@ describe('linkTarget', () => {
     expect(linkTarget('edith://gone/updates', has, 'live')).toEqual({ screen: 'live', page: null });
     expect(linkTarget('https://x/settings/updates', has, 'live')).toBeNull();
   });
+
+  it("reads the home-screen widgets' links: an action for the chat, and approvals with their query ignored", () => {
+    expect(linkTarget('edith://live/type', has, 'live')).toEqual({ screen: 'live', page: 'type' });
+    expect(linkTarget('edith://live/listen', has, 'live')).toEqual({ screen: 'live', page: 'listen' });
+    expect(linkTarget('edith://live/attach', has, 'live')).toEqual({ screen: 'live', page: 'attach' });
+    const withApprovals = (s: string) => s === 'live' || s === 'approvals';
+    expect(linkTarget('edith://approvals?id=7f3a&answer=allow', withApprovals, 'live')).toEqual({ screen: 'approvals', page: null });
+  });
 });

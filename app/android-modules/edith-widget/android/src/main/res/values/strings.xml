@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="edith_widget_bar_label">EDITH bar</string>
+  <string name="edith_widget_bar_description">Type, talk or send a photo to EDITH.</string>
+  <string name="edith_widget_message_label">EDITH last message</string>
+  <string name="edith_widget_message_description">EDITH\'s latest reply or alert, and whether she\'s working.</string>
+  <string name="edith_widget_name" translatable="false">E.D.I.T.H</string>
+  <string name="edith_widget_type">Type to EDITH</string>
+  <string name="edith_widget_mic">Talk to EDITH</string>
+  <string name="edith_widget_attach">Send EDITH a photo</string>
+  <string name="edith_widget_open">Open EDITH</string>
+  <string name="edith_widget_empty">No messages yet. Tap to open EDITH.</string>
+  <string name="edith_widget_private">New message from EDITH</string>
+  <string name="edith_widget_allow">Approve</string>
+  <string name="edith_widget_deny">Deny</string>
+  <string name="edith_widget_state_working">Working</string>
+  <string name="edith_widget_state_idle">Idle</string>
+  <string name="edith_widget_state_waiting">Waiting on you</string>
+  <string name="edith_widget_state_unknown">Status not known</string>
+</resources>

@@ -37,3 +37,16 @@ export function formatBytes(n: number): string {
 export function voiceSummary(text: string): string {
   return ((text ?? '').trim().split('\n\n', 1)[0] ?? '').trim();
 }
+
+/** One line of plain text (a notification, a widget): code blocks and markdown marks out, whitespace folded, cut at `max` with "…". */
+export function oneLine(text: string, max: number): string {
+  const plain = text
+    .replace(/```[\s\S]*?(```|$)/g, ' [code] ')
+    .replace(/`([^`]*)`/g, '$1')
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/(^|\s)[#>*_-]+\s/g, '$1')
+    .replace(/[*_]{2,}/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return plain.length > max ? `${plain.slice(0, max - 1)}…` : plain;
+}

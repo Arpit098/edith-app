@@ -1,9 +1,9 @@
-// Adapter: OngoingStatus (Live Alerts), Notifier and PushReceiver on our native module android-modules/edith-system.
+// Adapter: OngoingStatus (Live Alerts), Notifier, PushReceiver and Haptics on our native module android-modules/edith-system.
 
 import { requireOptionalNativeModule } from 'expo';
 import { PermissionsAndroid } from 'react-native';
 
-import type { LocalNotification, Notifier, OngoingStatus, OngoingStatusView, PushMode, PushReceiver, PushSetup, PushStatus } from '../../../core/ports';
+import type { Haptics, LocalNotification, Notifier, OngoingStatus, OngoingStatusView, PushMode, PushReceiver, PushSetup, PushStatus } from '../../../core/ports';
 
 interface NativeSystem {
   sdkInt: number;
@@ -23,12 +23,13 @@ interface NativeSystem {
   pushDisable(): void;
   pushStatus(): Partial<PushStatus>;
   openBatterySettings(): void;
+  haptic(): void;
 }
 
 const MIN_SDK = 26; // notification channels and foreground-service starts (Android 8); the app's minSdk is 24
 
 /** Null where the native module isn't built in (jest, web), or on Android older than 8. */
-export function createAndroidSystem(): { status: OngoingStatus; notifier: Notifier; push: PushReceiver } | null {
+export function createAndroidSystem(): { status: OngoingStatus; notifier: Notifier; push: PushReceiver; haptics: Haptics } | null {
   const native = requireOptionalNativeModule<NativeSystem>('EdithSystem');
   if (!native) return null;
   const sdkInt = Number(native.sdkInt);
@@ -81,5 +82,6 @@ export function createAndroidSystem(): { status: OngoingStatus; notifier: Notifi
     },
     openBatterySettings: () => native.openBatterySettings(),
   };
-  return { status, notifier, push };
+  const haptics: Haptics = { tick: () => native.haptic() };
+  return { status, notifier, push, haptics };
 }

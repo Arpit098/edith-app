@@ -5,8 +5,9 @@
 // letting go there quotes the message. It springs back on the UI thread, or jumps back with
 // "Remove animations" on.
 //
-// No haptic yet: RN's Vibration needs android.permission.VIBRATE, which app.json blocks, and
-// calling it without the permission throws. A tick needs a native change (follow-up).
+// `onCatch` runs as the drag first crosses the catch point (each time it crosses back over it):
+// the live chat gives it a light haptic tick. Not RN's Vibration: that needs
+// android.permission.VIBRATE, which app.json blocks (the Haptics port uses the view's own feedback).
 
 import { memo, useMemo, useRef, type ReactNode } from 'react';
 import { PanResponder, StyleSheet, View } from 'react-native';
@@ -17,15 +18,17 @@ import { Icon } from './Icon';
 import { useReduceMotion } from './motion';
 import { caught, swipeOffset, SWIPE, wantsSwipe } from './swipe';
 
-export const SwipeToReply = memo(function SwipeToReply({ onReply, children }: { onReply: () => void; children: ReactNode }) {
+export const SwipeToReply = memo(function SwipeToReply({ onReply, onCatch, children }: { onReply: () => void; onCatch?: () => void; children: ReactNode }) {
   const reduce = useReduceMotion();
   const x = useSharedValue(0);
   // The responder is made once; these keep its callbacks current without making it again.
-  const latest = useRef({ onReply, reduce });
-  latest.current = { onReply, reduce };
+  const latest = useRef({ onReply, onCatch, reduce });
+  latest.current = { onReply, onCatch, reduce };
 
   const responder = useMemo(() => {
+    let held = false; // past the catch point now (one tick per crossing, not per move)
     const back = () => {
+      held = false;
       x.value = latest.current.reduce ? 0 : withSpring(0, motion.swipe);
     };
     return PanResponder.create({
@@ -33,6 +36,9 @@ export const SwipeToReply = memo(function SwipeToReply({ onReply, children }: { 
       onPanResponderTerminationRequest: () => false, // a swipe in progress keeps the touch (the list doesn't scroll away with it)
       onPanResponderMove: (_, g) => {
         x.value = swipeOffset(g.dx);
+        const now = caught(g.dx);
+        if (now && !held) latest.current.onCatch?.();
+        held = now;
       },
       onPanResponderRelease: (_, g) => {
         back();

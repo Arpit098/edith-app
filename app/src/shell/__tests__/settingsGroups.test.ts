@@ -66,7 +66,7 @@ describe('the real Settings', () => {
       ['Connection', ['Server connection', 'Claude accounts']],
       ['Notifications', ['Push', 'Live Alerts']],
       ['Voice', ['Voice input', 'Wake word']],
-      ['App', ['Appearance', 'Chat']],
+      ['App', ['Appearance', 'Chat', 'Widgets']],
       ['About', ['Updates', 'Developer']],
     ]);
     for (const s of all) {

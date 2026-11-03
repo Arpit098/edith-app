@@ -2,10 +2,11 @@
 // flows (connect gate, live events, approvals banner, tools grid, back button) work end to end.
 
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import { BackHandler, StyleSheet, Text } from 'react-native';
+import { BackHandler, Linking, StyleSheet, Text } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { localEvent } from '../../core/events';
+import type { LaunchLinks } from '../../core/ports';
 import { loadFeatures } from '../../core/feature';
 import { features } from '../../features';
 import { ev, fakeContext, flush } from '../../testing/fakes';
@@ -48,7 +49,7 @@ function texts(r: ReactTestRenderer): string {
     .join(' | ');
 }
 
-async function mount() {
+async function mount(links: LaunchLinks | null = null) {
   jest.spyOn(console, 'error').mockImplementation(() => {}); // react-test-renderer is deprecated in React 19
   const ctx = fakeContext();
   ctx.transport
@@ -70,7 +71,7 @@ async function mount() {
   await act(async () => {
     r = create(
       <SafeAreaProvider initialMetrics={METRICS}>
-        <Shell loaded={loaded} connection={ctx.connection} meter={null} />
+        <Shell loaded={loaded} connection={ctx.connection} meter={null} links={links} />
       </SafeAreaProvider>,
     );
   });
@@ -220,8 +221,9 @@ describe('Shell', () => {
   });
 
   describe('navigation menu (top right)', () => {
-    async function connected() {
-      const m = await mount();
+    async function connected(links: LaunchLinks | null = null, seenLinks?: unknown[]) {
+      const m = await mount(links);
+      if (seenLinks) m.ctx.bus.on('app.link', (e) => void seenLinks.push(e.data), 'test');
       let screen = '';
       m.ctx.bus.on('app.screen', (e) => void (screen = String(e.data.name)), 'test'); // what the shell shows
       await act(() => m.ctx.connection.connect('edith', 'x'.repeat(40)));
@@ -292,6 +294,80 @@ describe('Shell', () => {
       expect(items()).toHaveLength(0);
       act(() => r.unmount());
       loaded.cleanup();
+    });
+
+    /** React Native's Linking 'url' events, captured (its own mock is a jest.fn: swapped by hand, as a spy would change it for the other tests). */
+    function captureUrls() {
+      const handlers: ((e: { url: string }) => void)[] = [];
+      const original = Linking.addEventListener;
+      Linking.addEventListener = ((_: string, h: (e: { url: string }) => void) => {
+        handlers.push(h);
+        return { remove: () => handlers.splice(handlers.indexOf(h), 1) };
+      }) as never;
+      return { send: (url: string) => handlers.forEach((h) => h({ url })), restore: () => (Linking.addEventListener = original) };
+    }
+
+    /** Like the native LaunchLinks: the launch link once, then cleared; trusted only with the install's key. */
+    function fakeLinks(initial: string | null) {
+      let pending = initial;
+      const consumed: string[] = [];
+      const links: LaunchLinks = {
+        initial: () => {
+          const url = pending;
+          pending = null;
+          return url;
+        },
+        consume: (url) => void consumed.push(url),
+        trusted: (url) => url.includes('k=secret'),
+      };
+      return { links, consumed };
+    }
+
+    it("a widget's link opens the chat and hands it the action, trusted only with the key; Settings links don't", async () => {
+      const urls = captureUrls();
+      const { links, consumed } = fakeLinks(null);
+      const { ctx, r, loaded, press, title } = await connected(links);
+      const seen: unknown[] = [];
+      ctx.bus.on('app.link', (e) => void seen.push(e.data), 'test');
+      await press('Menu');
+      await press('Settings');
+      expect(title()).toBe('settings');
+      await act(async () => {
+        urls.send('edith://live/attach?k=secret');
+        await flush();
+      });
+      expect(title()).toBe('live');
+      await act(async () => {
+        urls.send('edith://live/listen'); // any app or page can send this one
+        urls.send('edith://settings/updates');
+        urls.send('edith://live');
+        await flush();
+      });
+      expect(seen).toEqual([
+        { screen: 'live', action: 'attach', trusted: true },
+        { screen: 'live', action: 'listen', trusted: false },
+      ]); // a Settings page is the shell's own; a plain link has no action
+      expect(consumed).toEqual(['edith://live/attach?k=secret', 'edith://live/listen', 'edith://settings/updates', 'edith://live']);
+      urls.restore();
+      act(() => r.unmount());
+      loaded.cleanup();
+    });
+
+    it('runs the launch link once: a JS reload (or a restore from Recents) does not start the mic again', async () => {
+      const urls = captureUrls();
+      const { links } = fakeLinks('edith://live/listen?k=secret');
+      const seen: unknown[] = [];
+      const first = await connected(links, seen);
+      expect(seen).toEqual([{ screen: 'live', action: 'listen', trusted: true }]);
+      act(() => first.r.unmount());
+      first.loaded.cleanup();
+      // A reload mounts the app again on the same activity: the link must not come back.
+      const again = await connected(links, seen);
+      await act(async () => flush());
+      expect(seen).toHaveLength(1);
+      urls.restore();
+      act(() => again.r.unmount());
+      again.loaded.cleanup();
     });
 
     it('opens Settings from outside on the page asked for, else on the list, never a page left open', async () => {
