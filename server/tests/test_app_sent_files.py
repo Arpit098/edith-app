@@ -159,9 +159,31 @@ class RegisterTest(unittest.TestCase):
             self.s.register("/proc/self/environ")
         self.assertEqual(len(logs.output), 2)
 
-    def test_default_roots(self):
-        s = SentFiles(str(self.h.index), str(self.h.home), str(self.h.work))
-        self.assertEqual(s.roots, [os.path.realpath(p) for p in (self.h.work, self.h.home / "Projects", "/tmp")])
+    def test_default_roots_and_tmp_only_through_edith_out_or_a_scratchpad(self):
+        tmp = self.h.root / "tmp"
+        s = SentFiles(str(self.h.index), str(self.h.home), str(self.h.work), tmp=str(tmp))
+        self.assertEqual(s.roots, [os.path.realpath(p) for p in (self.h.work, self.h.home / "Projects", tmp / "edith-out")])
+        uid = os.getuid()
+        ok = {"edith-out/report.pdf", f"claude-{uid}/-home-ubuntu-edith/a8270bc4/scratchpad/plan.md",
+              f"claude-{uid}/-home-ubuntu-edith/a8270bc4/scratchpad/sub/chart.png"}
+        refused = {
+            "playwright_chromiumdev_profile-x1/Default/Cookies": "outside the folders EDITH may send from",
+            "playwright_chromiumdev_profile-x1/Default/Login Data": "outside the folders EDITH may send from",
+            f"claude-{uid}/-home-ubuntu-edith/a8270bc4/tasks/b8qfxkenp.output": "outside the folders EDITH may send from",
+            f"claude-{uid}/-home-ubuntu-edith/a8270bc4/prompt.txt": "outside the folders EDITH may send from",
+            f"claude-{uid + 1}/p/s/scratchpad/x.md": "outside the folders EDITH may send from",  # another user's
+            f"claude-{uid}/p/s/scratchpad/.cache/x.md": "in a hidden folder",
+            "other.txt": "outside the folders EDITH may send from",
+        }
+        for rel in ok | set(refused):
+            p = tmp / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_bytes(b"x")
+        for rel in ok:
+            self.assertIn("id", s.register(str(tmp / rel)), rel)
+        with self.assertLogs("edith.adapter.app_api.files", "WARNING"):
+            for rel, why in refused.items():
+                self.assertEqual(s.register(str(tmp / rel))["error"], why, rel)
         (self.h.home / "Downloads").mkdir()
         self.assertEqual(SentFiles(str(self.h.index), str(self.h.home), str(self.h.work)).roots[-1],
                          os.path.realpath(self.h.home / "Downloads"))

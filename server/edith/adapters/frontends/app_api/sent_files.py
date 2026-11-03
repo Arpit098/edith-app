@@ -8,7 +8,9 @@ Claude writes the SEND_FILE lines, so registration is the gate:
 - the path is resolved (symlinks too) and must be a regular, readable file of at most MAX_BYTES with
   one link (a hard link to a private file would otherwise pass as an ordinary one);
 - it must be inside one of the allowed roots (config `send_file_roots`; by default ~/edith, ~/Projects,
-  /tmp and ~/Downloads), and not inside a dot-folder below that root (.git, .claude, .venv, …);
+  /tmp/edith-out and ~/Downloads) or a Claude session's scratchpad
+  (/tmp/claude-<uid>/<project>/<session>/scratchpad/…; nothing else under /tmp, which holds browser
+  profiles, task outputs and prompts), and not inside a dot-folder below that root (.git, .venv, …);
 - nothing in a secret folder (.config, .claude, .ssh, …, anywhere) or /proc, /sys, /dev, checked on
   the given path and on the resolved one;
 - no key, token, .env or credential file by its name.
@@ -72,20 +74,22 @@ def _under(path, folder):
     return path == folder or path.startswith(folder.rstrip("/") + "/")
 
 
-def default_roots(home, work_dir):
-    """Where EDITH may send files from unless config says otherwise."""
-    roots = [work_dir, os.path.join(home, "Projects"), "/tmp"]
+def default_roots(home, work_dir, tmp="/tmp"):
+    """Where EDITH may send files from unless config says otherwise (scratchpads are always allowed)."""
+    roots = [work_dir, os.path.join(home, "Projects"), os.path.join(tmp, "edith-out")]
     downloads = os.path.join(home, "Downloads")
     return roots + ([downloads] if os.path.isdir(downloads) else [])
 
 
 class SentFiles:
-    def __init__(self, index_file, home, work_dir, max_bytes=MAX_BYTES, roots=None):
+    def __init__(self, index_file, home, work_dir, max_bytes=MAX_BYTES, roots=None, tmp="/tmp"):
         self.index_file, self.max_bytes = index_file, max_bytes
         self.home, self.work_dir = os.path.realpath(home), work_dir
         self._raw_home = os.path.abspath(home)
         expand = lambda p: self._raw_home + p[1:] if p == "~" or p.startswith("~/") else p  # noqa: E731
-        self.roots = [os.path.realpath(expand(r)) for r in (roots if roots is not None else default_roots(home, work_dir))]
+        self.roots = [os.path.realpath(expand(r)) for r in (roots if roots is not None else default_roots(home, work_dir, tmp))]
+        # A Claude Code session's scratchpad (this user's only): /tmp/claude-<uid>/<project>/<session>/scratchpad/
+        self.scratchpad = re.compile(rf"^{re.escape(os.path.realpath(tmp))}/claude-{os.getuid()}/[^/]+/[^/]+/scratchpad(?=/)")
         self._logged = set()  # (path, reason) refusals already logged
         self._lock = threading.Lock()
         self._ids = None   # id -> record, loaded on first use
@@ -155,6 +159,8 @@ class SentFiles:
         if secret_name(name) or secret_name(os.path.basename(real)):
             raise Refused("a key, token or credential file")
         root = next((r for r in self.roots if _under(real, r)), None)
+        if root is None and (pad := self.scratchpad.match(real)):
+            root = pad.group(0)
         if root is None:
             raise Refused("outside the folders EDITH may send from")
         if any(part.startswith(".") for part in os.path.relpath(real, root).split("/")[:-1]):

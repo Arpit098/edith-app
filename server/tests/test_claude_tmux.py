@@ -14,7 +14,7 @@ import unittest
 from unittest import mock
 
 from edith.adapters.agents.claude_tmux.backend import NOTES_HEADER, ClaudeTmux
-from edith.adapters.agents.claude_tmux.live import events_of
+from edith.adapters.agents.claude_tmux.live import events_of, turn_ends
 from edith.adapters.agents.claude_tmux.tmux import Tmux
 from edith.common.claude_sessions import proc_stat
 from edith.core import CommandCall, EventBus, Ports, Registry, load_features
@@ -649,6 +649,12 @@ class LiveViewTest(unittest.TestCase):
         self.assertEqual(events_of(reply("I'll make it, then\nSEND_FILE: /tmp/r.pdf", "tool_use"), {}),
                          [("message.assistant", "system", {"text": "I'll make it, then", "files": [], "lane": "main"})])
         self.assertEqual(events_of(reply("SEND_FILE: /tmp/r.pdf", "tool_use"), {}), [])
+        # No stop_reason: final only when known to be the turn's last assistant entry (history).
+        self.assertEqual(events_of(reply("SEND_FILE: /tmp/r.pdf", None), {}), [])
+        self.assertEqual(events_of(reply("SEND_FILE: /tmp/r.pdf", None), {}, final=True)[0][2]["files"], ["/tmp/r.pdf"])
+        prompt = {"type": "user", "message": {"content": "next"}}
+        result = {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "t"}]}}
+        self.assertEqual(turn_ends([reply("a", None), result, reply("b", None), prompt, reply("c", None)]), {2})
         # An example in a code block is never a file.
         self.assertEqual(events_of(reply("Use:\n```\nSEND_FILE: /tmp/x\n```"), {})[0][2]["files"], [])
 

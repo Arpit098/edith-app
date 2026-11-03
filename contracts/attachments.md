@@ -121,8 +121,9 @@ event's `files` paths (`message.assistant`, `turn.done`, on the stream and in hi
   (and across restarts) in `~/.cache/edith/app-sent-files.json` (mode 0600, atomic writes, at most 1000).
   The same file (resolved path, inode, size and mtime) keeps its id, so the live event and history agree.
 - **Allowed roots:** a file must be inside one of `send_file_roots` (`[adapter.app_api]` in config.toml;
-  default `~/edith`, `~/Projects`, `/tmp` (the Claude scratchpad `/tmp/claude-*` included) and `~/Downloads`
-  if it exists), checked on the resolved path, and not inside a dot-folder below that root (`.git`, `.venv`,
+  default `~/edith`, `~/Projects`, `/tmp/edith-out` and `~/Downloads` if it exists), or inside a Claude
+  session's scratchpad (`/tmp/claude-<uid>/<project>/<session>/scratchpad/…`, always allowed). Nothing else
+  under `/tmp` (browser profiles, task outputs and prompt files live there). Checked on the resolved path, and not inside a dot-folder below that root (`.git`, `.venv`,
   `.claude`, …). So `~/.claude.json`, `~/.bash_history`, `~/edith-backups`, `~/.local/share` and
   `~/.cache/edith` are never offered. The rules below apply inside the roots as well.
 - **What is refused** at registration, because Claude writes these lines: anything inside a folder named
@@ -140,7 +141,10 @@ event's `files` paths (`message.assistant`, `turn.done`, on the stream and in hi
 - **Which lines count:** only the turn's final reply (`turn.done`, and the transcript's text with
   `stop_reason` other than `tool_use`); `SEND_FILE:` lines in narration before a tool call are dropped, and
   lines inside fenced code blocks (```` ``` ```` or `~~~`) are never directives. The path is the rest of the
-  line, trimmed, so it may hold spaces. Telegram reads the lines the same way (`common/text.py` `take_files`).
+  line, trimmed, so it may hold spaces; backticks or quotes around it are dropped, and a trailing
+  ` REACT: <emoji>` on the same line is the reply's reaction, not part of the path. A transcript entry
+  without a `stop_reason` counts as the final reply only when it is its turn's last assistant entry. Telegram
+  answers "⚠️ File not found: <path>" for a path that doesn't exist, as it always has. Telegram reads the lines the same way (`common/text.py` `take_files`).
 - If the download comes back shorter than `Content-Length` (the file shrank while it was sent), the server
   closes the connection; the app also checks the size against `size`.
 - Relative paths are taken from EDITH's working folder (`~/edith`), `~/` from the home.

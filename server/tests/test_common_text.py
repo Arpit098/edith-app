@@ -36,6 +36,11 @@ class TextTest(unittest.TestCase):
         self.assertIn("SEND_FILE: /etc/passwd", rest)
         self.assertEqual(take_directives(text, "REACT")[0], [])
         self.assertEqual(take_files("SEND_FILE:\nok"), ([], "SEND_FILE:\nok"))  # no path: not a directive
+        # Quotes and backticks go; a REACT on the same line stays the reaction.
+        self.assertEqual(take_files("SEND_FILE: `/tmp/a b.pdf`"), (["/tmp/a b.pdf"], ""))
+        self.assertEqual(take_files('SEND_FILE: "/tmp/x.md"\nok'), (["/tmp/x.md"], "ok"))
+        self.assertEqual(reply_parts("Done.\nSEND_FILE: '/tmp/r.pdf' REACT: 🎉"),
+                         {"text": "Done.", "files": ["/tmp/r.pdf"], "reaction": "🎉"})
         # Telegram and the app read the same lines (both take_files).
         self.assertEqual(reply_parts("SEND_FILE: /tmp/a b.pdf")["text"], "📎 a b.pdf")
         self.assertEqual(reply_parts("Done.\nSEND_FILE: /tmp/a.pdf")["text"], "Done.")

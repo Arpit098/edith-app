@@ -17,6 +17,17 @@ def chunk(text: str, size: int) -> list[str]:
 FENCE = re.compile(r"^\s{0,3}(```|~~~)")
 
 
+REACT_TAIL = re.compile(r"\s+REACT:\s*(\S+)\s*$")
+
+
+def unquote(path: str) -> str:
+    """A path without the backticks or quotes EDITH may put around it."""
+    path = path.strip()
+    while len(path) >= 2 and path[0] == path[-1] and path[0] in "`'\"":
+        path = path[1:-1].strip()
+    return path
+
+
 def take_directives(text: str, key: str, whole_line: bool = False) -> tuple[list[str], str]:
     """Pull out "KEY: value" lines (e.g. SEND_FILE, REACT) that EDITH adds for the frontends.
     Returns (values, text without those lines). Lines inside fenced code blocks (``` or ~~~) are
@@ -30,10 +41,21 @@ def take_directives(text: str, key: str, whole_line: bool = False) -> tuple[list
             fenced = not fenced
         found = None if fenced else line_re.match(line)
         if found:
-            values.append(found.group(1))
+            value, react = found.group(1), None
+            if whole_line:
+                # "SEND_FILE: `/a b.pdf` REACT: 🎉": the path without quotes, the reaction kept as its own line.
+                tail = REACT_TAIL.search(value)
+                if tail:
+                    value, react = value[:tail.start()], f"REACT: {tail.group(1)}"
+                value = unquote(value)
+            if value:
+                values.append(value)
             while keep and not keep[-1].strip():
                 keep.pop()  # blank lines before it
             dropped = True
+            if react:
+                keep.append(react)
+                dropped = False
             continue
         if dropped and not line.strip():
             continue  # blank lines after it

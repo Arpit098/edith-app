@@ -17,8 +17,10 @@ describe('safeName', () => {
 describe('folderLost', () => {
   it('re-picks the folder only when it is gone or its access was taken back', () => {
     expect(folderLost(new Error('java.lang.SecurityException: Permission Denial: writing'))).toBe(true);
-    expect(folderLost(new Error("Directory does not exist"))).toBe(true);
-    expect(folderLost(new Error('FileNotFoundException: no such document'))).toBe(true);
+    expect(folderLost(new Error('Permission denied'))).toBe(true);
+    // A generic "not found" may be the pruned cached copy: not a reason to ask for the folder again.
+    expect(folderLost(new Error('File not found'))).toBe(false);
+    expect(folderLost(new Error('FileNotFoundException: no such file, missing'))).toBe(false);
     expect(folderLost(new Error('ENOSPC: no space left on device'))).toBe(false);
     expect(folderLost(new Error('I/O error'))).toBe(false);
   });

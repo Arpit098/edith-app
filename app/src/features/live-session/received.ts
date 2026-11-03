@@ -187,11 +187,17 @@ export function createReceivedModel({ transport, files }: { transport: Transport
     return job;
   }
 
-  async function saveCopy(file: SentFile, uri: string): Promise<string | null> {
+  async function saveCopy(file: SentFile, uri: string, again = true): Promise<string | null> {
     try {
       const folder = await files!.save(uri, file.name, file.mime);
       return folder === null ? null : `Saved ${file.name} to ${folder}`;
     } catch (e) {
+      if (again && file.id && !files!.cached({ id: file.id, name: file.name, size: file.size ?? -1 })) {
+        // The downloaded copy was pruned meanwhile: download it again (once), then save.
+        setFile(file.id, { status: 'failed', uri: null });
+        const fresh = await fetch(file);
+        if (fresh) return saveCopy(file, fresh, false);
+      }
       const why = e instanceof Error && e.message ? e.message : String(e);
       return `Couldn't save ${file.name}: ${why}`;
     }

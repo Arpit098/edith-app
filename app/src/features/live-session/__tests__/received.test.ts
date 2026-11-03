@@ -176,6 +176,29 @@ describe('createReceivedModel', () => {
     now.mockRestore();
   });
 
+  it('downloads again when the cached copy was pruned before saving', async () => {
+    const { m, f } = setup();
+    const first = m.open(PDF);
+    await flush();
+    f.finish();
+    await first;
+    let calls = 0;
+    f.port.save = async () => {
+      calls++;
+      if (calls === 1) {
+        f.port.cached = () => null; // pruned
+        throw new Error('File not found');
+      }
+      return 'EDITH';
+    };
+    const saved = m.save(PDF);
+    await flush();
+    f.port.cached = () => null;
+    f.finish();
+    expect(await saved).toBe('Saved Plan v2.pdf to EDITH');
+    expect(f.port.downloads).toHaveLength(2);
+  });
+
   it('shows images and text in the viewer', async () => {
     const { m, f } = setup();
     const md: SentFile = { id: ID2, name: 'notes.md', size: 15, mime: 'text/markdown', error: null };

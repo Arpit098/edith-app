@@ -18,6 +18,7 @@ import type { KeyValueStore, ReceivedFiles } from '../../../core/ports';
 import { toPrune } from './prune';
 
 const SAVE_DIR_KEY = 'files.saveDir';
+export const CACHE_GONE = 'the downloaded copy is gone';
 const CHUNK = 1024 * 1024;
 
 /** A file name that is safe as one path segment (the server's name, minus separators and controls). */
@@ -26,10 +27,22 @@ export function safeName(name: string): string {
   return clean || 'file';
 }
 
-/** Whether a save failed because the kept folder is gone or its access was taken back (pick again). */
+/**
+ * Whether a save failed because the kept folder's access was taken back (pick again). A folder that is
+ * gone is seen by checking it (folderGone), never from a generic "not found", which may be about the
+ * cached file instead (pruned: the app downloads it again).
+ */
 export function folderLost(e: unknown): boolean {
   const msg = e instanceof Error ? `${e.name} ${e.message}` : String(e);
-  return /permission|denied|SecurityException|not ?found|no such|does ?n[o']t exist|FileNotFound|missing/i.test(msg);
+  return /permission|denied|SecurityException/i.test(msg);
+}
+
+function folderGone(dir: Directory): boolean {
+  try {
+    return !dir.exists;
+  } catch {
+    return true;
+  }
 }
 
 export function createExpoReceivedFiles(data?: KeyValueStore): ReceivedFiles {
@@ -119,6 +132,7 @@ export function createExpoReceivedFiles(data?: KeyValueStore): ReceivedFiles {
     },
     async save(uri, name, mime) {
       const src = new File(uri);
+      if (!src.exists) throw new Error(CACHE_GONE); // pruned since: the model downloads it again
       const known = await data?.get(SAVE_DIR_KEY).catch(() => null);
       let dir: Directory | null = known ? new Directory(known) : null;
       if (dir) {
@@ -126,7 +140,7 @@ export function createExpoReceivedFiles(data?: KeyValueStore): ReceivedFiles {
           copyInto(src, dir, name, mime);
           return dir.name || 'your folder';
         } catch (e) {
-          if (!folderLost(e)) throw e; // a real failure (disk full, …): say it, keep the folder
+          if (!folderLost(e) && !folderGone(dir)) throw e; // a real failure (disk full, …): say it, keep the folder
           dir = null; // the folder is gone or its access was taken back: ask again
         }
       }
