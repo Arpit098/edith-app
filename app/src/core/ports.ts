@@ -372,6 +372,19 @@ export interface HomeWidgets {
   setShowText(on: boolean): void;
 }
 
+/**
+ * The edith:// link EDITH was launched with, and whether a link is the home-screen widget's own
+ * (android-modules/edith-widget; contracts/widgets.md "Links").
+ */
+export interface LaunchLinks {
+  /** The launch link, once: cleared as it's read (a JS reload must not run it again); null after a restore from Recents. */
+  initial(): string | null;
+  /** A link that arrived while running is handled: it won't come back as the launch link. */
+  consume(url: string): void;
+  /** Whether `url` carries this install's widget key: only those may start the mic or open the attach menu. */
+  trusted(url: string): boolean;
+}
+
 /** A light tick under the finger (no VIBRATE permission: the view's own haptic feedback). */
 export interface Haptics {
   tick(): void;

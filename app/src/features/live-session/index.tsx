@@ -100,7 +100,7 @@ const liveSession: FeatureModule = {
     );
     const offSession = bus.on('session.changed', () => reply.set(null), 'live-session');
     const launch = createLaunch({ voice: v, menu, focus });
-    const offLink = bus.on('app.link', (e) => str(e.data.screen) === 'live' && launch(str(e.data.action)), 'live-session');
+    const offLink = bus.on('app.link', (e) => str(e.data.screen) === 'live' && launch(str(e.data.action), e.data.trusted === true), 'live-session');
     const haptics = ports.haptics;
     const tick = haptics ? () => haptics.tick() : undefined;
     haptic = tick;

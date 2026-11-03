@@ -45,6 +45,7 @@ internal data class WidgetSnapshot(
   companion object {
     const val MAX_MESSAGES = 3
     const val MAX_TEXT = 300 // a push's text is at most 300 characters too (contracts/push.md)
+    const val STALE_S = 3 * 60 * 60L // "working" with no news for this long: not known any more
     val STATES = setOf("working", "idle", "waiting")
     val EMPTY = WidgetSnapshot(0, "idle", emptyList(), null, false)
 
@@ -73,13 +74,14 @@ internal data class WidgetSnapshot(
 
     /**
      * A push message (contracts/push.md "Message") folded into `s`, or null when it changes nothing
-     * the widget shows (an update alert, a cancel of something else, garbage). `now` is unix seconds.
+     * the widget shows (an update alert, a cancel of something else, garbage). `now` is unix seconds;
+     * `ts` is when edith published the push (ntfy's `time`), the line's time, or `now` when unknown.
      *
      * - `approvals` → "🔐 <title> <text>", waiting on Arpit, with its id for Approve / Deny;
      * - a cancel of the waiting approval's `perm:<id>` (answered or timed out) → working again (the turn goes on);
      * - `errors` → "⚠️ …", idle; `reminders` → "⏰ …", state kept; `replies` (and anything else) → the text, idle.
      */
-    fun fold(s: WidgetSnapshot, raw: String, now: Long, showText: Boolean): WidgetSnapshot? {
+    fun fold(s: WidgetSnapshot, raw: String, now: Long, showText: Boolean, ts: Long = now): WidgetSnapshot? {
       val m = try { JSONObject(raw) } catch (e: JSONException) { return null }
       val tag = m.optString("tag")
       if (tag.isEmpty()) return null
@@ -104,8 +106,10 @@ internal data class WidgetSnapshot(
         "reminders" -> Fold("⏰ ${text.ifEmpty { title }}", true, s.state, waiting)
         else -> Fold(text.ifEmpty { title }, false, if (waiting != null) "waiting" else "idle", waiting)
       }
-      val message = WidgetMessage(if (showText) line.take(MAX_TEXT) else "", now, alert)
-      val next = WidgetSnapshot(now, state, (listOf(message) + s.messages).take(MAX_MESSAGES), permission, !showText)
+      val message = WidgetMessage(if (showText) line.take(MAX_TEXT) else "", if (ts in 1..now) ts else now, alert)
+      // In time order (a push fetched late by the 15-minute check may be older than a line already shown).
+      val messages = (s.messages + message).sortedByDescending { it.ts }.take(MAX_MESSAGES)
+      val next = WidgetSnapshot(now, state, messages, permission, !showText)
       return if (showText) next else next.redacted()
     }
   }

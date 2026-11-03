@@ -52,7 +52,7 @@ internal object PushNtfy {
           onLine()
           val o = try { JSONObject(line) } catch (e: JSONException) { continue }
           if (o.optString("event") != "message") continue // open, keepalive
-          show(context, o.optString("message"), config)
+          show(context, o.optString("message"), o.optLong("time"), config) // time: when edith published it (unix s)
           config.lastId = o.optString("id").ifEmpty { null } ?: config.lastId
         }
       }
@@ -65,10 +65,10 @@ internal object PushNtfy {
    * One push as a local notification, Allow/Deny built here with the App API token. The settings are
    * read again for each one, so an App API that moved since the stream opened is the one used.
    */
-  private fun show(context: Context, raw: String, config: PushConfig) {
+  private fun show(context: Context, raw: String, time: Long, config: PushConfig) {
     val m = try { JSONObject(raw) } catch (e: JSONException) { return }
     val tag = m.optString("tag").ifEmpty { return }
-    toWidget(context, raw)
+    toWidget(context, raw, time)
     val notifier = LocalNotifier(context.applicationContext)
     if (m.optBoolean("cancel")) {
       notifier.cancel(tag)
@@ -93,16 +93,18 @@ internal object PushNtfy {
   /**
    * The push to edith-widget's last-message widget too (its WidgetPushReceiver folds it in). By class
    * name, inside the app only, so the two modules don't link to each other; without that module
-   * nothing receives it. The text goes no further than this app.
+   * nothing receives it. The text goes no further than this app. `time` is ntfy's (when edith
+   * published it, unix seconds; 0 if absent), so a push fetched late keeps its real time.
    */
-  private fun toWidget(context: Context, raw: String) {
+  private fun toWidget(context: Context, raw: String, time: Long) {
     context.sendBroadcast(
-      Intent(WIDGET_ACTION).setClassName(context.packageName, WIDGET_RECEIVER).putExtra(WIDGET_EXTRA, raw),
+      Intent(WIDGET_ACTION).setClassName(context.packageName, WIDGET_RECEIVER).putExtra(WIDGET_EXTRA, raw).putExtra(WIDGET_TIME, time),
     )
   }
 
   private const val WIDGET_ACTION = "com.arpit.edith.widget.PUSH"
   private const val WIDGET_EXTRA = "com.arpit.edith.widget.push"
+  private const val WIDGET_TIME = "com.arpit.edith.widget.time"
   private const val WIDGET_RECEIVER = "com.arpit.edith.widget.WidgetPushReceiver"
 
   private fun answer(label: String, allow: Boolean, url: String, s: PushSettings) = JSONObject()

@@ -8,9 +8,17 @@ import android.net.Uri
 /** The edith:// links the widgets open (the app's shell/links.ts and features handle them). */
 internal object WidgetLinks {
   const val LIVE = "edith://live"
-  const val TYPE = "edith://live/type" // the chat, composer focused, keyboard up
-  const val LISTEN = "edith://live/listen" // the chat, already listening (as the composer's mic)
-  const val ATTACH = "edith://live/attach" // the chat with the attach menu open (Camera, Gallery…)
+  const val TYPE = "type" // the chat, composer focused, keyboard up
+  const val LISTEN = "listen" // the chat, already listening (as the composer's mic)
+  const val ATTACH = "attach" // the chat with the attach menu open (Camera, Gallery…)
+  const val KEY_PARAM = "k"
+
+  /**
+   * The EDITH bar's link for `action`, carrying this install's key (WidgetStore.linkKey): the app runs
+   * Mic and Attach only when [EdithWidgetModule]'s checkLink accepts it, so another app or a web page
+   * opening edith://live/listen gets the chat, never the microphone.
+   */
+  fun bar(context: Context, action: String) = "edith://live/$action?$KEY_PARAM=${WidgetStore(context).linkKey}"
 
   /** Approve / Deny: the app opens its approvals and asks Arpit to confirm; nothing is answered from here. */
   fun answer(id: String, allow: Boolean) = "edith://approvals?id=${Uri.encode(id)}&answer=${if (allow) "allow" else "deny"}"

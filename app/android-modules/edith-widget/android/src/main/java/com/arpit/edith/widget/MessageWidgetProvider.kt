@@ -5,6 +5,7 @@ import android.appwidget.AppWidgetProviderInfo
 import android.appwidget.AppWidgetProvider
 import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.util.SizeF
@@ -18,7 +19,8 @@ import java.util.TimeZone
 /**
  * EDITH's last message (4x2; at 4x3 the last 3 and Approve / Deny). Drawn from [WidgetStore]'s
  * snapshot when the app or a push saves one ([updateAll]), and when the launcher asks (placed,
- * resized). Never on a timer: nothing here changes by itself.
+ * resized). Never on a timer; the one exception is [ACTION_STALE], a single inexact alarm WidgetStore
+ * sets when it saves a "working" snapshot, so the dot turns grey if no news comes for 3 hours.
  *
  * Privacy: with "Show message text in widgets" off, or on a lock screen (a keyguard host), it says
  * only "New message from EDITH", and no Approve / Deny.
@@ -28,15 +30,23 @@ class MessageWidgetProvider : AppWidgetProvider() {
     draw(context, manager, ids)
   }
 
+  override fun onReceive(context: Context, intent: Intent) {
+    if (intent.action == ACTION_STALE) updateAll(context) else super.onReceive(context, intent)
+  }
+
   override fun onAppWidgetOptionsChanged(context: Context, manager: AppWidgetManager, id: Int, options: Bundle) {
     draw(context, manager, intArrayOf(id))
   }
 
   companion object {
-    private const val STALE_S = 3 * 60 * 60L // "working" with no news for this long: not known any more
-    private const val TALL_DP = 170 // before Android 12: at least this high (dp) shows 3 messages
+    const val ACTION_STALE = "com.arpit.edith.widget.STALE"
+
+    // The 3-message layout shows only from TALL_DP high: a portrait 4x2 is usually around 220 dp and a
+    // 4x3 well above 280, so a 4x2 (even a tall one) keeps the compact layout and the 3 lines are never
+    // clipped. Both paths use it: the Android 12+ size map and the MAX_HEIGHT check before 12.
+    private const val TALL_DP = 280 // dp; before Android 12 checked against OPTION_APPWIDGET_MAX_HEIGHT
     private val COMPACT = SizeF(180f, 80f) // Android 12+: the launcher picks the biggest of these that fits
-    private val TALL = SizeF(180f, 170f)
+    private val TALL = SizeF(180f, TALL_DP.toFloat())
 
     /** Redraw every placed last-message widget (the app or a push saved news). */
     fun updateAll(context: Context) {
@@ -67,7 +77,7 @@ class MessageWidgetProvider : AppWidgetProvider() {
 
     private fun views(context: Context, s: WidgetSnapshot, masked: Boolean, tall: Boolean, now: Long): RemoteViews {
       val v = RemoteViews(context.packageName, R.layout.edith_widget_message)
-      val state = if (s.at == 0L || (s.state == "working" && now - s.at > STALE_S)) "unknown" else s.state
+      val state = if (s.at == 0L || (s.state == "working" && now - s.at > WidgetSnapshot.STALE_S)) "unknown" else s.state
       v.setImageViewResource(R.id.edith_msg_dot, when (state) {
         "working" -> R.drawable.edith_widget_dot_working
         "waiting" -> R.drawable.edith_widget_dot_waiting

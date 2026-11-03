@@ -9,7 +9,7 @@ The app's JS side is `app/src/features/widgets` (the snapshot writer and the set
 | Widget | Size | What it does |
 |---|---|---|
 | EDITH bar | 4x1, wider or narrower | A glass pill: the orb, "E.D.I.T.H", and Type, Mic and Attach buttons (links below). Tapping the pill itself is Type. No data, never redrawn on a timer |
-| Last message | 4x2, resizable to 4x3 | The orb, "E.D.I.T.H", a status dot, the newest line's time (HH:MM, IST) and the newest reply or alert, ellipsized. At 4x3 the two lines before it too, and Approve / Deny while an approval waits. A tap opens the chat |
+| Last message | 4x2, resizable to 4x3 (the 3-line layout from 280 dp high, above any 4x2, so a 4x2 always keeps the compact layout) | The orb, "E.D.I.T.H", a status dot, the newest line's time (HH:MM, IST) and the newest reply or alert, ellipsized. At 4x3 the two lines before it too, and Approve / Deny while an approval waits. A tap opens the chat |
 
 Both follow the system's dark mode (`values` / `values-night`).
 
@@ -17,13 +17,21 @@ Both follow the system's dark mode (`values` / `values-night`).
 
 The widgets open EDITH's launcher activity (singleTask) with a link; the shell (`shell/Shell.tsx`) opens the
 screen and, for a second path part on any screen but Settings, publishes the app-local event
-`app.link {screen, action}` after the screen is on top.
+`app.link {screen, action, trusted}` after the screen is on top.
+
+- **Key.** Any app or web page can send an edith:// link. The bar's links carry `k`, a random key made per
+  install and kept only in the widget's SharedPreferences (`WidgetStore.linkKey`). `trusted` is true only
+  when the native `checkLink(url)` accepts it (compared in constant time). listen and attach run only for
+  trusted links; any other just opens the chat, with the mic ready but not recording. type needs no key.
+- **Once.** The launch link is read natively (`initialLink`) and its intent data cleared as it's read, so
+  a JS reload (an OTA update) never runs it again. An intent marked `FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY`
+  (a restore from Recents) gives none. A link received while running is cleared too (`consumeLink`).
 
 | Link | Opens |
 |---|---|
-| `edith://live/type` | the chat, the message box focused (keyboard up) |
-| `edith://live/listen` | the chat, push-to-talk already recording (typing if there's no microphone) |
-| `edith://live/attach` | the chat with the composer's menu open (Camera, Gallery, Audio file) |
+| `edith://live/type?k=<key>` | the chat, the message box focused (keyboard up) |
+| `edith://live/listen?k=<key>` | the chat, push-to-talk already recording (typing if there's no microphone) |
+| `edith://live/attach?k=<key>` | the chat with the composer's menu open (Camera, Gallery, Audio file) |
 | `edith://live` | the chat |
 | `edith://approvals?id=<id>&answer=allow\|deny` | the Approvals screen, where Arpit confirms. The query is ignored: nothing is ever answered from the widget |
 
@@ -40,9 +48,9 @@ What the last-message widget draws, kept in the app's private SharedPreferences 
 
 | Field | Meaning |
 |---|---|
-| `at` | Unix seconds of the last write. A `working` older than 3 h shows as "not known" (grey dot) |
+| `at` | Unix seconds of the last write. A `working` older than 3 h shows as "not known" (grey dot): saving a `working` snapshot sets one inexact, non-wakeup alarm at `at` + 3 h that redraws the widget (any other state cancels it), so this shows even if the app died mid-turn |
 | `state` | `working` (a turn runs), `idle`, `waiting` (on Arpit: an approval) |
-| `messages` | Newest first, at most 3; `text` plain, one line, at most 300 characters (`""` when left out) |
+| `messages` | Newest first, at most 3; `text` plain, one line, at most 300 characters (`""` when left out); `ts` the event's time (a push: ntfy's `time`, else when it arrived) |
 | `permission` | The approval waiting, or null |
 | `hidden` | The texts were left out ("Show message text in widgets" off) |
 

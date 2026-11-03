@@ -1,11 +1,14 @@
-// Adapter: HomeWidgets on our native module android-modules/edith-widget (the EDITH bar and the
+// Adapter: HomeWidgets and LaunchLinks on our native module android-modules/edith-widget (the EDITH bar and the
 // last-message widget). The snapshot crosses as JSON; the native side checks and trims it again.
 
 import { requireOptionalNativeModule } from 'expo';
 
-import type { HomeWidgets, WidgetMessage, WidgetSnapshot, WidgetState } from '../../../core/ports';
+import type { HomeWidgets, LaunchLinks, WidgetMessage, WidgetSnapshot, WidgetState } from '../../../core/ports';
 
 interface NativeWidget {
+  checkLink(url: string): boolean;
+  initialLink(): string | null;
+  consumeLink(url: string): void;
   read(): string;
   write(json: string): void;
   showText(): boolean;
@@ -54,5 +57,16 @@ export function createAndroidWidgets(): HomeWidgets | null {
     write: (s) => native.write(JSON.stringify(s)),
     showText: () => native.showText(),
     setShowText: (on) => native.setShowText(on),
+  };
+}
+
+/** Null where the native module isn't built in (jest, web): the shell then uses React Native's Linking alone. */
+export function createAndroidLaunchLinks(): LaunchLinks | null {
+  const native = requireOptionalNativeModule<NativeWidget>('EdithWidget');
+  if (!native) return null;
+  return {
+    initial: () => native.initialLink() ?? null,
+    consume: (url) => native.consumeLink(url),
+    trusted: (url) => native.checkLink(url),
   };
 }

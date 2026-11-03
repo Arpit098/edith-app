@@ -1,4 +1,4 @@
-import { createAndroidWidgets, parseSnapshot } from '..';
+import { createAndroidLaunchLinks, createAndroidWidgets, parseSnapshot } from '..';
 
 describe('parseSnapshot', () => {
   it('reads what the native side saved (WidgetSnapshot.toJson)', () => {
@@ -40,5 +40,6 @@ describe('parseSnapshot', () => {
 describe('createAndroidWidgets', () => {
   it('is absent without the native module (jest, web)', () => {
     expect(createAndroidWidgets()).toBeNull();
+    expect(createAndroidLaunchLinks()).toBeNull();
   });
 });

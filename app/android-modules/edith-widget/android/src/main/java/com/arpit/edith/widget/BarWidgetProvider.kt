@@ -17,9 +17,9 @@ class BarWidgetProvider : AppWidgetProvider() {
   }
 
   private fun views(context: Context) = RemoteViews(context.packageName, R.layout.edith_widget_bar).apply {
-    setOnClickPendingIntent(R.id.edith_bar, WidgetLinks.open(context, WidgetLinks.TYPE)) // tapping the bar itself: type, as the Google bar does
-    setOnClickPendingIntent(R.id.edith_bar_type, WidgetLinks.open(context, WidgetLinks.TYPE))
-    setOnClickPendingIntent(R.id.edith_bar_mic, WidgetLinks.open(context, WidgetLinks.LISTEN))
-    setOnClickPendingIntent(R.id.edith_bar_attach, WidgetLinks.open(context, WidgetLinks.ATTACH))
+    setOnClickPendingIntent(R.id.edith_bar, WidgetLinks.open(context, WidgetLinks.bar(context, WidgetLinks.TYPE))) // tapping the bar itself: type, as the Google bar does
+    setOnClickPendingIntent(R.id.edith_bar_type, WidgetLinks.open(context, WidgetLinks.bar(context, WidgetLinks.TYPE)))
+    setOnClickPendingIntent(R.id.edith_bar_mic, WidgetLinks.open(context, WidgetLinks.bar(context, WidgetLinks.LISTEN)))
+    setOnClickPendingIntent(R.id.edith_bar_attach, WidgetLinks.open(context, WidgetLinks.bar(context, WidgetLinks.ATTACH)))
   }
 }

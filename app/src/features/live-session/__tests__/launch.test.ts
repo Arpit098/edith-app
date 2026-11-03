@@ -21,7 +21,7 @@ describe('createLaunch', () => {
   it('type: asks the composer for the box (keyboard up), with the menu closed', () => {
     const t = setup();
     t.menu.set(true);
-    t.launch('type');
+    t.launch('type', true);
     expect(t.focus.get()).toBe(true);
     expect(t.menu.get()).toBe(false);
     expect(t.start).not.toHaveBeenCalled();
@@ -29,21 +29,21 @@ describe('createLaunch', () => {
 
   it('listen: starts push-to-talk at once', () => {
     const t = setup();
-    t.launch('listen');
+    t.launch('listen', true);
     expect(t.start).toHaveBeenCalledTimes(1);
     expect(t.focus.get()).toBe(false);
   });
 
   it('listen without a microphone (web, tests) falls back to typing', () => {
     const t = setup({ available: false });
-    t.launch('listen');
+    t.launch('listen', true);
     expect(t.start).not.toHaveBeenCalled();
     expect(t.focus.get()).toBe(true);
   });
 
   it('attach: opens the composer menu (Camera, Gallery…)', () => {
     const t = setup();
-    t.launch('attach');
+    t.launch('attach', true);
     expect(t.menu.get()).toBe(true);
     expect(t.focus.get()).toBe(false);
   });
@@ -51,9 +51,9 @@ describe('createLaunch', () => {
   it('leaves a recording (or a transcription) alone', () => {
     for (const phase of ['starting', 'recording', 'transcribing'] as VoicePhase[]) {
       const t = setup({ phase });
-      t.launch('listen');
-      t.launch('type');
-      t.launch('attach');
+      t.launch('listen', true);
+      t.launch('type', true);
+      t.launch('attach', true);
       expect(t.start).not.toHaveBeenCalled();
       expect(t.focus.get()).toBe(false);
       expect(t.menu.get()).toBe(false);
@@ -62,9 +62,22 @@ describe('createLaunch', () => {
 
   it('ignores actions it doesn’t know', () => {
     const t = setup();
-    t.launch('approve');
+    t.launch('approve', true);
     expect(t.start).not.toHaveBeenCalled();
     expect(t.focus.get()).toBe(false);
     expect(t.menu.get()).toBe(false);
+  });
+
+  it('runs listen and attach only for the widget’s own links (with this install’s key); others just open the chat', () => {
+    const t = setup();
+    t.launch('listen', false); // e.g. a web page opening edith://live/listen
+    t.launch('attach', false);
+    expect(t.start).not.toHaveBeenCalled();
+    expect(t.menu.get()).toBe(false);
+    expect(t.focus.get()).toBe(false); // the mic stays ready, not recording; nothing else happens
+    t.launch('type', false); // harmless: just the keyboard
+    expect(t.focus.get()).toBe(true);
+    t.launch('listen', true);
+    expect(t.start).toHaveBeenCalledTimes(1);
   });
 });
