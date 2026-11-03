@@ -8,7 +8,7 @@ anyway, the first paragraph that has words in it is used.
 import re
 import unicodedata
 
-from edith.common.text import take_directives
+from edith.common.text import take_directives, take_files
 
 MAX_SENTENCES = 2
 MAX_CHARS = 300
@@ -65,8 +65,8 @@ def shorten(text: str) -> str:
 def spoken_summary(reply: str) -> str:
     """The line to speak for a finished turn's reply ("" if nothing in it is speakable)."""
     text = reply or ""
-    for key in ("SEND_FILE", "REACT"):
-        text = take_directives(text, key)[1]
+    text = take_files(text)[1]
+    text = take_directives(text, "REACT")[1]
     text = FENCE.sub("\n\n", text)
     for paragraph in re.split(r"\n\s*\n", text):
         spoken = clean(paragraph)

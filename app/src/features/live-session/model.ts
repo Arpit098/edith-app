@@ -8,7 +8,7 @@ import type { AppVisibility, KeyValueStore } from '../../core/ports';
 import { createStore, type Store } from '../../core/store';
 import { ID_LIFETIME_S, type SentAttachment } from './attachments';
 import { kindOfName } from './fileIcon';
-import { sentFilesOf, type SentFile } from './received';
+import { fileOnlyText, sentFilesOf, type SentFile } from './received';
 import { quoteFrom, quoteText, type Quote } from './reply';
 import { backgroundLine, trackTurnStart } from './status';
 
@@ -317,6 +317,11 @@ function unshown(s: LiveState, files: SentFile[]): SentFile[] {
   return shown.size ? files.filter((f) => !shown.has(fileKey(f))) : files;
 }
 
+/** A reply's text as the bubble shows it: the server's "📎 name" stand-in for a files-only reply is dropped (the chips show them). */
+function shownText(text: string, files: SentFile[]): string {
+  return files.length && text === fileOnlyText(files) ? '' : text;
+}
+
 /** Add files to an assistant item. */
 function withFiles(s: LiveState, id: number, files: SentFile[]): LiveState {
   return files.length ? update(s, id, (x) => (x.kind === 'assistant' ? { ...x, files: [...(x.files ?? []), ...files] } : x)) : s;
@@ -363,8 +368,9 @@ function apply(s: LiveState, e: EdithEvent): LiveState {
     case 'message.assistant': {
       const lane = d.lane === 'side' ? 'side' : null;
       const ref = d.ref ? str(d.ref) : null;
-      const text = str(d.text);
-      const files = unshown(s, sentFilesOf(d));
+      const all = sentFilesOf(d);
+      const text = shownText(str(d.text), all);
+      const files = unshown(s, all);
       const shown = lane && ref ? s.items.find((x) => x.kind === 'assistant' && x.lane === 'side' && x.ref === ref) : undefined;
       if (shown) {
         // Already shown from turn.done: message.assistant is the clean text, so it wins.
@@ -412,8 +418,9 @@ function apply(s: LiveState, e: EdithEvent): LiveState {
       let next = track(endRun(s, ref, lane === 'main'), ref, { phase: 'done', lane });
       // A side lane's reply isn't in the conversation's transcript: turn.done carries it, so show it
       // here (once: the server may also send it as message.assistant with lane "side").
-      const text = typeof d.display_text === 'string' ? d.display_text : str(d.text); // display_text: without REACT:/SEND_FILE: lines
-      const files = unshown(next, sentFilesOf(d));
+      const all = sentFilesOf(d);
+      const text = shownText(typeof d.display_text === 'string' ? d.display_text : str(d.text), all); // display_text: without REACT:/SEND_FILE: lines
+      const files = unshown(next, all);
       if (lane === 'side' && (text || files.length) && !next.items.some((x) => x.kind === 'assistant' && x.lane === 'side' && x.ref === ref)) {
         next = push(next, ts, { kind: 'assistant', text, lane: 'side', ref, ...(files.length ? { files } : {}) });
       } else if (files.length) {

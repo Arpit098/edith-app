@@ -161,7 +161,10 @@ message never vanishes from the app, whichever way it reaches Claude. All carry 
 **Clean text everywhere:**
 - `message.assistant.text` has EDITH's `REACT:` and `SEND_FILE:` lines taken out; `files` lists the
   `SEND_FILE` paths (`[]` if none). Also from the transcript, `lane` is `main` there. A reply that is only
-  `SEND_FILE:` lines is still a `message.assistant` (empty `text`, its `files`).
+  `SEND_FILE:` lines is still a `message.assistant`, with `text` "📎 <name>" per file (so an older app never
+  shows an empty bubble; the app drops that text when it shows the files as chips). Only a turn's final
+  reply carries `files` (not text before a tool call), lines in fenced code blocks are not directives, and
+  a path is the rest of its line (contracts/attachments.md §4).
 - **Files for the app:** on the App API (stream and history), an event with a non-empty `files` also has
   `sent_files`: one entry per path, in order, `{id, name, size, mime}` to download with `GET /v1/files/{id}`,
   or `{name, error}` when the server won't offer it (contracts/attachments.md §4). The same file keeps its

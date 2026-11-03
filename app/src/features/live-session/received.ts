@@ -21,6 +21,24 @@ export const SERVER_TOO_OLD = 'Update the server on edith to download files in t
 export const TEXT_MAX_BYTES = 1024 * 1024; // a bigger text file is saved, not shown
 export const THUMB_MAX_BYTES = 5 * 1024 * 1024; // images up to this download by themselves for the thumbnail
 const PROGRESS_EVERY_MS = 250;
+export const VIEW_MAX_CHARS = 200_000; // the reader shows this much; "Save to see all" for the rest
+export const ROW_MAX_CHARS = 2_000; // a longer line is shown as several rows (one huge Text freezes the UI)
+
+/** A text file as the reader's rows: lines, long ones in pieces, at most VIEW_MAX_CHARS in all. */
+export function viewRows(text: string, maxChars = VIEW_MAX_CHARS, rowMax = ROW_MAX_CHARS): { rows: string[]; cut: boolean } {
+  const cut = text.length > maxChars;
+  const rows: string[] = [];
+  for (const line of (cut ? text.slice(0, maxChars) : text).split('\n')) {
+    if (line.length <= rowMax) rows.push(line);
+    else for (let i = 0; i < line.length; i += rowMax) rows.push(line.slice(i, i + rowMax));
+  }
+  return { rows, cut };
+}
+
+/** The text the server gives a reply of only SEND_FILE lines ("📎 name" each), for older apps. */
+export function fileOnlyText(files: SentFile[]): string {
+  return files.map((f) => `📎 ${f.name}`).join('\n');
+}
 
 const TEXT_EXT = /\.(txt|md|markdown|csv|tsv|json|log|ya?ml|toml|ini|xml|html?|css|js|ts|tsx|py|sh|sql|diff|patch)$/i;
 const IMAGE_MIME = /^image\/(jpeg|png|gif|webp|bmp)$/; // what Android's image view draws (not HEIC everywhere)
@@ -173,8 +191,9 @@ export function createReceivedModel({ transport, files }: { transport: Transport
     try {
       const folder = await files!.save(uri, file.name, file.mime);
       return folder === null ? null : `Saved ${file.name} to ${folder}`;
-    } catch {
-      return `Couldn't save ${file.name}. Try again, and pick a folder EDITH can write to.`;
+    } catch (e) {
+      const why = e instanceof Error && e.message ? e.message : String(e);
+      return `Couldn't save ${file.name}: ${why}`;
     }
   }
 

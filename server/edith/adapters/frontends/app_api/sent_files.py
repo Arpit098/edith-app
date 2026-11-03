@@ -5,12 +5,18 @@ here under an opaque random id, and the app downloads it with GET /v1/files/<id>
 names a path: only a registered id is served, and only while the file is still the one registered.
 
 Claude writes the SEND_FILE lines, so registration is the gate:
-- the path is resolved (symlinks too) and must be a regular, readable file of at most MAX_BYTES;
-- nothing under the home's secret folders (~/.config, ~/.claude, ~/.ssh, …) or /proc, /sys, /dev,
-  checked on the given path and on the resolved one;
+- the path is resolved (symlinks too) and must be a regular, readable file of at most MAX_BYTES with
+  one link (a hard link to a private file would otherwise pass as an ordinary one);
+- it must be inside one of the allowed roots (config `send_file_roots`; by default ~/edith, ~/Projects,
+  /tmp and ~/Downloads), and not inside a dot-folder below that root (.git, .claude, .venv, …);
+- nothing in a secret folder (.config, .claude, .ssh, …, anywhere) or /proc, /sys, /dev, checked on
+  the given path and on the resolved one;
 - no key, token, .env or credential file by its name.
-A refusal is logged with its reason and the path (never the file's contents), and the app gets the
-name with `error` instead of an id.
+A refusal is logged once per path and reason, with the path (never the file's contents), and the app
+gets the name with `error` instead of an id.
+
+Only the live events register files (the bus, whether or not the app is connected); history pages only
+look up ids already there, so reading old history never registers (or keeps alive) anything.
 
 Registration is idempotent: the same file (resolved path, device, inode, size and mtime) keeps its id,
 so the live event, turn.done and every history page that name it agree. Ids live KEEP_SECONDS (7 days)
@@ -66,11 +72,21 @@ def _under(path, folder):
     return path == folder or path.startswith(folder.rstrip("/") + "/")
 
 
+def default_roots(home, work_dir):
+    """Where EDITH may send files from unless config says otherwise."""
+    roots = [work_dir, os.path.join(home, "Projects"), "/tmp"]
+    downloads = os.path.join(home, "Downloads")
+    return roots + ([downloads] if os.path.isdir(downloads) else [])
+
+
 class SentFiles:
-    def __init__(self, index_file, home, work_dir, max_bytes=MAX_BYTES):
+    def __init__(self, index_file, home, work_dir, max_bytes=MAX_BYTES, roots=None):
         self.index_file, self.max_bytes = index_file, max_bytes
         self.home, self.work_dir = os.path.realpath(home), work_dir
         self._raw_home = os.path.abspath(home)
+        expand = lambda p: self._raw_home + p[1:] if p == "~" or p.startswith("~/") else p  # noqa: E731
+        self.roots = [os.path.realpath(expand(r)) for r in (roots if roots is not None else default_roots(home, work_dir))]
+        self._logged = set()  # (path, reason) refusals already logged
         self._lock = threading.Lock()
         self._ids = None   # id -> record, loaded on first use
         self._keys = {}    # (path, dev, ino, size, mtime_ns) -> id
@@ -138,12 +154,19 @@ class SentFiles:
                 raise Refused(f"in {where}")
         if secret_name(name) or secret_name(os.path.basename(real)):
             raise Refused("a key, token or credential file")
+        root = next((r for r in self.roots if _under(real, r)), None)
+        if root is None:
+            raise Refused("outside the folders EDITH may send from")
+        if any(part.startswith(".") for part in os.path.relpath(real, root).split("/")[:-1]):
+            raise Refused("in a hidden folder")
         try:
             st = os.stat(real)
         except OSError:
             raise Refused("not found")
         if not stat.S_ISREG(st.st_mode):
             raise Refused("not a regular file")
+        if st.st_nlink > 1:
+            raise Refused("has other hard links")
         if st.st_size > self.max_bytes:
             raise Refused(f"over {self.max_bytes // (1024 * 1024)} MB")
         if not os.access(real, os.R_OK):
@@ -152,13 +175,29 @@ class SentFiles:
 
     # ---- registering and serving ----
 
-    def register(self, raw, now=None):
-        """A SEND_FILE path -> {id, name, size, mime}, or {name, error} when it isn't served."""
+    def _checked(self, raw):
+        """check(), with a refusal logged once per path and reason. -> (real, st, name) or {name, error}."""
         try:
-            real, st, name = self.check(raw)
+            return self.check(raw)
         except Refused as e:
-            log.warning("SEND_FILE not offered to the app (%s): %r", e, raw if isinstance(raw, str) else type(raw).__name__)
-            return {"name": os.path.basename(str(raw).strip()) or "file", "error": str(e)}
+            shown = raw if isinstance(raw, str) else type(raw).__name__
+            with self._lock:
+                first = (shown, str(e)) not in self._logged
+                if first:
+                    if len(self._logged) >= MAX_IDS:
+                        self._logged.clear()
+                    self._logged.add((shown, str(e)))
+            if first:
+                log.warning("SEND_FILE not offered to the app (%s): %r", e, shown)
+            return {"name": os.path.basename(str(raw).strip().rstrip("/")) or "file", "error": str(e)}
+
+    def register(self, raw, now=None, create=True):
+        """A SEND_FILE path -> {id, name, size, mime}, or {name, error} when it isn't served. With
+        create=False (history) only an id that already exists is given; nothing is added or renewed."""
+        checked = self._checked(raw)
+        if isinstance(checked, dict):
+            return checked
+        real, st, name = checked
         now = now or time.time()
         record = {"path": real, "name": name, "size": st.st_size, "mime": mime_of(name), "dev": st.st_dev,
                   "ino": st.st_ino, "mtime_ns": st.st_mtime_ns, "at": now}
@@ -167,6 +206,8 @@ class SentFiles:
             found = self._keys.get(self._key(record))
             if found is not None and now - ids[found].get("at", 0) <= KEEP_SECONDS:
                 fid = found
+            elif not create:
+                return {"name": name, "error": "no longer available"}
             else:
                 self._prune(now)
                 fid = secrets.token_hex(16)
@@ -176,9 +217,9 @@ class SentFiles:
             r = ids[fid]
         return {"id": fid, "name": r["name"], "size": r["size"], "mime": r["mime"]}
 
-    def describe(self, paths):
-        """An event's `files` (SEND_FILE paths) -> the app's `sent_files` list."""
-        return [self.register(p) for p in paths or [] if isinstance(p, str)]
+    def describe(self, paths, create=True):
+        """An event's `files` (SEND_FILE paths) -> the app's `sent_files` list (create=False: look up only)."""
+        return [self.register(p, create=create) for p in paths or [] if isinstance(p, str)]
 
     def open(self, fid, now=None):
         """A registered id -> (open file, record), or None when it is unknown, expired or no longer the
@@ -197,7 +238,7 @@ class SentFiles:
             return None
         f = os.fdopen(fd, "rb")
         st = os.fstat(f.fileno())
-        if (not stat.S_ISREG(st.st_mode) or (st.st_dev, st.st_ino) != (r["dev"], r["ino"])
+        if (not stat.S_ISREG(st.st_mode) or st.st_nlink > 1 or (st.st_dev, st.st_ino) != (r["dev"], r["ino"])
                 or st.st_size > self.max_bytes or (st.st_size, st.st_mtime_ns) != (r["size"], r["mtime_ns"])):
             f.close()
             return None

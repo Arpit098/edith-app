@@ -26,6 +26,12 @@ export function safeName(name: string): string {
   return clean || 'file';
 }
 
+/** Whether a save failed because the kept folder is gone or its access was taken back (pick again). */
+export function folderLost(e: unknown): boolean {
+  const msg = e instanceof Error ? `${e.name} ${e.message}` : String(e);
+  return /permission|denied|SecurityException|not ?found|no such|does ?n[o']t exist|FileNotFound|missing/i.test(msg);
+}
+
 export function createExpoReceivedFiles(data?: KeyValueStore): ReceivedFiles {
   const root = new Directory(Paths.cache, 'received');
 
@@ -40,7 +46,8 @@ export function createExpoReceivedFiles(data?: KeyValueStore): ReceivedFiles {
       await data?.set(SAVE_DIR_KEY, dir.uri);
       return dir;
     } catch {
-      return null; // cancelled
+      await data?.remove(SAVE_DIR_KEY).catch(() => {}); // cancelled: forget a folder that no longer works
+      return null;
     }
   }
 
@@ -118,7 +125,8 @@ export function createExpoReceivedFiles(data?: KeyValueStore): ReceivedFiles {
         try {
           copyInto(src, dir, name, mime);
           return dir.name || 'your folder';
-        } catch {
+        } catch (e) {
+          if (!folderLost(e)) throw e; // a real failure (disk full, …): say it, keep the folder
           dir = null; // the folder is gone or its access was taken back: ask again
         }
       }

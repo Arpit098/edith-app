@@ -114,9 +114,17 @@ event's `files` paths (`message.assistant`, `turn.done`, on the stream and in hi
   `Content-Disposition: attachment; filename*=UTF-8''<name>` and `X-Content-Type-Options: nosniff`.
   404 when the id is unknown or expired, or the file was changed, replaced or removed since it was
   registered (the app shows "no longer available"; EDITH can send it again).
-- **Only registered ids** are served; a request never names a path. Ids are 32 hex characters, kept 7 days
+- **Only registered ids** are served; a request never names a path. Ids are registered from the live
+  events (whether or not the app is connected); history pages only look ids up (a file never registered,
+  or expired, comes back as `{name, error: "no longer available"}`), so reading history never creates or
+  renews one. Ids are 32 hex characters, kept 7 days
   (and across restarts) in `~/.cache/edith/app-sent-files.json` (mode 0600, atomic writes, at most 1000).
   The same file (resolved path, inode, size and mtime) keeps its id, so the live event and history agree.
+- **Allowed roots:** a file must be inside one of `send_file_roots` (`[adapter.app_api]` in config.toml;
+  default `~/edith`, `~/Projects`, `/tmp` (the Claude scratchpad `/tmp/claude-*` included) and `~/Downloads`
+  if it exists), checked on the resolved path, and not inside a dot-folder below that root (`.git`, `.venv`,
+  `.claude`, …). So `~/.claude.json`, `~/.bash_history`, `~/edith-backups`, `~/.local/share` and
+  `~/.cache/edith` are never offered. The rules below apply inside the roots as well.
 - **What is refused** at registration, because Claude writes these lines: anything inside a folder named
   `.config`, `.claude`, `.ssh`, `.gnupg`, `.aws`, `.azure`, `.kube`, `.docker`, `.password-store`, `.mozilla`,
   `.pki` or `.git` (anywhere, so `~/edith/.claude` too), under `~/.local/share/keyrings` or
@@ -126,13 +134,21 @@ event's `files` paths (`message.assistant`, `turn.done`, on the stream and in hi
   `id_rsa`-style keys, `client_secret*`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, `*.jks`, `*.keystore`, `*.kdbx`,
   `*.gpg`, `*.asc`, and names whose stem ends in key(s), token(s), secret(s), credential(s), password(s) or
   passwd (`cracker-dev-key.json`, `app-token`; `token-analysis.pdf` is fine); anything that isn't a regular
-  readable file; files over 50 MB. A refusal is logged with its reason and path, never the file's contents,
-  and the app gets `{name, error}`.
+  readable file; a file with more than one hard link (at registration and again when served); files over
+  50 MB. A refusal is logged once per path and reason, with the path, never the file's contents, and the
+  app gets `{name, error}`.
+- **Which lines count:** only the turn's final reply (`turn.done`, and the transcript's text with
+  `stop_reason` other than `tool_use`); `SEND_FILE:` lines in narration before a tool call are dropped, and
+  lines inside fenced code blocks (```` ``` ```` or `~~~`) are never directives. The path is the rest of the
+  line, trimmed, so it may hold spaces. Telegram reads the lines the same way (`common/text.py` `take_files`).
+- If the download comes back shorter than `Content-Length` (the file shrank while it was sent), the server
+  closes the connection; the app also checks the size against `size`.
 - Relative paths are taken from EDITH's working folder (`~/edith`), `~/` from the home.
 - **The app** shows them on EDITH's bubble as chips (type icon, name, size; images as a thumbnail once
   downloaded). Tapping downloads into the app's cache with progress (kept 7 days, at most 200 MB), then:
   an image opens full screen, a text file (txt, md, csv, json, log, html, code; up to 1 MB) opens in a
-  reader, anything else is saved to a folder Arpit picks once (Android's folder picker, e.g. Download/EDITH;
-  no storage permission). A long press saves any file there. Opening a file in another app (a PDF viewer)
+  reader (the first 200 KB, long lines in 2,000-character rows, then "Save to see all"), anything else is saved to a folder Arpit picks once (Android's folder picker, e.g. Download/EDITH;
+  no storage permission). A long press saves any file there. The folder is asked for again only when it
+  is gone or its access was taken back; any other failure is shown as it is. Opening a file in another app (a PDF viewer)
   or the share sheet needs a native module the current APK doesn't have (expo-sharing or a FileProvider
   intent); it comes with a later APK.

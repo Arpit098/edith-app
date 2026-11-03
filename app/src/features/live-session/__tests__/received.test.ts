@@ -5,7 +5,7 @@ import type { EdithEvent, SentFileData } from '../../../core/events';
 import type { ReceivedFiles } from '../../../core/ports';
 import { ev, FakeTransport, flush } from '../../../testing/fakes';
 import { initialLive, reduce, type Item, type LiveState } from '../model';
-import { createReceivedModel, downloadError, SERVER_TOO_OLD, sentFilesOf, viewOf, type SentFile } from '../received';
+import { createReceivedModel, downloadError, ROW_MAX_CHARS, SERVER_TOO_OLD, sentFilesOf, VIEW_MAX_CHARS, viewOf, viewRows, type SentFile } from '../received';
 
 const ID = 'a'.repeat(32);
 const ID2 = 'b'.repeat(32);
@@ -49,6 +49,18 @@ describe('sentFilesOf', () => {
   });
 });
 
+describe('viewRows', () => {
+  it('splits long lines and caps the text, so one huge line never freezes the reader', () => {
+    expect(viewRows('a\nb')).toEqual({ rows: ['a', 'b'], cut: false });
+    const one = viewRows('x'.repeat(5_000));
+    expect(one.rows.map((r) => r.length)).toEqual([ROW_MAX_CHARS, ROW_MAX_CHARS, 1_000]);
+    const big = viewRows('y'.repeat(1_000_000));
+    expect(big.cut).toBe(true);
+    expect(big.rows.join('').length).toBe(VIEW_MAX_CHARS);
+    expect(big.rows.length).toBe(VIEW_MAX_CHARS / ROW_MAX_CHARS);
+  });
+});
+
 describe('reduce: files on EDITH bubbles', () => {
   it('puts a reply’s files on its bubble, and a files-only reply gets a bubble', () => {
     const s = run([
@@ -61,6 +73,17 @@ describe('reduce: files on EDITH bubbles', () => {
       ['Here it is.', ['Plan v2.pdf']],
       ['', ['q.png']],
     ]);
+  });
+
+  it('drops the server’s “📎 name” stand-in of a files-only reply: the chips show the files', () => {
+    const s = run([
+      ev('message.user', { text: 'go', cursor: 's1:1' }),
+      ev('message.assistant', { text: '📎 Plan v2.pdf', files: ['/p'], sent_files: [offered(PDF)], cursor: 's1:2' }),
+    ]);
+    expect(assistants(s).map((x) => [x.text, x.files?.length])).toEqual([['', 1]]);
+    // Without sent_files (an older server) the paths still give the names, so the same holds.
+    const old = run([ev('message.assistant', { text: '📎 r.html', files: ['/x/r.html'], cursor: 's1:3' })]);
+    expect(assistants(old)[0]!.text).toBe('');
   });
 
   it('turn.done adds only the files message.assistant didn’t show, on the turn’s last reply', () => {

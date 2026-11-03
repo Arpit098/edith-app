@@ -14,11 +14,42 @@ def chunk(text: str, size: int) -> list[str]:
     return out + [rest] if rest or not out else out
 
 
-def take_directives(text: str, key: str) -> tuple[list[str], str]:
+FENCE = re.compile(r"^\s{0,3}(```|~~~)")
+
+
+def take_directives(text: str, key: str, whole_line: bool = False) -> tuple[list[str], str]:
     """Pull out "KEY: value" lines (e.g. SEND_FILE, REACT) that EDITH adds for the frontends.
-    Returns (values, text without those lines)."""
-    pattern = re.compile(rf"^\s*{re.escape(key)}:\s*(\S+)\s*$\n?", re.M)
-    return pattern.findall(text), pattern.sub("", text).strip()
+    Returns (values, text without those lines). Lines inside fenced code blocks (``` or ~~~) are
+    examples, never directives: they stay in the text. `value` is one word, or with `whole_line`
+    the rest of the line (a path with spaces). Blank lines next to a removed line go with it."""
+    value = r"(.*\S)" if whole_line else r"(\S+)"
+    line_re = re.compile(rf"^\s*{re.escape(key)}:\s*{value}\s*$")
+    lines, values, keep, fenced, dropped = (text or "").split("\n"), [], [], False, False
+    for line in lines:
+        if FENCE.match(line):
+            fenced = not fenced
+        found = None if fenced else line_re.match(line)
+        if found:
+            values.append(found.group(1))
+            while keep and not keep[-1].strip():
+                keep.pop()  # blank lines before it
+            dropped = True
+            continue
+        if dropped and not line.strip():
+            continue  # blank lines after it
+        dropped = False
+        keep.append(line)
+    return values, "\n".join(keep).strip()
+
+
+def take_files(text: str) -> tuple[list[str], str]:
+    """SEND_FILE lines: each one's path is the rest of its line (spaces allowed)."""
+    return take_directives(text, "SEND_FILE", whole_line=True)
+
+
+def file_only_text(files: list[str]) -> str:
+    """What a reply that is only SEND_FILE lines says, so older apps never show an empty bubble."""
+    return "\n".join(f"📎 {os.path.basename(p.rstrip('/')) or p}" for p in files)
 
 
 def voice_summary(text: str) -> str:
@@ -82,10 +113,11 @@ def reply_line(replying_to) -> str:
 
 
 def reply_parts(reply: str) -> dict:
-    """A reply -> {text without REACT:/SEND_FILE: lines, files, reaction (the last REACT: pick or None)}."""
-    files, text = take_directives(reply or "", "SEND_FILE")
+    """A reply -> {text without REACT:/SEND_FILE: lines (for a reply of only SEND_FILE lines, "📎 <name>"
+    per file), files, reaction (the last REACT: pick or None)}."""
+    files, text = take_files(reply or "")
     picks, text = take_directives(text, "REACT")
-    return {"text": text, "files": files, "reaction": picks[-1] if picks else None}
+    return {"text": text or file_only_text(files), "files": files, "reaction": picks[-1] if picks else None}
 
 
 # What an attached document is, for files Claude can't open with its Read tool as they are (PDF,

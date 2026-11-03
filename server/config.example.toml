@@ -33,6 +33,9 @@ model = "small-q8_0"
 bind = "tailscale"          # the Tailscale IP only, never 0.0.0.0
 port = 8787
 token_file = "~/.config/edith/app-token"
+# Where files EDITH sends (SEND_FILE) may come from for the app (contracts/attachments.md §4); dot-folders
+# inside them, secret folders and key/token names are refused anyway. Default:
+# send_file_roots = ["~/edith", "~/Projects", "/tmp", "~/Downloads"]   # ~/Downloads only if it exists
 
 # [adapter.ntfy]            # pushes while the app is closed (contracts/push.md)
 # url = "http://100.78.124.98:2586"

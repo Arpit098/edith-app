@@ -28,7 +28,7 @@ import threading
 import time
 
 from edith.common.claude_sessions import by_session_id
-from edith.common.text import HEADER_LINE, clean_prompt, reply_parts
+from edith.common.text import HEADER_LINE, clean_prompt, reply_parts, take_files
 from edith.common.usertime import localize_limit_text
 
 from .background import Background
@@ -377,12 +377,17 @@ def events_of(e, tools, origin_of=lambda ref: None, known=lambda rid: False, typ
                  {"text": clean["text"], "voice": clean["voice"], "rid": rid, "attachments": clean["attachments"],
                   "replying_to": clean["replying_to"]})]
     if e.get("type") == "assistant" and isinstance(content, list):
+        # Files come only from a turn's final reply (Telegram sends turn.done's), not from narration.
+        narration = (e.get("message") or {}).get("stop_reason") == "tool_use"
         for b in content:
             if not isinstance(b, dict):
                 continue
             if b.get("type") == "text" and b.get("text", "").strip():
-                parts = reply_parts(localize_limit_text(b["text"]))  # Claude's limit line, in the user's zone
-                if parts["text"] or parts["files"]:  # a reply that is only SEND_FILE lines still shows its files
+                text = localize_limit_text(b["text"])  # Claude's limit line, in the user's zone
+                if narration:  # text before a tool call: its SEND_FILE lines are talk, not files to send
+                    text = take_files(text)[1]
+                parts = reply_parts(text)
+                if parts["text"]:  # a reply of only SEND_FILE lines says "📎 <name>" (reply_parts)
                     data = {"text": parts["text"], "files": parts["files"], "lane": "main"}
                     if e.get("isApiErrorMessage"):  # Claude Code's own error line (usage limit, login…)
                         data["api_error"] = str(e.get("error") or "unknown")

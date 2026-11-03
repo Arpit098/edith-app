@@ -160,8 +160,9 @@ class AppApi:
         self._slots = threading.BoundedSemaphore(MAX_CONNECTIONS)
         self._thread = None
         self.attachments = Attachments(self.paths.inbox, os.path.join(self.paths.state_dir, "app-attachments.json"))
+        roots = config.get("send_file_roots")  # None: sent_files.default_roots
         self.sent_files = SentFiles(os.path.join(self.paths.state_dir, "app-sent-files.json"), self.paths.home,
-                                    self.paths.work_dir)
+                                    self.paths.work_dir, roots=list(roots) if roots is not None else None)
 
     # ---- lifecycle ----
 
@@ -344,13 +345,14 @@ class AppApi:
                               "content-disposition": f"attachment; filename*=UTF-8''{quoted}"},
                         file=f, length=r["size"], audit={"file": {"id": req["params"]["id"], "size": r["size"]}})
 
-    def with_sent_files(self, data):
+    def with_sent_files(self, data, create=True):
         """An event's data with `sent_files` ({id, name, size, mime} or {name, error}) next to its
-        SEND_FILE paths in `files`; data without files comes back as it is (never changed in place)."""
+        SEND_FILE paths in `files`; data without files comes back as it is (never changed in place).
+        create=False (history): only ids that exist already."""
         files = data.get("files") if isinstance(data, dict) else None
         if not files or not isinstance(files, list):
             return data
-        return {**data, "sent_files": self.sent_files.describe(files)}
+        return {**data, "sent_files": self.sent_files.describe(files, create=create)}
 
     def with_sent_files_in(self, result):
         """A JSON answer holding events (history): each event's data with its sent_files."""
@@ -358,7 +360,7 @@ class AppApi:
         if not isinstance(events, list) or not any(isinstance(e, dict) and isinstance(e.get("data"), dict)
                                                    and e["data"].get("files") for e in events):
             return result
-        return {**result, "events": [{**e, "data": self.with_sent_files(e["data"])}
+        return {**result, "events": [{**e, "data": self.with_sent_files(e["data"], create=False)}
                                      if isinstance(e, dict) and isinstance(e.get("data"), dict) else e for e in events]}
 
     def _actions(self, req):
@@ -391,12 +393,15 @@ class AppApi:
     # ---- the live stream ----
 
     def _broadcast(self, ev):
+        # Files are registered from the live events even with no app connected, so history (which only
+        # looks ids up) has them later.
+        data = self.with_sent_files(ev.data)
         with self._clients_lock:
             if not self._clients:
                 return
             clients = list(self._clients)
         frame = ws.encode(ws.OP_TEXT, json.dumps({"type": ev.type, "ts": ev.ts, "session_id": ev.session_id,
-                                                  "origin": ev.origin, "data": self.with_sent_files(ev.data)},
+                                                  "origin": ev.origin, "data": data},
                                                  ensure_ascii=False, default=str).encode())
         for c in clients:
             c.push(frame)
@@ -641,7 +646,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             if f is not None:
                 self.wfile.flush()
-                self.connection.sendfile(f, r.offset, length)
+                if self.connection.sendfile(f, r.offset, length) < length:
+                    # The file shrank while it was sent: end the connection, so the client sees a failed
+                    # download (fewer bytes than Content-Length) rather than a short body it may trust.
+                    self.close_connection = True
+                    return {"status": 500, "short": True}
             elif r.body:
                 self.wfile.write(r.body)
         finally:

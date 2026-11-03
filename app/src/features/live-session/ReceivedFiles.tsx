@@ -13,7 +13,7 @@ import { colors, radius, space, type, useTheme } from '../../core/theme';
 import { Icon } from '../../ui/Icon';
 import { toast } from '../../ui/toast';
 import { attachmentIcon, kindOfName } from './fileIcon';
-import { viewOf, type FileState, type ReceivedModel, type ReceivedState, type SentFile, type Viewing } from './received';
+import { viewOf, type FileState, type ReceivedModel, type ReceivedState, type SentFile, type Viewing, viewRows } from './received';
 
 /** The received-files model for the bubbles below the live screen (null in previews and tests without one). */
 export const ReceivedContext = createContext<ReceivedModel | null>(null);
@@ -111,7 +111,8 @@ export const FileViewer = memo(function FileViewer({ model }: { model: ReceivedM
 function Viewer({ model, viewing }: { model: ReceivedModel; viewing: Viewing }) {
   const insets = useSafeAreaInsets();
   const { bg, accent } = useTheme();
-  const lines = useMemo(() => (viewing.text ?? '').split('\n'), [viewing]);
+  const { rows, cut } = useMemo(() => viewRows(viewing.text ?? ''), [viewing]);
+  const save = () => void model.save(viewing.file).then(toast);
   const close = () => model.close();
   return (
     <Modal visible animationType="fade" onRequestClose={close} statusBarTranslucent>
@@ -126,14 +127,27 @@ function Viewer({ model, viewing }: { model: ReceivedModel; viewing: Viewing }) 
             </Text>
             {viewing.file.size !== null ? <Text style={styles.meta}>{formatBytes(viewing.file.size)}</Text> : null}
           </View>
-          <Pressable onPress={() => void model.save(viewing.file).then(toast)} hitSlop={10} accessibilityRole="button" accessibilityLabel="Save to a folder" style={styles.icon}>
+          <Pressable onPress={save} hitSlop={10} accessibilityRole="button" accessibilityLabel="Save to a folder" style={styles.icon}>
             <Icon name="content-save-outline" size={22} color={accent} />
           </Pressable>
         </View>
         {viewing.view === 'image' ? (
           <Image source={{ uri: viewing.uri }} style={styles.full} resizeMode="contain" accessibilityLabel={viewing.file.name} />
         ) : (
-          <FlatList data={lines} keyExtractor={(_, i) => String(i)} renderItem={({ item }) => <Text style={styles.line} selectable>{item || ' '}</Text>} initialNumToRender={60} contentContainerStyle={styles.lines} />
+          <FlatList
+            data={rows}
+            keyExtractor={(_, i) => String(i)}
+            renderItem={({ item }) => <Text style={styles.line} selectable>{item || ' '}</Text>}
+            initialNumToRender={60}
+            contentContainerStyle={styles.lines}
+            ListFooterComponent={
+              cut ? (
+                <Pressable onPress={save} style={styles.more} accessibilityRole="button" testID="viewer-cut">
+                  <Text style={[styles.moreText, { color: accent }]}>Showing the first 200 KB. Save to see all.</Text>
+                </Pressable>
+              ) : null
+            }
+          />
         )}
       </View>
     </Modal>
@@ -159,5 +173,7 @@ const styles = StyleSheet.create({
   title: { color: colors.text, fontSize: type.size.body, fontWeight: '700' },
   full: { flex: 1 },
   lines: { padding: space.m },
+  more: { marginTop: space.m, padding: space.s, borderRadius: radius.s, backgroundColor: colors.card },
+  moreText: { fontSize: type.size.small, fontWeight: '600' },
   line: { color: colors.text, fontFamily: type.mono, fontSize: 12, lineHeight: 18 },
 });

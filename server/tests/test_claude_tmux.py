@@ -638,12 +638,19 @@ class LiveViewTest(unittest.TestCase):
             self.assertEqual(events_of(entry(text), {}, typed_echo=echo)[0][0], "message.user")
         self.assertEqual(asked, ["/compact"])  # never asked about a message with a header or a ref
 
-    def test_a_reply_of_only_send_file_lines_still_shows_its_files(self):
-        def reply(text):
-            return {"type": "assistant", "message": {"content": [{"type": "text", "text": text}]}}
-        self.assertEqual(events_of(reply("SEND_FILE: /tmp/r.pdf\nREACT: 🎉"), {}),
-                         [("message.assistant", "system", {"text": "", "files": ["/tmp/r.pdf"], "lane": "main"})])
+    def test_files_come_from_the_final_reply_only(self):
+        def reply(text, stop="end_turn"):
+            return {"type": "assistant", "message": {"stop_reason": stop, "content": [{"type": "text", "text": text}]}}
+        # Only SEND_FILE lines: a "📎 name" text, so an older app never shows an empty bubble.
+        self.assertEqual(events_of(reply("SEND_FILE: /tmp/My Plan.pdf\nREACT: 🎉"), {}),
+                         [("message.assistant", "system", {"text": "📎 My Plan.pdf", "files": ["/tmp/My Plan.pdf"], "lane": "main"})])
         self.assertEqual(events_of(reply("REACT: 🎉"), {}), [])  # nothing to show
+        # Narration before a tool call: its SEND_FILE line is talk; no files, and no line left either.
+        self.assertEqual(events_of(reply("I'll make it, then\nSEND_FILE: /tmp/r.pdf", "tool_use"), {}),
+                         [("message.assistant", "system", {"text": "I'll make it, then", "files": [], "lane": "main"})])
+        self.assertEqual(events_of(reply("SEND_FILE: /tmp/r.pdf", "tool_use"), {}), [])
+        # An example in a code block is never a file.
+        self.assertEqual(events_of(reply("Use:\n```\nSEND_FILE: /tmp/x\n```"), {})[0][2]["files"], [])
 
     def test_follows_a_new_transcript_without_replaying_a_resumed_one(self):
         h = Harness(self)

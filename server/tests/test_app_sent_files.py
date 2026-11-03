@@ -1,6 +1,7 @@
 """Files EDITH sends to the app (contracts/attachments.md §4): SEND_FILE paths registered under opaque
 ids, offered as `sent_files` on the stream and in history, downloaded from GET /v1/files/{id}. Only
 registered ids are served; secret places and names, non-regular and oversized files are refused."""
+import http.client
 import json
 import os
 import pathlib
@@ -10,6 +11,7 @@ import time
 import unittest
 import urllib.error
 import urllib.request
+from unittest import mock
 
 from edith.adapters.frontends.app_api.sent_files import KEEP_SECONDS, SentFiles, mime_of, secret_name
 from edith.core import Event
@@ -34,6 +36,7 @@ class Home:
         return p
 
     def files(self, **kw):
+        kw.setdefault("roots", [str(self.work), "~/Projects"])
         return SentFiles(str(self.index), str(self.home), str(self.work), **kw)
 
 
@@ -107,6 +110,16 @@ class RegisterTest(unittest.TestCase):
             str(self.h.file("Projects/app/.git/config")): "in a private folder",
             str(self.h.file(".cache/edith/accounts/a1/creds.json")): "in a private folder",
             str(self.h.file(".cache/edith/authorized_keys.bak-1")): "a key, token or credential file",
+            # Outside the allowed roots (~/edith and ~/Projects here).
+            str(self.h.file(".claude.json")): "outside the folders EDITH may send from",
+            str(self.h.file(".bash_history")): "outside the folders EDITH may send from",
+            str(self.h.file("edith-backups/bridge.tar")): "outside the folders EDITH may send from",
+            str(self.h.file(".local/share/pki/x.db")): "outside the folders EDITH may send from",
+            str(self.h.file(".cache/edith/bridge-state.json")): "outside the folders EDITH may send from",
+            # A dot-folder inside a root.
+            str(self.h.file("edith/.venv/lib/x.py")): "in a hidden folder",
+            str(self.h.file("Projects/app/.github/ci.yml")): "in a hidden folder",
+            "Projects/app/.env.local": "a key, token or credential file",
             "/dev/null": "in a system folder",
             "": "not a path",
         }
@@ -118,6 +131,40 @@ class RegisterTest(unittest.TestCase):
                     self.assertEqual(out["error"], why)
         self.assertNotIn("secret", "\n".join(logs.output))  # never the file's contents
         self.assertFalse(self.h.index.exists())               # nothing was registered
+
+    def test_hard_links_are_refused_at_register_and_at_serve(self):
+        secret = self.h.file(".claude/settings.json", b"secret")
+        linked = self.h.home / "edith/out/settings.txt"
+        os.link(secret, linked)
+        with self.assertLogs("edith.adapter.app_api.files", "WARNING"):
+            self.assertEqual(self.s.register(str(linked)), {"name": "settings.txt", "error": "has other hard links"})
+        p = self.h.file("edith/out/plain.txt")
+        rec = self.s.register(str(p))
+        os.link(p, self.h.home / "edith/out/plain-2.txt")
+        self.assertIsNone(self.s.open(rec["id"]))
+
+    def test_lookup_only_never_registers_and_refusals_log_once(self):
+        p = self.h.file("edith/out/a.txt")
+        self.assertEqual(self.s.register(str(p), create=False), {"name": "a.txt", "error": "no longer available"})
+        self.assertFalse(self.h.index.exists())
+        rec = self.s.register(str(p))
+        self.assertEqual(self.s.register(str(p), create=False), rec)
+        old = self.s.register(str(self.h.file("edith/out/b.txt")), now=time.time() - KEEP_SECONDS - 5)
+        self.assertEqual(self.s.register(str(self.h.home / "edith/out/b.txt"), create=False)["error"], "no longer available")
+        self.assertIsNone(self.s.open(old["id"]))  # not renewed
+        with self.assertLogs("edith.adapter.app_api.files", "WARNING") as logs:
+            for _ in range(3):
+                self.s.register("~/.ssh/id_rsa")
+                self.s.register("~/.ssh/id_rsa", create=False)
+            self.s.register("/proc/self/environ")
+        self.assertEqual(len(logs.output), 2)
+
+    def test_default_roots(self):
+        s = SentFiles(str(self.h.index), str(self.h.home), str(self.h.work))
+        self.assertEqual(s.roots, [os.path.realpath(p) for p in (self.h.work, self.h.home / "Projects", "/tmp")])
+        (self.h.home / "Downloads").mkdir()
+        self.assertEqual(SentFiles(str(self.h.index), str(self.h.home), str(self.h.work)).roots[-1],
+                         os.path.realpath(self.h.home / "Downloads"))
 
     def test_secret_names(self):
         for name in (".env", ".env.local", "app-token", "api_key.txt", "credentials.json", "id_rsa.pub",
@@ -191,10 +238,25 @@ class ApiTest(unittest.TestCase):
             {"type": "message.assistant", "ts": 100.0, "session_id": "s1", "origin": "system",
              "data": {"text": "", "files": [str(self.pdf)], "lane": "main", "cursor": "s1:9"}}]}
         self.a.agent.history = lambda sid, after, before, limit: page
+        # Never sent live: history doesn't register it.
+        (sent,) = self.a.call("GET", "/v1/sessions/current/history")[1]["events"][0]["data"]["sent_files"]
+        self.assertEqual(sent, {"name": "Plan v2.pdf", "error": "no longer available"})
+        # Sent live (no app connected): history finds its id.
+        self.a.bus.publish(Event("turn.done", {"ref": "r", "text": "x", "files": [str(self.pdf)]}, origin="system"))
         status, body = self.a.call("GET", "/v1/sessions/current/history")
         self.assertEqual(status, 200)
         (sent,) = body["events"][0]["data"]["sent_files"]
-        self.assertEqual(sent, self.a.api.sent_files.register(str(self.pdf)))
+        self.assertEqual(sent, self.a.api.sent_files.register(str(self.pdf), create=False))
+        self.assertIn("id", sent)
+
+    def test_a_short_sendfile_ends_the_connection(self):
+        rec = self.a.api.sent_files.register(str(self.pdf))
+        with mock.patch("socket.socket.sendfile", return_value=0):
+            req = urllib.request.Request(f"http://{self.a.host}:{self.a.port}/v1/files/{rec['id']}",
+                                         headers={"Authorization": f"Bearer {TOKEN}"})
+            with urllib.request.urlopen(req, timeout=10) as r:
+                with self.assertRaises(http.client.IncompleteRead):
+                    r.read()
 
 
 if __name__ == "__main__":
