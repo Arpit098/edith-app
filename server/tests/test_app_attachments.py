@@ -33,6 +33,7 @@ HEADERS = {
     "application/pdf": b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\n",
 }
 OLE = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+BOM = chr(0xFEFF)
 DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 PPTX = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
@@ -123,8 +124,12 @@ class UploadTest(unittest.TestCase):
             (b"\x7fELF\x02\x01\x01\x00" + b"\x00" * 100, {"x-filename": "notes.txt"}, 415, "unsupported file type"),
             (b"PK\x03\x04" + b"x" * 100, {"x-filename": "a.docx"}, 415, "unsupported file type"),  # not a real zip
             (OLE + b"\x00" * 100, {"x-filename": "a.exe"}, 415, "unsupported file type"),  # OLE, but not doc/xls/ppt
-            (b"plain text, then\n" + b"\xff\xfe" + b"x" * 100, {}, 415, "unsupported file type"),  # not UTF-8
-            ("café".encode()[:-1], {}, 415, "unsupported file type"),  # ends inside a character
+            (b"plain text, then\n\xc3\x28\x81" + b"x" * 100, {}, 415, "unsupported file type"),  # neither UTF-8 nor 1252
+            (b"caf\xe9 au\x0clait", {}, 415, "unsupported file type"),  # 1252 with a form feed
+            (b"\xff\xfeh\x00i", {}, 415, "unsupported file type"),  # UTF-16 ending inside a character
+            # UTF-16 with a control character (big-endian: FF FE could also start an MPEG layer I frame)
+            ((BOM + "a\x01b").encode("utf-16-be"), {}, 415, "unsupported file type"),
+            ((BOM + "x" * 40000 + "\x01").encode("utf-16-le"), {"x-filename": "a.txt"}, 415, "unsupported file type"),  # control after 64 kB
             (b"\x00\x00\x00\x18ftypqt  " + b"x" * 100, {}, 415, "unsupported file type"),  # a QuickTime video
             (b"", {}, 400, "the file is empty"),
             (HEADERS["image/png"] + b"x", {"x-content-sha256": "0" * 64}, 400, "sha256 mismatch"),
@@ -206,6 +211,40 @@ class DocumentTest(unittest.TestCase):
         long = ("हिन्दी " * 20000).encode()  # multibyte characters across chunks
         self.assertGreater(len(long), 2 * attachments.CHUNK)
         self.assertEqual(self.typed(long, "hindi.txt"), ("text/plain", ".txt"))
+
+    def test_utf16_and_windows_1252_text_is_stored_as_utf8(self):
+        text = "name,amount\r\ncafé,€20\r\n“quoted”,—\r\n" * 3000  # spans several chunks
+        cases = [("utf-16", "export.csv", "text/csv"), ("utf-16-be", "notes.txt", "text/plain"), ("cp1252", "bill.csv", "text/csv")]
+        for encoding, name, kind in cases:
+            with self.subTest(encoding):
+                data = (BOM + text).encode(encoding) if encoding == "utf-16-be" else text.encode(encoding)
+                if encoding == "utf-16":
+                    self.assertIn(data[:2], (b"\xff\xfe", b"\xfe\xff"))
+                status, body = self.s.upload(data, **{"x-filename": name})
+                self.assertEqual(status, 200, body)
+                self.assertEqual((body["type"], body["size"], body["sha256"]), (kind, len(data), hashlib.sha256(data).hexdigest()))  # the upload's
+                saved = self.s.inbox / body["name"]
+                self.assertEqual(saved.read_bytes(), text.encode("utf-8"))  # converted, without a BOM
+                self.assertEqual(stat.S_IMODE(saved.stat().st_mode), 0o600)
+        self.assertEqual([n for n in os.listdir(self.s.inbox) if n.startswith(".")], [])  # no temp files left
+
+    def test_utf8_text_is_stored_as_sent(self):
+        data = "café €".encode()
+        body = self.s.upload(data, **{"x-filename": "a.txt"})[1]
+        self.assertEqual((self.s.inbox / body["name"]).read_bytes(), data)
+
+    def test_a_zip_of_too_many_entries_is_a_plain_zip_and_never_listed(self):
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as z:
+            z.writestr("word/document.xml", "<x/>")
+            for i in range(attachments.MAX_ZIP_ENTRIES):
+                z.writestr(f"f{i}", "")
+        with mock.patch.object(attachments.zipfile, "ZipFile", side_effect=AssertionError("listed")):
+            self.assertEqual(self.typed(buf.getvalue(), "big.docx"), ("application/zip", ".zip"))
+        self.assertEqual(attachments.zip_entries(str(self.s.inbox / os.listdir(self.s.inbox)[0])), attachments.MAX_ZIP_ENTRIES + 1)
+        # at the limit it is still listed (and typed)
+        small = zipped("word/document.xml", *[f"f{i}" for i in range(attachments.MAX_ZIP_ENTRIES - 2)])
+        self.assertEqual(self.typed(small, "ok.docx"), (DOCX, ".docx"))
 
     def test_binary_after_a_text_start_is_refused_without_reading_the_rest(self):
         data = b"x" * attachments.CHUNK + b"\x00" * attachments.CHUNK + b"x" * (5 * attachments.CHUNK)

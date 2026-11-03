@@ -64,13 +64,17 @@ export interface AttachmentsModel {
   dispose(): void;
 }
 
-/** What went wrong with an upload, said plainly. */
-export function uploadError(e: unknown): string {
+/**
+ * What went wrong with an upload, said plainly. A document's 415 most likely comes from a bridge
+ * older than documents (contracts/attachments.md), so it says that, not "this kind of file".
+ */
+export function uploadError(e: unknown, kind?: AttachmentKind): string {
   if (e instanceof ApiError) {
     switch (e.status) {
       case 404:
         return 'Attachments need a server update on edith.';
       case 415:
+        if (kind === 'document') return 'edith needs a server update to take documents.';
         return "edith doesn't take this kind of file (images: JPEG, PNG, WebP, HEIC; audio: MP3, M4A, OGG, WAV, AAC; documents: PDF, Word, Excel, PowerPoint, text, CSV, Markdown, JSON, zip).";
       case 413:
         return 'Too big for edith (images 20 MB, audio and documents 25 MB).';
@@ -114,7 +118,7 @@ export function createAttachmentsModel(deps: { api: Api; media?: MediaPicker; no
       );
       patch(key, { status: 'ready', id: r.id, uploaded: Math.floor(now() / 1000), sent: d.size, total: d.size });
     } catch (e) {
-      if (!abort.signal.aborted) patch(key, { status: 'failed', error: uploadError(e) }); // removed: nothing to show
+      if (!abort.signal.aborted) patch(key, { status: 'failed', error: uploadError(e, d.kind) }); // removed: nothing to show
     } finally {
       uploads.delete(key);
     }

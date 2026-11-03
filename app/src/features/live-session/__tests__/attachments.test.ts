@@ -142,6 +142,16 @@ describe('attachments in the composer', () => {
     expect(media.discarded).toEqual([doc().uri]);
   });
 
+  it('a 415 on a document says the server needs an update (an older bridge), not "this kind of file"', async () => {
+    const { ctx, a } = setup(() => doc());
+    ctx.transport.on('UPLOAD /v1/attachments', () => {
+      throw new ApiError(415, 'unsupported file type');
+    });
+    await a.add('document');
+    expect(a.store.get().drafts[0]).toMatchObject({ kind: 'document', status: 'failed', error: 'edith needs a server update to take documents.' });
+    expect(uploadError(new ApiError(415, 'x'), 'audio')).toMatch(/doesn't take this kind of file/);
+  });
+
   it('a document may be as big as audio (25 MB), more than an image', async () => {
     const { a } = setup(() => doc({ size: MAX_FILE_BYTES }));
     await a.add('document');

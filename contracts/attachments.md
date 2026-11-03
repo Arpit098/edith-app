@@ -36,11 +36,14 @@ On the App API (Tailscale IP only, `Authorization: Bearer <token>`, 401 without 
 | `application/vnd.openxmlformats-officedocument.presentationml.presentation` | a zip listing `ppt/presentation.xml` | `.pptx` | 25 MB |
 | `application/zip` | any other readable zip | `.zip` | 25 MB |
 | `application/msword`, `application/vnd.ms-excel`, `application/vnd.ms-powerpoint` | the OLE signature `D0 CF 11 E0 A1 B1 1A E1`, with an `x-filename` ending `.doc`, `.xls` or `.ppt` (else 415) | that extension | 25 MB |
-| `text/csv`, `text/markdown`, `application/json`, `text/plain` | the **whole file** is UTF-8 (a BOM is fine) with no control bytes other than tab, LF, VT, FF, CR and ESC; `x-filename` ending `.csv`, `.md`/`.markdown`, `.json`, anything else → `text/plain` | `.csv`, `.md`, `.json`, `.txt` | 25 MB |
+| `text/csv`, `text/markdown`, `application/json`, `text/plain` | the **whole file** is text: UTF-8 (a BOM is fine) with no control bytes other than tab, LF, VT, FF, CR and ESC; or UTF-16 starting with a BOM (`FF FE` / `FE FF`), no control characters but those; or Windows-1252 (Excel's CSV export) with no control bytes but tab, CR and LF. `x-filename` ending `.csv`, `.md`/`.markdown`, `.json`, anything else → `text/plain` | `.csv`, `.md`, `.json`, `.txt` | 25 MB |
 
   The name only ever chooses within a class the bytes already proved (OLE → doc/xls/ppt, text → csv/md/json/txt).
   A zip is checked after the upload by reading its central directory only (never extracted); a broken zip is
-  415. Text that turns binary part-way is refused as soon as the bad chunk arrives.
+  415. Its end-of-central-directory entry count is read first: over 10,000 entries (or Zip64's `FFFF` marker),
+  the directory isn't listed and the file is stored as a plain `.zip`. Text that turns binary part-way is
+  refused as soon as the bad chunk arrives (UTF-16 is checked after the upload). UTF-16 and Windows-1252 text
+  is **stored converted to UTF-8** (no BOM); the answer's `size` and `sha256` are still the upload's.
 
   Anything else: 415 `"unsupported file type"` (nothing is kept). Over 25 MB: 413 before the body is read;
   an image over 20 MB: 413 after it is detected. The app checks the same caps, byte for byte, before uploading
