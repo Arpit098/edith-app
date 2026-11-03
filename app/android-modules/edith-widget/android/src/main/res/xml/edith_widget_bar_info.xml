@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The EDITH bar: 4x1, wider or narrower (one row high). It shows no data, so it never updates on a timer. -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+  android:minWidth="250dp"
+  android:minHeight="40dp"
+  android:minResizeWidth="180dp"
+  android:minResizeHeight="40dp"
+  android:targetCellWidth="4"
+  android:targetCellHeight="1"
+  android:resizeMode="horizontal"
+  android:widgetCategory="home_screen"
+  android:updatePeriodMillis="0"
+  android:initialLayout="@layout/edith_widget_bar"
+  android:previewLayout="@layout/edith_widget_bar"
+  android:description="@string/edith_widget_bar_description" />

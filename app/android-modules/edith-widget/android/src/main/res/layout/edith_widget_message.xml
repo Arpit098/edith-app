@@ -1,0 +1,144 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  EDITH's last message (like Telegram's widget): the orb, "E.D.I.T.H" with the status dot, the time
+  (IST) and the newest reply or alert. At 4x3 the two before it show too, and Approve / Deny while a
+  permission waits. MessageWidgetProvider fills it; rows it doesn't use are GONE.
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+  android:layout_width="match_parent"
+  android:layout_height="match_parent"
+  android:padding="4dp">
+
+  <LinearLayout
+    android:id="@+id/edith_msg_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/edith_widget_card"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:paddingStart="14dp"
+    android:paddingTop="12dp"
+    android:paddingEnd="16dp"
+    android:paddingBottom="12dp">
+
+    <ImageView
+      android:id="@+id/edith_msg_orb"
+      android:layout_width="52dp"
+      android:layout_height="52dp"
+      android:importantForAccessibility="no"
+      android:scaleType="fitCenter"
+      android:src="@drawable/edith_widget_orb" />
+
+    <LinearLayout
+      android:layout_width="0dp"
+      android:layout_height="wrap_content"
+      android:layout_weight="1"
+      android:layout_marginStart="14dp"
+      android:orientation="vertical">
+
+      <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+          android:layout_width="wrap_content"
+          android:layout_height="wrap_content"
+          android:fontFamily="sans-serif-medium"
+          android:letterSpacing="0.06"
+          android:maxLines="1"
+          android:text="@string/edith_widget_name"
+          android:textColor="@color/edith_widget_text"
+          android:textSize="18sp" />
+
+        <ImageView
+          android:id="@+id/edith_msg_dot"
+          android:layout_width="8dp"
+          android:layout_height="8dp"
+          android:layout_marginStart="8dp"
+          android:src="@drawable/edith_widget_dot_unknown" />
+
+        <TextView
+          android:id="@+id/edith_msg_time"
+          android:layout_width="0dp"
+          android:layout_height="wrap_content"
+          android:layout_weight="1"
+          android:gravity="end"
+          android:maxLines="1"
+          android:textColor="@color/edith_widget_text_dim"
+          android:textSize="14sp" />
+      </LinearLayout>
+
+      <TextView
+        android:id="@+id/edith_msg_1"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:ellipsize="end"
+        android:maxLines="2"
+        android:text="@string/edith_widget_empty"
+        android:textColor="@color/edith_widget_text_dim"
+        android:textSize="15sp" />
+
+      <TextView
+        android:id="@+id/edith_msg_2"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:textColor="@color/edith_widget_text_dim"
+        android:textSize="14sp"
+        android:visibility="gone" />
+
+      <TextView
+        android:id="@+id/edith_msg_3"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:textColor="@color/edith_widget_text_dim"
+        android:textSize="14sp"
+        android:visibility="gone" />
+
+      <LinearLayout
+        android:id="@+id/edith_msg_actions"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:gravity="end"
+        android:orientation="horizontal"
+        android:visibility="gone">
+
+        <TextView
+          android:id="@+id/edith_msg_deny"
+          android:layout_width="wrap_content"
+          android:layout_height="32dp"
+          android:background="@drawable/edith_widget_button"
+          android:fontFamily="sans-serif-medium"
+          android:gravity="center"
+          android:paddingStart="16dp"
+          android:paddingEnd="16dp"
+          android:text="@string/edith_widget_deny"
+          android:textColor="@color/edith_widget_deny"
+          android:textSize="14sp" />
+
+        <TextView
+          android:id="@+id/edith_msg_allow"
+          android:layout_width="wrap_content"
+          android:layout_height="32dp"
+          android:layout_marginStart="8dp"
+          android:background="@drawable/edith_widget_button"
+          android:fontFamily="sans-serif-medium"
+          android:gravity="center"
+          android:paddingStart="16dp"
+          android:paddingEnd="16dp"
+          android:text="@string/edith_widget_allow"
+          android:textColor="@color/edith_widget_allow"
+          android:textSize="14sp" />
+      </LinearLayout>
+    </LinearLayout>
+  </LinearLayout>
+</FrameLayout>

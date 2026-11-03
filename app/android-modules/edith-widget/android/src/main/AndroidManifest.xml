@@ -1,0 +1,28 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <!-- No permissions: the widgets only draw what the app (or a push) saved, and open EDITH on a tap. -->
+  <application>
+    <!-- The EDITH bar (4x1): Type, Mic and Attach open EDITH through edith:// links. -->
+    <receiver
+      android:name="com.arpit.edith.widget.BarWidgetProvider"
+      android:exported="false"
+      android:label="@string/edith_widget_bar_label">
+      <intent-filter>
+        <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+      </intent-filter>
+      <meta-data android:name="android.appwidget.provider" android:resource="@xml/edith_widget_bar_info" />
+    </receiver>
+    <!-- EDITH's last message (4x2, up to 3 messages at 4x3), with a status dot. -->
+    <receiver
+      android:name="com.arpit.edith.widget.MessageWidgetProvider"
+      android:exported="false"
+      android:label="@string/edith_widget_message_label">
+      <intent-filter>
+        <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+      </intent-filter>
+      <meta-data android:name="android.appwidget.provider" android:resource="@xml/edith_widget_message_info" />
+    </receiver>
+    <!-- A push edith-system's PushService (or its 15-minute check) received: folded into the last-message
+         widget. Sent explicitly by class name from inside the app; nothing outside can reach it. -->
+    <receiver android:name="com.arpit.edith.widget.WidgetPushReceiver" android:exported="false" />
+  </application>
+</manifest>

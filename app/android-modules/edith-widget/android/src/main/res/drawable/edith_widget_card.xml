@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The last-message widget's glass: as edith_widget_pill, with the card's rounder-rectangle corners. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+  <item>
+    <shape android:shape="rectangle">
+      <corners android:radius="28dp" />
+      <solid android:color="@color/edith_widget_rim_outer" />
+    </shape>
+  </item>
+  <item android:left="1dp" android:top="1dp" android:right="1dp" android:bottom="1dp">
+    <shape android:shape="rectangle">
+      <corners android:radius="27dp" />
+      <gradient android:angle="270" android:startColor="@color/edith_widget_glass_top" android:endColor="@color/edith_widget_glass_bottom" />
+      <stroke android:width="1dp" android:color="@color/edith_widget_rim" />
+    </shape>
+  </item>
+</layer-list>

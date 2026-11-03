@@ -2,6 +2,7 @@ package com.arpit.edith.system
 
 import android.content.Context
 import android.os.Build
+import android.view.HapticFeedbackConstants
 import expo.modules.kotlin.exception.Exceptions
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
@@ -36,7 +37,7 @@ class PushRecord : Record {
 /**
  * The device side of the OngoingStatus, Notifier and PushReceiver ports: EDITH's live status
  * (LiveStatusNotifier, with EdithSessionService while a turn runs), its one-off notifications
- * (LocalNotifier), and pushes while the app is closed (PushService).
+ * (LocalNotifier), pushes while the app is closed (PushService), and the Haptics port's tick.
  */
 class EdithSystemModule : Module() {
   private val context: Context
@@ -72,7 +73,18 @@ class EdithSystemModule : Module() {
     Function("pushDisable") { if (SUPPORTED) push.disable() }
     Function("pushStatus") { if (SUPPORTED) push.status() else mapOf("enabled" to false) }
     Function("openBatterySettings") { if (SUPPORTED) push.openBatterySettings() }
+
+    // Haptics port: a light tick (swipe to reply caught). The window's own haptic feedback, so no
+    // VIBRATE permission (app.json blocks it), and it follows Android's "Touch feedback" setting.
+    Function("haptic") {
+      val view = appContext.currentActivity?.window?.decorView
+      view?.post { view.performHapticFeedback(HAPTIC_TICK) }
+      Unit
+    }
   }
 }
+
+private val HAPTIC_TICK =
+  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) HapticFeedbackConstants.GESTURE_THRESHOLD_ACTIVATE else HapticFeedbackConstants.CONTEXT_CLICK
 
 private val SUPPORTED = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O

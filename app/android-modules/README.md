@@ -3,9 +3,9 @@
 | Module | What | Phase |
 |---|---|---|
 | `edith-glass` | Liquid Glass view (AGSL lens on Android 13+, blur on 12), battery saver, frame-time measurement ([README](edith-glass/README.md)) | 2b |
-| `edith-system` | Live status (Android 16 Live Update / Live Alerts) with `EdithSessionService` (specialUse foreground service, only while a turn runs or an approval waits), and local notifications with Allow/Deny buttons (OngoingStatus, Notifier ports). A debug-only receiver lets CI post each state | 2b |
+| `edith-system` | Live status (Android 16 Live Update / Live Alerts) with `EdithSessionService` (specialUse foreground service, only while a turn runs or an approval waits), and local notifications with Allow/Deny buttons (OngoingStatus, Notifier ports), and a light haptic tick (Haptics port). A debug-only receiver lets CI post each state | 2b |
 | `assistant-role` | VoiceInteractionService so EDITH can be the default digital assistant (power button, earbud button) | 3 |
-| `widget` | Home-screen widget that opens EDITH listening | 3 |
+| `edith-widget` | Home-screen widgets: the EDITH bar (Type, Mic, Attach) and EDITH's last message with a status dot, drawn from a snapshot the app writes and pushes fold in ([contract](../../contracts/widgets.md)) | 3 |
 | `wakeword-service` | Foreground service running openWakeWord (ONNX Runtime) only while the toggle is on, with a sound gate | 4 |
 
 Each module is exposed to JS through a port in `src/core/ports.ts`. Features never call it directly.

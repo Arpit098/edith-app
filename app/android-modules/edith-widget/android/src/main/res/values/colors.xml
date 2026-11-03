@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Light glass: a frosted off-white pane, dark ink. values-night has the dark version. -->
+<resources>
+  <color name="edith_widget_glass_top">#E0F7F9FB</color>
+  <color name="edith_widget_glass_bottom">#D1E6EBF0</color>
+  <color name="edith_widget_rim">#66FFFFFF</color>
+  <color name="edith_widget_rim_outer">#1F10171D</color>
+  <color name="edith_widget_text">#FF141A20</color>
+  <color name="edith_widget_text_dim">#B3141A20</color>
+  <color name="edith_widget_icon">#FF2A3540</color>
+  <color name="edith_widget_button">#1A10171D</color>
+  <color name="edith_widget_allow">#FF2F7D4F</color>
+  <color name="edith_widget_deny">#FFB3402F</color>
+</resources>

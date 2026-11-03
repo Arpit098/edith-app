@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  EDITH's last message: 4x2, resizable to 4x3 for the last 3 messages (and Approve/Deny while a
+  permission waits). Redrawn when the app or a push saves news, never on a timer.
+  Keyguard: where a lock screen can host widgets, it shows no message text there (MessageWidgetProvider).
+-->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+  android:minWidth="250dp"
+  android:minHeight="100dp"
+  android:minResizeWidth="180dp"
+  android:minResizeHeight="80dp"
+  android:targetCellWidth="4"
+  android:targetCellHeight="2"
+  android:resizeMode="horizontal|vertical"
+  android:widgetCategory="home_screen|keyguard"
+  android:updatePeriodMillis="0"
+  android:initialLayout="@layout/edith_widget_message"
+  android:previewLayout="@layout/edith_widget_message"
+  android:description="@string/edith_widget_message_description" />

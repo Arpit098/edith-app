@@ -1,6 +1,7 @@
 package com.arpit.edith.system
 
 import android.content.Context
+import android.content.Intent
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
@@ -67,6 +68,7 @@ internal object PushNtfy {
   private fun show(context: Context, raw: String, config: PushConfig) {
     val m = try { JSONObject(raw) } catch (e: JSONException) { return }
     val tag = m.optString("tag").ifEmpty { return }
+    toWidget(context, raw)
     val notifier = LocalNotifier(context.applicationContext)
     if (m.optBoolean("cancel")) {
       notifier.cancel(tag)
@@ -87,6 +89,21 @@ internal object PushNtfy {
     }
     notifier.show(LocalNotification.parse(n.toString()))
   }
+
+  /**
+   * The push to edith-widget's last-message widget too (its WidgetPushReceiver folds it in). By class
+   * name, inside the app only, so the two modules don't link to each other; without that module
+   * nothing receives it. The text goes no further than this app.
+   */
+  private fun toWidget(context: Context, raw: String) {
+    context.sendBroadcast(
+      Intent(WIDGET_ACTION).setClassName(context.packageName, WIDGET_RECEIVER).putExtra(WIDGET_EXTRA, raw),
+    )
+  }
+
+  private const val WIDGET_ACTION = "com.arpit.edith.widget.PUSH"
+  private const val WIDGET_EXTRA = "com.arpit.edith.widget.push"
+  private const val WIDGET_RECEIVER = "com.arpit.edith.widget.WidgetPushReceiver"
 
   private fun answer(label: String, allow: Boolean, url: String, s: PushSettings) = JSONObject()
     .put("label", label)

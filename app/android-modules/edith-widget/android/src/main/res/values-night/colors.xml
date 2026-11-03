@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Dark glass: a translucent smoky pane with a thin light rim and off-white text (the Telegram widget's look). -->
+<resources>
+  <color name="edith_widget_glass_top">#C7232B35</color>
+  <color name="edith_widget_glass_bottom">#D912181E</color>
+  <color name="edith_widget_rim">#3DFFFFFF</color>
+  <color name="edith_widget_rim_outer">#40000000</color>
+  <color name="edith_widget_text">#FFF2F4F7</color>
+  <color name="edith_widget_text_dim">#A6E6EAF0</color>
+  <color name="edith_widget_icon">#FFE3E8F0</color>
+  <color name="edith_widget_button">#1FFFFFFF</color>
+  <color name="edith_widget_allow">#FF6FD39A</color>
+  <color name="edith_widget_deny">#FFFF8A78</color>
+</resources>
