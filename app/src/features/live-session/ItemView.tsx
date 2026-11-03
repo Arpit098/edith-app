@@ -21,8 +21,9 @@ import { Icon } from '../../ui/Icon';
 import { ReplyButtons } from '../../ui/ReplyButtons';
 import { StatusTick } from '../../ui/StatusTick';
 import { bubbleFace, colors, themedStyles, type, radius, space, useTheme, type Theme } from '../../core/theme';
-import { clockIST } from '../../common/format';
+import { clockIST, formatBytes } from '../../common/format';
 import type { SentAttachment } from './attachments';
+import { attachmentIcon } from './fileIcon';
 import type { Item, SendStatus, Tick } from './model';
 import type { Quote } from './reply';
 
@@ -233,11 +234,12 @@ const SentAttachments = memo(function SentAttachments({ list }: { list: SentAtta
             onError={() => setMissing((m) => new Set(m).add(a.uri!))}
           />
         ) : (
-          <View key={`${a.id}-${i}`} style={styles.attachmentChip}>
-            <Icon name={a.kind === 'audio' ? 'music-note-outline' : 'image-outline'} size={14} color={colors.textDim} />
-            <Text style={styles.attachmentName} numberOfLines={1}>
+          <View key={`${a.id}-${i}`} style={styles.attachmentChip} accessibilityLabel={a.size ? `${a.name}, ${formatBytes(a.size)}` : a.name}>
+            <Icon name={attachmentIcon(a.kind, a.name)} size={14} color={colors.textDim} />
+            <Text style={styles.attachmentName} numberOfLines={1} ellipsizeMode="middle">
               {a.name}
             </Text>
+            {a.size ? <Text style={styles.attachmentSize}>{formatBytes(a.size)}</Text> : null}
           </View>
         ),
       )}
@@ -250,6 +252,7 @@ const styles = StyleSheet.create({
   attachmentImage: { width: 140, height: 140, borderRadius: radius.m },
   attachmentChip: { flexDirection: 'row', alignItems: 'center', gap: space.xs, maxWidth: 220, backgroundColor: colors.cardRaised, borderRadius: radius.s, paddingHorizontal: space.s, paddingVertical: space.xs },
   attachmentName: { color: colors.text, fontSize: type.size.small, flexShrink: 1 },
+  attachmentSize: { color: colors.textDim, fontSize: type.size.caption },
   // Every bubble has a 1 dp border: its glass edge (themed), and a failed send or the jump-to mark
   // changes only its colour, so the bubble never shifts by a pixel. Nothing inside needs clipping.
   bubble: { borderRadius: radius.l, paddingHorizontal: space.m, paddingVertical: space.s + 2, marginVertical: space.xs, maxWidth: '88%', borderWidth: 1 },

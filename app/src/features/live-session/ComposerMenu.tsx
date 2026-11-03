@@ -1,5 +1,5 @@
 // The composer's menu (Arpit's reference): a frosted glass panel above the round menu button, with
-// rows of an outline icon and a label: Camera, Gallery, Audio file, Record and Commands (a second
+// rows of an outline icon and a label: Camera, Gallery, Audio file, Document, Record and Commands (a second
 // page listing the server's /commands). It grows out of the button on a spring and shrinks back
 // into it, closes on a tap outside or Android's back (back on the commands page goes to the first
 // page), and is unmounted once closed, so a closed menu costs nothing.
@@ -13,7 +13,7 @@ import { colors, legibleText, radius, space, type, useTheme } from '../../core/t
 import { Glass } from '../../ui/Glass';
 import { Icon } from '../../ui/Icon';
 import { GrowSheet, Squish } from '../../ui/motion';
-import type { AttachmentsModel, DraftsState } from './attachments';
+import type { AttachmentsModel, AttachSource, DraftsState } from './attachments';
 import { needsArgs } from './model';
 import type { VoiceModel, VoiceState } from './voice';
 
@@ -89,7 +89,7 @@ const MainPage = memo(function MainPage({ attach, voice, onClose, onCommands }: 
   const canTalk = useStore(voice.store, selectCanTalk);
   const idle = useStore(voice.store, selectIdle);
   const first = useFocusOnMount();
-  const add = (source: 'camera' | 'library' | 'audio') => {
+  const add = (source: AttachSource) => {
     onClose();
     void attach.add(source);
   };
@@ -98,6 +98,7 @@ const MainPage = memo(function MainPage({ attach, voice, onClose, onCommands }: 
       <Row ref={first} icon="camera-outline" label="Camera" onPress={() => add('camera')} disabled={picking} />
       <Row icon="image-outline" label="Gallery" onPress={() => add('library')} disabled={picking} />
       <Row icon="file-music-outline" label="Audio file" onPress={() => add('audio')} disabled={picking} />
+      <Row icon="file-document-outline" label="Document" hint="PDF, Word, Excel, PowerPoint, text or zip" onPress={() => add('document')} disabled={picking} />
       {canTalk ? (
         <Row
           icon="microphone-outline"

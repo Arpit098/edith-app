@@ -11,13 +11,15 @@ import { createStore, type Store } from '../../core/store';
 // file, KEEP_SECONDS = 7 * 86400). Binary megabytes: "20 MB" here means 20 MiB, as there.
 export const MAX_ATTACHMENTS = 10;
 export const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
-export const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
+export const MAX_FILE_BYTES = 25 * 1024 * 1024; // audio and documents
+export type AttachmentKind = 'image' | 'audio' | 'document';
+export type AttachSource = 'camera' | 'library' | 'audio' | 'document';
 export const ID_LIFETIME_S = 7 * 86400; // an attachment id is valid this long after its upload
 const PROGRESS_EVERY_MS = 250; // progress updates the UI at most 4 times a second
 
 export interface Draft {
   key: string;
-  kind: 'image' | 'audio';
+  kind: AttachmentKind;
   uri: string;
   name: string;
   mime: string;
@@ -40,7 +42,8 @@ export interface DraftsState {
 export interface SentAttachment {
   id: string; // '' for attachments from the server (Telegram, history): they have only a path
   name: string;
-  kind: 'image' | 'audio';
+  kind: AttachmentKind;
+  size?: number; // bytes, for the chip (absent from the server and in outboxes saved before it existed)
   // This phone's copy, for the thumbnail. Kept in the outbox across restarts, so it can point at a
   // file that's gone by now (pruned): the bubble then shows the name chip. Null from the server.
   uri: string | null;
@@ -49,7 +52,7 @@ export interface SentAttachment {
 
 export interface AttachmentsModel {
   store: Store<DraftsState>;
-  add(source: 'camera' | 'library' | 'audio'): Promise<void>;
+  add(source: AttachSource): Promise<void>;
   retry(key: string): Promise<void>;
   remove(key: string): void;
   /**
@@ -68,9 +71,9 @@ export function uploadError(e: unknown): string {
       case 404:
         return 'Attachments need a server update on edith.';
       case 415:
-        return "edith doesn't take this kind of file (images: JPEG, PNG, WebP, HEIC; audio: MP3, M4A, OGG, WAV, AAC).";
+        return "edith doesn't take this kind of file (images: JPEG, PNG, WebP, HEIC; audio: MP3, M4A, OGG, WAV, AAC; documents: PDF, Word, Excel, PowerPoint, text, CSV, Markdown, JSON, zip).";
       case 413:
-        return 'Too big for edith (images 20 MB, audio 25 MB).';
+        return 'Too big for edith (images 20 MB, audio and documents 25 MB).';
       case 0:
         return e.message === 'timed out' ? 'The upload took too long. Try again on a better connection.' : "Can't reach edith. Is Tailscale on?";
     }
@@ -120,7 +123,7 @@ export function createAttachmentsModel(deps: { api: Api; media?: MediaPicker; no
   /** Why this file can't be attached, or null. The size is the file's real size on disk. */
   function refuse(f: PickedFile): string | null {
     if (!(f.size > 0)) return "Couldn't read this file. Pick it again.";
-    if (f.size > (f.kind === 'image' ? MAX_IMAGE_BYTES : MAX_AUDIO_BYTES)) return uploadError(new ApiError(413, 'too big'));
+    if (f.size > (f.kind === 'image' ? MAX_IMAGE_BYTES : MAX_FILE_BYTES)) return uploadError(new ApiError(413, 'too big'));
     return null;
   }
 
@@ -141,7 +144,7 @@ export function createAttachmentsModel(deps: { api: Api; media?: MediaPicker; no
       store.set((s) => ({ ...s, picking: true, error: null }));
       let file: PickedFile | null;
       try {
-        file = source === 'audio' ? await media.pickAudio() : await media.pickImage(source);
+        file = source === 'audio' ? await media.pickAudio() : source === 'document' ? await media.pickDocument() : await media.pickImage(source);
       } catch (e) {
         store.set((s) => ({ ...s, picking: false, error: e instanceof Error ? e.message : String(e) }));
         return;
@@ -173,9 +176,9 @@ export function createAttachmentsModel(deps: { api: Api; media?: MediaPicker; no
       if (drafts.some((d) => d.status !== 'ready' || !d.id)) return null;
       store.set((s) => ({ ...s, drafts: [], error: null }));
       // Sent: the server holds the files now. Images stay on disk as the bubble's thumbnail (pruned
-      // later); audio files have no use here any more.
-      for (const d of drafts) if (d.kind === 'audio') media?.discard(d.uri);
-      return drafts.map((d) => ({ id: d.id!, name: d.name, kind: d.kind, uri: d.kind === 'image' ? d.uri : null, uploaded: d.uploaded ?? Math.floor(now() / 1000) }));
+      // later); audio files and documents have no use here any more.
+      for (const d of drafts) if (d.kind !== 'image') media?.discard(d.uri);
+      return drafts.map((d) => ({ id: d.id!, name: d.name, kind: d.kind, size: d.size, uri: d.kind === 'image' ? d.uri : null, uploaded: d.uploaded ?? Math.floor(now() / 1000) }));
     },
     busy: () => store.get().drafts.some((d) => d.status === 'uploading'),
     dispose() {

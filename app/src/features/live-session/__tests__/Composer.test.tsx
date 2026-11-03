@@ -205,7 +205,7 @@ describe('Composer menu', () => {
     expect(hidden()).toBe(false);
     expect(menuOpen(r)).toBe(false);
     press(r, MENU_LABEL);
-    expect(labels(r, 'menuitem')).toEqual(['Camera', 'Gallery', 'Audio file', 'Record', 'Commands']);
+    expect(labels(r, 'menuitem')).toEqual(['Camera', 'Gallery', 'Audio file', 'Document', 'Record', 'Commands']);
     expect(r.root.findAll((n) => n.props.accessibilityRole === 'menu')).not.toHaveLength(0);
     expect(hidden()).toBe(true); // TalkBack skips the transcript while the menu is open
     expect(focus).toHaveBeenCalledTimes(1); // and lands on the first row
@@ -220,7 +220,7 @@ describe('Composer menu', () => {
   it('leaves out Record without voice input', () => {
     const r = render(fakes({ canTalk: false }));
     press(r, MENU_LABEL);
-    expect(labels(r, 'menuitem')).toEqual(['Camera', 'Gallery', 'Audio file', 'Commands']);
+    expect(labels(r, 'menuitem')).toEqual(['Camera', 'Gallery', 'Audio file', 'Document', 'Commands']);
   });
 
   it('runs the attachment flows and Record, closing as it goes', () => {
@@ -230,6 +230,7 @@ describe('Composer menu', () => {
       ['Camera', 'camera'],
       ['Gallery', 'library'],
       ['Audio file', 'audio'],
+      ['Document', 'document'],
     ] as const) {
       press(r, MENU_LABEL);
       press(r, label);
