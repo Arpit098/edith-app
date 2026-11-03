@@ -40,13 +40,19 @@ export interface LiveScreenProps {
   reply: Store<Quote | null>;
   /** How much the Work cards show (Settings → Chat → Work details); the default (Steps) without one. */
   workDetail?: Store<WorkDetail>;
+  /** A request to focus the message box (edith://live/type): taken up, and cleared, by the composer. */
+  focus?: Store<boolean>;
+  /** A light tick as a swipe catches a message (the haptics port), if the phone has one. */
+  haptic?: () => void;
 }
 
 const STEPS_DETAIL = createStore<WorkDetail>(DEFAULT_WORK_DETAIL);
 
 const FLASH_MS = 1600; // how long the message a quote jumped to stays marked
 
-export function LiveScreen({ model, voice, attach, menu, reply, workDetail }: LiveScreenProps) {
+const NO_FOCUS = createStore(false);
+
+export function LiveScreen({ model, voice, attach, menu, reply, workDetail, focus = NO_FOCUS, haptic }: LiveScreenProps) {
   const items = useStore(model.store, selectItems);
   // The transcript's rows: messages, and each run of tool calls and edits as one Work card. Groups
   // whose members didn't change are kept as the same objects, so their rows don't re-render.
@@ -181,7 +187,7 @@ export function LiveScreen({ model, voice, attach, menu, reply, workDetail }: Li
         />
       </SettleIn>
       ),
-    [onPress, onRetry, onReply, onQuote, flash, turns, liquidRows, busy, clockOffset],
+    [onPress, onRetry, onReply, onQuote, flash, turns, liquidRows, busy, clockOffset, haptic],
   );
   const loadOlder = useCallback(() => void model.loadOlder(), [model]);
   const chromeInsets = useChrome();
@@ -251,7 +257,7 @@ export function LiveScreen({ model, voice, attach, menu, reply, workDetail }: Li
       </View>
       <ComposerMenu open={menu} bottom={below + space.xs} backdrop={backdrop.tag} attach={attach} voice={voice} loadCommands={loadCommands} onCommand={onCommand} />
       <View style={[styles.composerSlot, { bottom: chromeInsets.bottom }]} onLayout={onComposerLayout} pointerEvents="box-none">
-        <Composer model={model} voice={voice} attach={attach} backdrop={backdrop.tag} menu={menu} reply={reply} handle={draft} />
+        <Composer model={model} voice={voice} attach={attach} backdrop={backdrop.tag} menu={menu} reply={reply} focus={focus} handle={draft} />
       </View>
     </View>
   );
@@ -276,6 +282,7 @@ interface RowProps {
   onRetry: (key: string) => void;
   onReply: (item: Item) => void;
   onQuote: (itemId: number, quote: string) => void;
+  haptic?: () => void;
 }
 
 /**
@@ -283,7 +290,7 @@ interface RowProps {
  * values and stable callbacks (the swipe's own is made here, per item), so the memo holds; the
  * quote-jump mark is read from `flash` for this row's id only.
  */
-const MessageRow = memo(function MessageRow({ item, liquid: glassy, tick, status, flash, onPress, onRetry, onReply, onQuote }: RowProps) {
+const MessageRow = memo(function MessageRow({ item, liquid: glassy, tick, status, flash, onPress, onRetry, onReply, onQuote, haptic }: RowProps) {
   const id = item.id;
   const marked = useCallback((f: number | null) => f === id, [id]);
   const highlight = useStore(flash, marked);
@@ -292,14 +299,14 @@ const MessageRow = memo(function MessageRow({ item, liquid: glassy, tick, status
   const swiped = useCallback(() => onReply(item), [onReply, item]);
   if (item.kind === 'user') {
     return (
-      <SwipeToReply onReply={swiped}>
+      <SwipeToReply onReply={swiped} onCatch={haptic}>
         <ItemView item={item} liquid={liquid} onPress={onPress} tick={tick} status={status} onRetry={onRetry} onReply={onReply} onQuote={onQuote} highlight={highlight} />
       </SwipeToReply>
     );
   }
   if (item.kind === 'assistant') {
     return (
-      <SwipeToReply onReply={swiped}>
+      <SwipeToReply onReply={swiped} onCatch={haptic}>
         <ItemView item={item} liquid={liquid} onPress={onPress} onReply={onReply} highlight={highlight} />
       </SwipeToReply>
     );
@@ -354,6 +361,7 @@ interface ComposerProps {
   backdrop: number | null;
   menu: Store<boolean>;
   reply: Store<Quote | null>;
+  focus: Store<boolean>;
   handle: RefObject<DraftHandle | null>;
 }
 
@@ -362,7 +370,7 @@ interface ComposerProps {
  * the mic, or Stop while EDITH works, inside on the right) and the round send button. Attachments
  * and errors sit on their own glass above. It never re-renders for the keyboard: its props don't change.
  */
-const Composer = memo(function Composer({ model, voice, attach, backdrop, menu, reply, handle }: ComposerProps) {
+const Composer = memo(function Composer({ model, voice, attach, backdrop, menu, reply, focus, handle }: ComposerProps) {
   const busy = useStore(model.store, selectBusy);
   const background = useStore(model.store, selectBackground);
   const voicePhase = useStore(voice.store, selectVoicePhase);
@@ -373,6 +381,7 @@ const Composer = memo(function Composer({ model, voice, attach, backdrop, menu, 
   const picking = useStore(attach.store, selectPicking);
   const menuOpen = useStore(menu, selectOpen);
   const quote = useStore(reply, selectQuote);
+  const focusWanted = useStore(focus, selectOpen);
   const [text, setText] = useState('');
   const [fromVoice, setFromVoice] = useState(false); // the box holds words Arpit said: send them as voice
   const [stopping, setStopping] = useState(false);
@@ -394,6 +403,13 @@ const Composer = memo(function Composer({ model, voice, attach, backdrop, menu, 
     if (quote) input.current?.focus();
   }, [quote]);
   const cancelReply = useCallback(() => reply.set(null), [reply]);
+  // A link asked for the box (the home-screen bar's Type): focus it once this frame is drawn (the
+  // chat may have been hidden until now), which brings the keyboard up.
+  useEffect(() => {
+    if (!focusWanted) return;
+    focus.set(false); // re-runs this with false: the frame below must not be cancelled by that
+    requestAnimationFrame(() => input.current?.focus());
+  }, [focusWanted, focus]);
 
   const uploading = drafts.some((d) => d.status === 'uploading');
   const attachmentsReady = drafts.length > 0 && drafts.every((d) => d.status === 'ready');

@@ -129,7 +129,7 @@ All of them run in the same `edith-bridge` service, and the existing behaviour m
   - **Tools**: a launcher grid with one tile per tool (`FeatureModule.tool` in `app/src/core/feature.ts`).
     Only a few main screens are in the navigation menu (top right of the header); every other tool lives here.
   - **Settings**: server address and token, **"Hey Edith" toggle (off by default)** and sensitivity, voice (TTS) on/off, auto-send after speech.
-- **Home-screen widget**: one tap opens EDITH already listening.
+- **Home-screen widgets** (built, [contracts/widgets.md](contracts/widgets.md)): the EDITH bar (Type, Mic: one tap opens EDITH already listening, Attach) and EDITH's last message with a status dot (4x3: the last 3, Approve/Deny opening the app to confirm).
 - **Voice out:** Android TextToSpeech (`expo-speech`). It speaks EDITH's short voice summary (see 4.7).
 - **Native Kotlin modules:**
   - **WakeWordService** (foreground service, microphone type). It runs **only while the "Hey Edith"

@@ -2,6 +2,7 @@
 // (with Allow/Deny that answer without opening the app), reminders and errors. Event-driven; each
 // event id or ref notifies at most once, and nothing already on screen is notified.
 
+import { oneLine } from '../../common/format';
 import type { Api } from '../../core/api';
 import type { EdithEvent, EventBus } from '../../core/events';
 import { str } from '../../core/guards';
@@ -14,17 +15,9 @@ const APPROVALS = 'edith://approvals';
 /** Shown in the live chat: not notified while Arpit looks at it. */
 const CHAT: ReadonlySet<NotificationChannel> = new Set(['replies', 'errors', 'reminders']);
 
-/** One line of plain text for a notification: code blocks and markdown marks out, whitespace folded. */
+/** One line of plain text for a notification (common/format oneLine, at most PREVIEW characters by default). */
 export function preview(text: string, max = PREVIEW): string {
-  const plain = text
-    .replace(/```[\s\S]*?(```|$)/g, ' [code] ')
-    .replace(/`([^`]*)`/g, '$1')
-    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
-    .replace(/(^|\s)[#>*_-]+\s/g, '$1')
-    .replace(/[*_]{2,}/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-  return plain.length > max ? `${plain.slice(0, max - 1)}…` : plain;
+  return oneLine(text, max);
 }
 
 /** The channel a tag of ours belongs to (tags made by this file: perm:, rem:, turn:). */

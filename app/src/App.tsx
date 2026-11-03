@@ -17,6 +17,7 @@ import { createAndroidSystem } from './adapters/system/android';
 import { createEdithApiTransport } from './adapters/transport/edith-api';
 import { createExpoOtaUpdates } from './adapters/updates/expo-updates';
 import { createAppStateVisibility } from './adapters/visibility/react-native';
+import { createAndroidWidgets } from './adapters/widget/android';
 import { createApi } from './core/api';
 import { Connection } from './core/connection';
 import { EventBus } from './core/events';
@@ -40,7 +41,7 @@ function boot() {
   const bus = new EventBus();
   const api = createApi(transport);
   const connection = new Connection(transport, storage, bus);
-  const loaded = loadFeatures(features, { bus, ports: { transport, storage, data, installer, ota, recorder, stt, media: createExpoMediaPicker(), status: system?.status, notifier: system?.notifier, push: system?.push, visibility }, api, connection });
+  const loaded = loadFeatures(features, { bus, ports: { transport, storage, data, installer, ota, recorder, stt, media: createExpoMediaPicker(), status: system?.status, notifier: system?.notifier, push: system?.push, haptics: system?.haptics, widgets: createAndroidWidgets() ?? undefined, visibility }, api, connection });
   return { connection, loaded, visibility, glass: createAndroidGlass(), appearance: createAppearanceStore(data, createExpoWallpapers()) };
 }
 

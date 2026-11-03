@@ -329,3 +329,28 @@ describe('the Work card in the transcript', () => {
     expect(workHead(r).props.accessibilityLabel).toBe('Working: Run the tests');
   });
 });
+
+describe('a link asking for the message box (the home-screen bar’s Type)', () => {
+  it('focuses the box once drawn (keyboard up), also when asked before the composer mounted, and clears the request', () => {
+    const f = fakes();
+    const focus = createStore(true); // asked while EDITH was starting
+    let r!: ReactTestRenderer;
+    act(() => {
+      r = create(
+        <GlassContext.Provider value={{ mode: 'flat', View: null, reduceMotion: true }}>
+          <LiveScreen model={f.model as unknown as LiveModel} voice={f.voice as unknown as VoiceModel} attach={f.attach as unknown as AttachmentsModel} menu={f.menu} reply={f.reply} focus={focus} />
+        </GlassContext.Provider>,
+      );
+    });
+    const focusBox = input(r).instance.focus as jest.Mock; // React Native's TextInput mock
+    expect(focus.get()).toBe(false);
+    const before = focusBox.mock.calls.length;
+    act(() => jest.advanceTimersByTime(50)); // the next frame (fake timers here)
+    expect(focusBox.mock.calls.length).toBe(before + 1);
+    act(() => focus.set(true)); // asked again while open
+    act(() => jest.advanceTimersByTime(50));
+    expect(focusBox.mock.calls.length).toBe(before + 2);
+    expect(focus.get()).toBe(false);
+    act(() => r.unmount());
+  });
+});

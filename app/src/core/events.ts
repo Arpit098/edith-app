@@ -64,6 +64,9 @@ export interface EventDataMap {
   'app.voice': { state: 'listening' | 'speaking' | 'idle' }; // the voice feature (Phase 3): mic or TTS active
   'app.screen': { name: string }; // shell/: the screen now on top (e.g. "live", "approvals")
   'app.open': { screen: string; page?: string }; // a feature asks the shell to open a screen (e.g. Settings → "wakeword"); `page`: a Settings page by title
+  // shell/: an edith:// link opened `screen` with an action for it, e.g. edith://live/type from the
+  // home-screen widget → { screen: "live", action: "type" } (contracts/widgets.md). Published after the screen is on top.
+  'app.link': { screen: string; action: string };
 }
 
 export type EventType = keyof EventDataMap;

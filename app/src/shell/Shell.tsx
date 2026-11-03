@@ -88,10 +88,14 @@ function Main({ loaded, connection, meter, brandFont }: { loaded: LoadedFeatures
     return () => sub.remove();
   }, [home]);
 
-  // A tapped notification or Live Alerts pill: edith://live, edith://approvals, edith://settings/updates.
+  // A tapped notification, Live Alerts pill or home-screen widget: edith://live, edith://approvals,
+  // edith://settings/updates, edith://live/type. For a screen other than Settings the second part is
+  // an action its feature carries out (app.link), e.g. the widget's Type, Mic and Attach.
   useDeepLinks((url) => {
     const target = linkTarget(url, (name) => routes.has(name), home);
-    if (target) open(target.screen, target.page);
+    if (!target) return;
+    open(target.screen, target.page);
+    if (target.page && target.screen !== 'settings') connection.bus.publish(localEvent('app.link', { screen: target.screen, action: target.page }));
   });
   // A feature's own link to a screen (e.g. Settings → Train wake word).
   useEffect(

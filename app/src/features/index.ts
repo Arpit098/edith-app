@@ -14,6 +14,7 @@ import notifications from './notifications';
 import push from './push';
 import sessions from './sessions';
 import wakeword from './wakeword';
+import widgets from './widgets';
 
 export const features: FeatureModule[] = [
   liveSession,
@@ -28,5 +29,6 @@ export const features: FeatureModule[] = [
   notifications,
   push, // Phase 5: pushes with the app closed (ntfy)
   // Phase 3: voice, assistant, widget
+  widgets, // the home-screen EDITH bar and last-message widget
   wakeword, // Phase 4: training and settings now; the detector later
 ];

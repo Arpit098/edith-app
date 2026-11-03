@@ -2,7 +2,7 @@
 // flows (connect gate, live events, approvals banner, tools grid, back button) work end to end.
 
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import { BackHandler, StyleSheet, Text } from 'react-native';
+import { BackHandler, Linking, StyleSheet, Text } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { localEvent } from '../../core/events';
@@ -290,6 +290,37 @@ describe('Shell', () => {
       });
       expect(title()).toBe('settings');
       expect(items()).toHaveLength(0);
+      act(() => r.unmount());
+      loaded.cleanup();
+    });
+
+    it("an edith:// link from a widget opens the chat and hands it the action; Settings links don't", async () => {
+      let onUrl: ((e: { url: string }) => void) | null = null;
+      // Linking's own mock is a jest.fn: swapped by hand (a spy on it would change it for the other tests).
+      const original = Linking.addEventListener;
+      Linking.addEventListener = ((_: string, h: (e: { url: string }) => void) => {
+        onUrl = h;
+        return { remove: () => {} };
+      }) as never;
+      const { ctx, r, loaded, press, title } = await connected();
+      const links: unknown[] = [];
+      ctx.bus.on('app.link', (e) => void links.push(e.data), 'test');
+      await press('Menu');
+      await press('Settings');
+      expect(title()).toBe('settings');
+      await act(async () => {
+        onUrl!({ url: 'edith://live/attach' });
+        await flush();
+      });
+      expect(title()).toBe('live');
+      expect(links).toEqual([{ screen: 'live', action: 'attach' }]);
+      await act(async () => {
+        onUrl!({ url: 'edith://settings/updates' });
+        onUrl!({ url: 'edith://live' });
+        await flush();
+      });
+      expect(links).toHaveLength(1); // a Settings page is the shell's own; a plain link has no action
+      Linking.addEventListener = original;
       act(() => r.unmount());
       loaded.cleanup();
     });
