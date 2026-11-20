@@ -82,9 +82,10 @@ export interface MediaPicker {
 }
 
 /**
- * Files EDITH sent (contracts/attachments.md §4), kept in the app's own cache folder. Opening one in
- * another app needs a native module the APK doesn't have yet, so a file is shown in the app (images,
- * text) or saved to a folder Arpit picks once through Android's folder picker (no permission).
+ * Files EDITH sent (contracts/attachments.md §4), kept in the app's own cache folder. A file is shown
+ * in the app (images, text), opened in the phone's viewer for its type (a content:// grant, no
+ * permission), shared through the share sheet, or saved to a folder Arpit picks once through
+ * Android's folder picker (no permission).
  */
 export interface ReceivedFiles {
   /** The downloaded copy of this file, or null when it isn't here (or is incomplete). */
@@ -103,6 +104,14 @@ export interface ReceivedFiles {
    * when its access is gone). The folder's name, or null when Arpit cancelled the picker.
    */
   save(uri: string, name: string, mime: string): Promise<string | null>;
+  /**
+   * Open a cached file in the phone's app for `mime` (ACTION_VIEW with a read grant). Resolves when
+   * Arpit comes back from it, or to 'no-app' at once when nothing on the phone opens that type.
+   * Absent when the APK has no intent launcher (an older APK).
+   */
+  view?(uri: string, mime: string): Promise<'opened' | 'no-app'>;
+  /** The share sheet for a cached file; resolves when it closes. Absent without expo-sharing. */
+  share?(uri: string, name: string, mime: string): Promise<void>;
   /** Delete old downloads, bounded by age and total size. Run once at startup. */
   prune(): void;
 }

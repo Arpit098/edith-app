@@ -1,6 +1,6 @@
 // Downloaded files keep the server's name, made safe as one path segment.
 
-import { folderLost, safeName } from '../received';
+import { folderLost, noViewerApp, safeName } from '../received';
 
 describe('safeName', () => {
   it('keeps ordinary names and removes separators, controls and leading dots', () => {
@@ -11,6 +11,15 @@ describe('safeName', () => {
     expect(safeName('x\u0000y\n.md')).toBe('x_y_.md');
     expect(safeName('')).toBe('file');
     expect(safeName('n'.repeat(300))).toHaveLength(120);
+  });
+});
+
+describe('noViewerApp', () => {
+  it('tells "no app opens this type" from other launch failures', () => {
+    expect(noViewerApp(new Error('android.content.ActivityNotFoundException: No Activity found to handle Intent { act=android.intent.action.VIEW }'))).toBe(true);
+    expect(noViewerApp(new Error('No Activity found to handle Intent'))).toBe(true);
+    expect(noViewerApp(new Error('ActivityAlreadyStartedException'))).toBe(false);
+    expect(noViewerApp(new Error('SecurityException: Permission Denial'))).toBe(false);
   });
 });
 

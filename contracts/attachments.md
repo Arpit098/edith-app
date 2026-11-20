@@ -151,8 +151,18 @@ event's `files` paths (`message.assistant`, `turn.done`, on the stream and in hi
 - **The app** shows them on EDITH's bubble as chips (type icon, name, size; images as a thumbnail once
   downloaded). Tapping downloads into the app's cache with progress (kept 7 days, at most 200 MB), then:
   an image opens full screen, a text file (txt, md, csv, json, log, html, code; up to 1 MB) opens in a
-  reader (the first 200 KB, long lines in 2,000-character rows, then "Save to see all"), anything else is saved to a folder Arpit picks once (Android's folder picker, e.g. Download/EDITH;
-  no storage permission). A long press saves any file there. The folder is asked for again only when it
-  is gone or its access was taken back; any other failure is shown as it is. Opening a file in another app (a PDF viewer)
-  or the share sheet needs a native module the current APK doesn't have (expo-sharing or a FileProvider
-  intent); it comes with a later APK.
+  reader (the first 200 KB, long lines in 2,000-character rows, then "Save to see all"), anything else
+  (PDF, Office, zip, bigger text, HEIC, audio, video) opens in the phone's own app for its type:
+  `ACTION_VIEW` on a `content://` uri from the app's FileProvider with `FLAG_GRANT_READ_URI_PERMISSION`
+  (no permission; only that one file, only for that app). The type is the server's `mime`, made specific
+  from the extension when it is `application/octet-stream`; text goes out as `text/plain` (CSV, TSV,
+  HTML, `text/calendar`, `text/vcard` and `text/x-vcard` keep theirs). App packages are never opened from
+  the chat: the APK type, or a name ending `.apk`, `.apks`, `.xapk`, `.apkm` or `.aab` (any case). When no app opens the type, Arpit is told so
+  and offered Share or Save. A long press offers Share (the system share sheet) and Save (a folder Arpit
+  picks once with Android's folder picker, e.g. Download/EDITH; no storage permission). The folder is
+  asked for again only when it is gone or its access was taken back; any other failure is shown as it is.
+  A cached copy is reused while it has the expected size and is under 7 days old (an id names one exact
+  file, so the same id and size are the same bytes); older copies are deleted at startup. A 404 shows
+  "This file has expired (files are kept 7 days)". Opening and sharing are native (expo-intent-launcher,
+  expo-sharing), so they come with a new APK; an older APK never gets this code over the air (its
+  runtimeVersion fingerprint differs).

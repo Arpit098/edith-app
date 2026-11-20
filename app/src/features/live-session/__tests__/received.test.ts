@@ -5,7 +5,24 @@ import type { EdithEvent, SentFileData } from '../../../core/events';
 import type { ReceivedFiles } from '../../../core/ports';
 import { ev, FakeTransport, flush } from '../../../testing/fakes';
 import { initialLive, reduce, type Item, type LiveState } from '../model';
-import { createReceivedModel, downloadError, ROW_MAX_CHARS, SERVER_TOO_OLD, sentFilesOf, VIEW_MAX_CHARS, viewOf, viewRows, type SentFile } from '../received';
+import {
+  createReceivedModel,
+  downloadError,
+  EXPIRED,
+  isNoViewer,
+  launchError,
+  neverOpened,
+  noViewerMessage,
+  OFFLINE,
+  ROW_MAX_CHARS,
+  SERVER_TOO_OLD,
+  sentFilesOf,
+  VIEW_MAX_CHARS,
+  viewerMime,
+  viewOf,
+  viewRows,
+  type SentFile,
+} from '../received';
 
 const ID = 'a'.repeat(32);
 const ID2 = 'b'.repeat(32);
@@ -41,11 +58,82 @@ describe('sentFilesOf', () => {
 
   it('picks how each opens', () => {
     expect(viewOf({ name: 'a.png', mime: 'image/png', size: 10 })).toBe('image');
-    expect(viewOf({ name: 'a.heic', mime: 'image/heic', size: 10 })).toBe('save');
+    expect(viewOf({ name: 'a.heic', mime: 'image/heic', size: 10 })).toBe('external'); // the phone's gallery draws it
     expect(viewOf({ name: 'notes.md', mime: 'text/markdown', size: 10 })).toBe('text');
     expect(viewOf({ name: 'run.log', mime: 'application/octet-stream', size: 10 })).toBe('text');
-    expect(viewOf({ name: 'huge.txt', mime: 'text/plain', size: 5_000_000 })).toBe('save');
-    expect(viewOf(PDF)).toBe('save');
+    expect(viewOf({ name: 'huge.txt', mime: 'text/plain', size: 5_000_000 })).toBe('external');
+    expect(viewOf(PDF)).toBe('external');
+  });
+});
+
+describe('viewerMime', () => {
+  it('keeps the server’s specific type, without parameters', () => {
+    expect(viewerMime('Plan v2.pdf', 'application/pdf')).toBe('application/pdf');
+    expect(viewerMime('CV.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')).toBe(
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    );
+    expect(viewerMime('a.zip', 'Application/ZIP; charset=binary')).toBe('application/zip');
+    expect(viewerMime('clip.mp4', 'video/mp4')).toBe('video/mp4');
+  });
+
+  it('makes a generic or missing type specific from the extension', () => {
+    expect(viewerMime('report.PDF', 'application/octet-stream')).toBe('application/pdf');
+    expect(viewerMime('sheet.xlsx', '')).toBe('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    expect(viewerMime('deck.pptx', 'nonsense')).toBe('application/vnd.openxmlformats-officedocument.presentationml.presentation');
+    expect(viewerMime('old.doc', 'application/octet-stream')).toBe('application/msword');
+    expect(viewerMime('book.epub', 'application/octet-stream')).toBe('application/epub+zip');
+    expect(viewerMime('blob.bin', 'application/octet-stream')).toBe('application/octet-stream');
+    expect(viewerMime('noext', 'application/octet-stream')).toBe('application/octet-stream');
+  });
+
+  it('sends big text as text/plain, but keeps CSV, TSV and HTML', () => {
+    expect(viewerMime('notes.md', 'text/markdown')).toBe('text/plain');
+    expect(viewerMime('dump.json', 'application/json')).toBe('text/plain');
+    expect(viewerMime('run.log', 'application/octet-stream')).toBe('text/plain');
+    expect(viewerMime('a.yaml', 'application/octet-stream')).toBe('text/plain');
+    expect(viewerMime('data.csv', 'text/csv')).toBe('text/csv');
+    expect(viewerMime('data.tsv', 'application/octet-stream')).toBe('text/tab-separated-values');
+    expect(viewerMime('page.html', 'text/html; charset=utf-8')).toBe('text/html');
+  });
+
+  it('keeps calendar and contact types for their apps', () => {
+    expect(viewerMime('invite.ics', 'text/calendar; charset=utf-8')).toBe('text/calendar');
+    expect(viewerMime('invite.ics', 'application/octet-stream')).toBe('text/calendar');
+    expect(viewerMime('arpit.vcf', 'text/vcard')).toBe('text/vcard');
+    expect(viewerMime('arpit.vcf', 'text/x-vcard')).toBe('text/x-vcard');
+    expect(viewerMime('arpit.vcf', 'application/octet-stream')).toBe('text/vcard');
+  });
+});
+
+describe('neverOpened', () => {
+  it('refuses app packages by type or by extension, any case', () => {
+    expect(neverOpened('x.bin', 'application/vnd.android.package-archive')).toBe(true);
+    for (const n of ['a.apk', 'A.APK', 'b.apks', 'c.XAPK', 'd.apkm', 'e.aab', 'F.Aab']) expect(neverOpened(n, 'application/zip')).toBe(true);
+    for (const n of ['a.pdf', 'apk.txt', 'notes.apk.md', 'x.aabb', 'grab']) expect(neverOpened(n, 'application/pdf')).toBe(false);
+  });
+});
+
+describe('messages', () => {
+  it('says plainly when no app opens a type', () => {
+    expect(noViewerMessage('a.xyz')).toBe('No app on this phone opens .xyz files. Share it to another app, or save it to a folder.');
+    expect(noViewerMessage('README')).toMatch(/^No app on this phone opens this file\./);
+  });
+
+  it('words download errors: expired, offline, token, cancelled, other', () => {
+    expect(downloadError(new Error('UnableToDownloadException: response has status: 404'))).toBe(EXPIRED);
+    expect(EXPIRED).toMatch(/^This file has expired \(files are kept 7 days\)/);
+    expect(downloadError(new Error('java.net.UnknownHostException: Unable to resolve host "edith"'))).toBe(OFFLINE);
+    expect(downloadError(new Error('java.net.ConnectException: Failed to connect to /100.1.2.3:8787'))).toBe(OFFLINE);
+    expect(downloadError(new Error('java.net.SocketTimeoutException: timeout'))).toBe(OFFLINE);
+    expect(downloadError(new Error('Network request failed'))).toBe(OFFLINE);
+    expect(downloadError(new Error('response has status: 401'))).toMatch(/token/);
+    expect(downloadError(new Error('AbortError: aborted'))).toBe('Download cancelled.');
+    expect(downloadError(new Error('disk full'))).toMatch(/Couldn't download it/);
+  });
+
+  it('words launch errors', () => {
+    expect(launchError('open', 'a.pdf', new Error('ActivityAlreadyStartedException: already started'))).toMatch(/still opening/);
+    expect(launchError('share', 'a.pdf', new Error('boom'))).toBe("Couldn't share a.pdf: boom");
   });
 });
 
@@ -116,8 +204,17 @@ function fakeFiles() {
   const cache = new Map<string, string>();
   let pending: { resolve: (uri: string) => void; reject: (e: Error) => void; progress: (w: number, t: number) => void; id: string } | null = null;
   const saved: string[] = [];
+  const viewed: [string, string][] = [];
+  const shared: [string, string, string][] = [];
   const port: ReceivedFiles & { downloads: { url: string; headers: Record<string, string> }[] } = {
     downloads: [],
+    view: async (uri, mime) => {
+      viewed.push([uri, mime]);
+      return 'opened';
+    },
+    share: async (uri, name, mime) => {
+      shared.push([uri, name, mime]);
+    },
     cached: ({ id }) => cache.get(id) ?? null,
     download(request, file, onProgress) {
       port.downloads.push(request);
@@ -135,6 +232,8 @@ function fakeFiles() {
   return {
     port,
     saved,
+    viewed,
+    shared,
     progress: (w: number, t: number) => pending!.progress(w, t),
     finish(uri = 'file:///cache/received/x') {
       cache.set(pending!.id, uri);
@@ -155,7 +254,7 @@ describe('createReceivedModel', () => {
     return { m, f };
   }
 
-  it('downloads once with the token, shows progress, then saves a PDF to the folder', async () => {
+  it('downloads once with the token, shows progress, then opens a PDF in the phone’s viewer', async () => {
     const { m, f } = setup();
     const now = jest.spyOn(Date, 'now');
     now.mockReturnValue(10_000);
@@ -167,11 +266,17 @@ describe('createReceivedModel', () => {
     f.progress(1024, 2048);
     expect(m.store.get().files[ID]).toMatchObject({ written: 1024 });
     f.finish();
-    expect(await opened).toBe('Saved Plan v2.pdf to EDITH');
-    expect(await again).toBe('Saved Plan v2.pdf to EDITH');
-    expect(f.saved).toEqual(['Plan v2.pdf', 'Plan v2.pdf']);
+    expect(await opened).toBeNull();
+    expect(await again).toBeNull();
+    expect(f.viewed).toEqual([
+      ['file:///cache/received/x', 'application/pdf'],
+      ['file:///cache/received/x', 'application/pdf'],
+    ]);
     expect(m.store.get().files[ID]).toMatchObject({ status: 'ready', uri: 'file:///cache/received/x' });
     expect(await m.save(PDF)).toBe('Saved Plan v2.pdf to EDITH'); // cached: no new download
+    expect(await m.share(PDF)).toBeNull();
+    expect(f.shared).toEqual([['file:///cache/received/x', 'Plan v2.pdf', 'application/pdf']]);
+    expect(await m.open(PDF)).toBeNull();
     expect(f.port.downloads).toHaveLength(1);
     now.mockRestore();
   });
@@ -216,13 +321,99 @@ describe('createReceivedModel', () => {
     const opened = m.open(PDF);
     await flush();
     f.fail('UnableToDownload: status 404');
-    expect(await opened).toMatch(/No longer on edith/);
-    expect(m.store.get().files[ID]!.status).toBe('failed');
+    expect(await opened).toBe(EXPIRED);
+    expect(m.store.get().files[ID]).toMatchObject({ status: 'failed', error: EXPIRED });
     const retry = m.open(PDF);
     await flush();
     expect(f.port.downloads).toHaveLength(2);
     f.finish();
-    expect(await retry).toBe('Saved Plan v2.pdf to EDITH');
+    expect(await retry).toBeNull();
+    expect(f.viewed).toHaveLength(1);
+  });
+
+  it('offers Share and Save when no app opens the type', async () => {
+    const { m, f } = setup();
+    f.port.view = async () => 'no-app';
+    const zip: SentFile = { id: ID2, name: 'logs.zip', size: 5, mime: 'application/zip', error: null };
+    const opened = m.open(zip);
+    await flush();
+    f.finish();
+    const o = await opened;
+    expect(isNoViewer(o) && o.noViewer).toBe(noViewerMessage('logs.zip'));
+  });
+
+  it('never opens an APK from the chat, and an APK without a viewer offers Share and Save', async () => {
+    const { m, f } = setup();
+    const apk: SentFile = { id: ID2, name: 'edith.apk', size: 5, mime: 'application/vnd.android.package-archive', error: null };
+    const opened = m.open(apk);
+    await flush();
+    f.finish();
+    const o = await opened;
+    expect(isNoViewer(o) && o.noViewer).toMatch(/isn't opened from the chat/);
+    expect(f.viewed).toEqual([]);
+    // A store-format package the server calls a zip: not opened either.
+    const xapk = m.open({ id: 'c'.repeat(32), name: 'Game.XAPK', size: 5, mime: 'application/zip', error: null });
+    await flush();
+    f.finish();
+    const ox = await xapk;
+    expect(isNoViewer(ox) && ox.noViewer).toMatch(/isn't opened from the chat/);
+    expect(f.viewed).toEqual([]);
+    // Without the viewer module (an older APK) any document offers Share/Save too.
+    f.port.view = undefined;
+    const pdf = m.open(PDF);
+    await flush();
+    f.finish();
+    const o2 = await pdf;
+    expect(isNoViewer(o2) && o2.noViewer).toBe(noViewerMessage('Plan v2.pdf'));
+  });
+
+  it('downloads again when the cached copy was pruned before opening', async () => {
+    const { m, f } = setup();
+    const first = m.open(PDF);
+    await flush();
+    f.finish();
+    await first;
+    let calls = 0;
+    f.port.view = async () => {
+      calls++;
+      if (calls === 1) {
+        f.port.cached = () => null; // pruned
+        throw new Error('the downloaded copy is gone');
+      }
+      return 'opened';
+    };
+    const opened = m.open(PDF);
+    await flush();
+    f.finish();
+    expect(await opened).toBeNull();
+    expect(f.port.downloads).toHaveLength(2);
+    expect(calls).toBe(2);
+  });
+
+  it('a pruned copy that has expired on edith says so', async () => {
+    const { m, f } = setup();
+    const first = m.open(PDF);
+    await flush();
+    f.finish();
+    await first;
+    f.port.view = async () => {
+      f.port.cached = () => null;
+      throw new Error('the downloaded copy is gone');
+    };
+    const opened = m.open(PDF);
+    await flush();
+    f.fail('response has status: 404');
+    expect(await opened).toBe(EXPIRED);
+  });
+
+  it('says when sharing isn’t in this APK', async () => {
+    expect(setup().m.canShare).toBe(true);
+    const f = fakeFiles();
+    f.port.share = undefined;
+    const m = createReceivedModel({ transport: new FakeTransport(), files: f.port });
+    expect(m.canShare).toBe(false);
+    expect(await m.share(PDF)).toBe('Sharing needs the latest app update.');
+    expect(f.port.downloads).toHaveLength(0);
   });
 
   it('never downloads a file the server didn’t offer, or without a connection', async () => {
@@ -243,9 +434,4 @@ describe('createReceivedModel', () => {
     expect(f.port.downloads).toHaveLength(1);
   });
 
-  it('words errors plainly', () => {
-    expect(downloadError(new Error('HTTP 401'))).toMatch(/token/);
-    expect(downloadError(new Error('AbortError: aborted'))).toBe('Download cancelled.');
-    expect(downloadError(new Error('socket'))).toMatch(/connection/);
-  });
 });
