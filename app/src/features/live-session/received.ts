@@ -1,9 +1,9 @@
 // Files EDITH sends (its SEND_FILE lines; contracts/attachments.md §4). The server offers each one as
 // {id, name, size, mime} in `sent_files`; tapping its chip downloads it with GET /v1/files/<id> into
 // the app's cache (ports.files), with progress, then shows it: an image full screen, a text file in a
-// reader, anything else saved to the folder Arpit picked (Android's folder picker, once). A long press
-// saves any of them. Opening in another app (a PDF viewer) or the share sheet needs a native module the
-// APK doesn't have yet; until then, saving is how a PDF or Office file leaves the app.
+// reader, anything else (PDF, Office, zip, …) in the phone's own app for its type. When no app opens
+// that type, Arpit is offered Share or Save instead. A long press offers Share and Save for any file:
+// the share sheet, or the folder Arpit picked (Android's folder picker, once).
 
 import type { Transport, ReceivedFiles } from '../../core/ports';
 import { createStore, type Store } from '../../core/store';
@@ -69,14 +69,91 @@ export function sentFilesOf(data: Record<string, unknown>): SentFile[] {
   return paths.map((p) => ({ id: null, name: baseName(p), size: null, mime: 'application/octet-stream', error: SERVER_TOO_OLD }));
 }
 
-/** How a downloaded file is shown when tapped. */
-export type View = 'image' | 'text' | 'save';
+/** How a downloaded file is shown when tapped: in the app, or in the phone's viewer for its type. */
+export type View = 'image' | 'text' | 'external';
 
 export function viewOf(f: Pick<SentFile, 'name' | 'mime' | 'size'>): View {
   if (IMAGE_MIME.test(f.mime)) return 'image';
   const texty = f.mime.startsWith('text/') || f.mime === 'application/json' || TEXT_EXT.test(f.name);
   if (texty && (f.size ?? 0) <= TEXT_MAX_BYTES) return 'text';
-  return 'save';
+  return 'external';
+}
+
+/** Types by extension, for a file the server could only call application/octet-stream. */
+const EXT_MIME: Record<string, string> = {
+  pdf: 'application/pdf',
+  doc: 'application/msword',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xls: 'application/vnd.ms-excel',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  ppt: 'application/vnd.ms-powerpoint',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  odt: 'application/vnd.oasis.opendocument.text',
+  ods: 'application/vnd.oasis.opendocument.spreadsheet',
+  odp: 'application/vnd.oasis.opendocument.presentation',
+  rtf: 'application/rtf',
+  epub: 'application/epub+zip',
+  zip: 'application/zip',
+  gz: 'application/gzip',
+  tar: 'application/x-tar',
+  '7z': 'application/x-7z-compressed',
+  rar: 'application/vnd.rar',
+  apk: 'application/vnd.android.package-archive',
+  csv: 'text/csv',
+  tsv: 'text/tab-separated-values',
+  html: 'text/html',
+  htm: 'text/html',
+  svg: 'image/svg+xml',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  heic: 'image/heic',
+  mp3: 'audio/mpeg',
+  m4a: 'audio/mp4',
+  ogg: 'audio/ogg',
+  wav: 'audio/wav',
+  aac: 'audio/aac',
+  mp4: 'video/mp4',
+  mov: 'video/quicktime',
+  webm: 'video/webm',
+  mkv: 'video/x-matroska',
+};
+
+function extOf(name: string): string {
+  const m = /\.([A-Za-z0-9]+)$/.exec(name);
+  return m ? m[1]!.toLowerCase() : '';
+}
+
+/**
+ * The type Android's viewer is asked for: the server's type (from the name, contracts/attachments.md
+ * §4) without parameters, made specific from the extension when it is generic. Text that would open
+ * in the app but is too big goes out as text/plain (few phones have an app for text/markdown or
+ * JSON); CSV, TSV and HTML keep theirs (spreadsheet apps and browsers take them).
+ */
+export function viewerMime(name: string, mime: string): string {
+  let m = (mime.split(';')[0] ?? '').trim().toLowerCase();
+  if (!m.includes('/') || m === 'application/octet-stream') m = EXT_MIME[extOf(name)] ?? (TEXT_EXT.test(name) ? 'text/plain' : 'application/octet-stream');
+  if (m === 'text/csv' || m === 'text/html' || m === 'text/tab-separated-values') return m;
+  if (m.startsWith('text/') || m === 'application/json' || m === 'application/xml') return 'text/plain';
+  return m;
+}
+
+/** Types never opened from the chat: an APK would start installing an app. Share or Save instead. */
+const NOT_OPENED = new Set(['application/vnd.android.package-archive']);
+
+/** What Arpit is told when no app on the phone opens a file's type. */
+export function noViewerMessage(name: string): string {
+  const ext = extOf(name);
+  return `No app on this phone opens ${ext ? `.${ext} files` : 'this file'}. Share it to another app, or save it to a folder.`;
+}
+
+/** A tap's answer: a line for a toast (or nothing), or "no app opens this" with Share/Save to offer. */
+export type Outcome = string | null | { noViewer: string };
+
+export function isNoViewer(o: Outcome): o is { noViewer: string } {
+  return typeof o === 'object' && o !== null;
 }
 
 export interface FileState {
@@ -104,10 +181,14 @@ export interface ReceivedModel {
   store: Store<ReceivedState>;
   /** Whether files can be downloaded here at all (not in tests or on web). */
   available: boolean;
-  /** Tap: download if needed, then show or save it. Resolves to a line for a toast, or null. */
-  open(file: SentFile): Promise<string | null>;
-  /** Long press: download if needed, then save it to the folder. */
+  /** Tap: download if needed, then show it here or in the phone's viewer (resolves when Arpit is back). */
+  open(file: SentFile): Promise<Outcome>;
+  /** Download if needed, then save it to the folder. Resolves to a line for a toast, or null. */
   save(file: SentFile): Promise<string | null>;
+  /** Download if needed, then the share sheet. Resolves to a line for a toast, or null. */
+  share(file: SentFile): Promise<string | null>;
+  /** Whether the share sheet is there (the APK has it). */
+  canShare: boolean;
   /** Download (for a thumbnail) without showing it; nothing if it's here or on its way. */
   prefetch(file: SentFile): void;
   close(): void;
@@ -115,12 +196,25 @@ export interface ReceivedModel {
 }
 
 /** Why a download failed, said plainly. */
+export const EXPIRED = 'This file has expired (files are kept 7 days). Ask EDITH to send it again.';
+export const OFFLINE = "Can't reach edith. Check you're online and on Tailscale, then tap to retry.";
+const NETWORK = /UnknownHost|Unable to resolve host|ConnectException|Failed to connect|NoRouteToHost|SocketTimeout|timed? ?out|Network request failed|network is unreachable|ENETUNREACH|ECONNREFUSED|EHOSTUNREACH/i;
+
 export function downloadError(e: unknown): string {
-  const msg = e instanceof Error ? e.message : String(e);
-  if (/\b404\b/.test(msg)) return 'No longer on edith (changed, removed or over 7 days old). Ask EDITH to send it again.';
+  const msg = e instanceof Error ? `${e.name} ${e.message}` : String(e);
+  // 404: the id is over 7 days old, or the file changed or went away since (the server can't tell which).
+  if (/\b404\b/.test(msg)) return EXPIRED;
   if (/\b401\b/.test(msg)) return 'edith refused the token. Check Settings → Server connection.';
   if (/abort|cancel/i.test(msg)) return 'Download cancelled.';
+  if (NETWORK.test(msg)) return OFFLINE;
   return "Couldn't download it. Check the connection to edith and try again.";
+}
+
+/** Why the viewer or the share sheet didn't open, said plainly. */
+export function launchError(what: 'open' | 'share', name: string, e: unknown): string {
+  const msg = e instanceof Error ? e.message : String(e);
+  if (/already started|ActivityAlreadyStarted/i.test(msg)) return 'Another app is still opening. Try again in a moment.';
+  return `Couldn't ${what} ${name}${msg ? `: ${msg}` : '.'}`;
 }
 
 export function createReceivedModel({ transport, files }: { transport: Transport; files?: ReceivedFiles }): ReceivedModel {
@@ -187,20 +281,61 @@ export function createReceivedModel({ transport, files }: { transport: Transport
     return job;
   }
 
-  async function saveCopy(file: SentFile, uri: string, again = true): Promise<string | null> {
+  /**
+   * Run `act` on the local copy. When it fails because the copy was pruned meanwhile, download it
+   * again (once) and retry; other failures go to `fail`.
+   */
+  async function withCopy<T>(file: SentFile, uri: string, act: (uri: string) => Promise<T>, fail: (e: unknown) => T, again = true): Promise<T | string> {
     try {
-      const folder = await files!.save(uri, file.name, file.mime);
-      return folder === null ? null : `Saved ${file.name} to ${folder}`;
+      return await act(uri);
     } catch (e) {
       if (again && file.id && !files!.cached({ id: file.id, name: file.name, size: file.size ?? -1 })) {
-        // The downloaded copy was pruned meanwhile: download it again (once), then save.
         setFile(file.id, { status: 'failed', uri: null });
         const fresh = await fetch(file);
-        if (fresh) return saveCopy(file, fresh, false);
+        if (fresh) return withCopy(file, fresh, act, fail, false);
+        const why = store.get().files[file.id]?.error; // the download's own reason (expired, offline)
+        if (why) return why;
       }
-      const why = e instanceof Error && e.message ? e.message : String(e);
-      return `Couldn't save ${file.name}: ${why}`;
+      return fail(e);
     }
+  }
+
+  function saveCopy(file: SentFile, uri: string): Promise<string | null> {
+    return withCopy<string | null>(
+      file,
+      uri,
+      async (u) => {
+        const folder = await files!.save(u, file.name, file.mime);
+        return folder === null ? null : `Saved ${file.name} to ${folder}`;
+      },
+      (e) => `Couldn't save ${file.name}: ${e instanceof Error && e.message ? e.message : String(e)}`,
+    );
+  }
+
+  function shareCopy(file: SentFile, uri: string): Promise<string | null> {
+    return withCopy<string | null>(
+      file,
+      uri,
+      async (u) => {
+        await files!.share!(u, file.name, viewerMime(file.name, file.mime));
+        return null;
+      },
+      (e) => launchError('share', file.name, e),
+    );
+  }
+
+  /** The phone's viewer for it; Share/Save are offered when no app opens the type (or the APK can't open). */
+  function viewCopy(file: SentFile, uri: string): Promise<Outcome> {
+    const mime = viewerMime(file.name, file.mime);
+    const view = files!.view;
+    if (!view) return Promise.resolve({ noViewer: noViewerMessage(file.name) });
+    if (NOT_OPENED.has(mime)) return Promise.resolve({ noViewer: `${file.name} isn't opened from the chat. Share it, or save it to a folder.` });
+    return withCopy<Outcome>(
+      file,
+      uri,
+      async (u) => ((await view(u, mime)) === 'no-app' ? { noViewer: noViewerMessage(file.name) } : null),
+      (e) => launchError('open', file.name, e),
+    );
   }
 
   function unavailable(file: SentFile): string | null {
@@ -212,6 +347,7 @@ export function createReceivedModel({ transport, files }: { transport: Transport
   return {
     store,
     available: !!files,
+    canShare: !!files?.share,
     async open(file) {
       const no = unavailable(file);
       if (no) return no;
@@ -219,13 +355,13 @@ export function createReceivedModel({ transport, files }: { transport: Transport
       if (!uri) return store.get().files[file.id!]?.error ?? null;
       if (disposed) return null;
       const view = viewOf(file);
-      if (view === 'save') return saveCopy(file, uri);
+      if (view === 'external') return viewCopy(file, uri);
       let text: string | null = null;
       if (view === 'text') {
         try {
           text = await files!.readText(uri, TEXT_MAX_BYTES);
         } catch {
-          return saveCopy(file, uri); // not readable as text after all
+          return viewCopy(file, uri); // not readable as text after all
         }
       }
       if (!disposed) store.set((s) => ({ ...s, viewing: { file, uri, view, text } }));
@@ -237,6 +373,14 @@ export function createReceivedModel({ transport, files }: { transport: Transport
       const uri = await fetch(file);
       if (!uri) return store.get().files[file.id!]?.error ?? null;
       return saveCopy(file, uri);
+    },
+    async share(file) {
+      const no = unavailable(file);
+      if (no) return no;
+      if (!files!.share) return 'Sharing needs the latest app update.';
+      const uri = await fetch(file);
+      if (!uri) return store.get().files[file.id!]?.error ?? null;
+      return shareCopy(file, uri);
     },
     prefetch(file) {
       if (!file.id || !files || (file.size ?? Infinity) > THUMB_MAX_BYTES) return;

@@ -1,21 +1,30 @@
-// Adapter: ReceivedFiles (files EDITH sends; contracts/attachments.md §4) on expo-file-system, which
-// the APK already has, so this ships over the air.
+// Adapter: ReceivedFiles (files EDITH sends; contracts/attachments.md §4) on expo-file-system, with
+// expo-intent-launcher (open in the phone's viewer) and expo-sharing (the share sheet).
 //
 // Downloads go to cache/received/<id>/<name>: one folder per id, so two files with the same name never
 // meet, and the name stays the server's. A download first lands in a ".part" file and is moved into
 // place only when complete, so a cut-off download never looks finished. The folder is pruned by age
-// and size at startup (./prune).
+// and size at startup (./prune): nothing older than the server's 7 days stays.
 //
 // Saving uses Android's Storage Access Framework: the folder picker (no storage permission; the
 // picked folder's access is kept across restarts), then a new document there, written in chunks.
 // Android doesn't let the picker choose the Download folder itself; a folder in it (Download/EDITH)
-// is fine. Opening a file in another app would need a FileProvider grant (expo-sharing or
-// expo-intent-launcher, both native): not in this APK yet.
+// is fine.
+//
+// Opening: ACTION_VIEW on the file's content:// uri from expo-file-system's FileProvider (it serves
+// the app's cache), with FLAG_GRANT_READ_URI_PERMISSION, so only the viewer Arpit picks can read, and
+// only that one file (no storage permission). Sharing goes through expo-sharing's own FileProvider and
+// the system share sheet. Both are native modules, loaded only when the APK has them (an APK from
+// before them has neither; its JS never gets this code over the air, as the fingerprint differs).
 
+import { requireOptionalNativeModule } from 'expo';
 import { Directory, File, FileMode, Paths } from 'expo-file-system';
 
 import type { KeyValueStore, ReceivedFiles } from '../../../core/ports';
-import { toPrune } from './prune';
+import { RECEIVED_KEEP_MS, toPrune, usableCopy } from './prune';
+
+const FLAG_GRANT_READ_URI_PERMISSION = 0x00000001; // android.content.Intent
+const ACTION_VIEW = 'android.intent.action.VIEW';
 
 const SAVE_DIR_KEY = 'files.saveDir';
 export const CACHE_GONE = 'the downloaded copy is gone';
@@ -37,6 +46,12 @@ export function folderLost(e: unknown): boolean {
   return /permission|denied|SecurityException/i.test(msg);
 }
 
+/** Whether starting the viewer failed because no app on the phone handles that type. */
+export function noViewerApp(e: unknown): boolean {
+  const msg = e instanceof Error ? `${e.name} ${e.message}` : String(e);
+  return /ActivityNotFound|No Activity found/i.test(msg);
+}
+
 function folderGone(dir: Directory): boolean {
   try {
     return !dir.exists;
@@ -45,8 +60,14 @@ function folderGone(dir: Directory): boolean {
   }
 }
 
+type IntentLauncher = typeof import('expo-intent-launcher');
+type Sharing = typeof import('expo-sharing');
+
 export function createExpoReceivedFiles(data?: KeyValueStore): ReceivedFiles {
   const root = new Directory(Paths.cache, 'received');
+  // Lazily required: both modules throw on import when their native side is missing.
+  const launcher: IntentLauncher | null = requireOptionalNativeModule('ExpoIntentLauncher') ? (require('expo-intent-launcher') as IntentLauncher) : null;
+  const sharing: Sharing | null = requireOptionalNativeModule('ExpoSharing') ? (require('expo-sharing') as Sharing) : null;
 
   function target(id: string, name: string): { dir: Directory; file: File } {
     const dir = new Directory(root, id);
@@ -95,7 +116,9 @@ export function createExpoReceivedFiles(data?: KeyValueStore): ReceivedFiles {
     cached({ id, name, size }) {
       try {
         const { file } = target(id, name);
-        return file.exists && (size < 0 || file.size === size) ? file.uri : null;
+        const exists = file.exists;
+        const copy = { exists, size: exists ? file.size : 0, mtime: exists ? file.lastModified : null };
+        return usableCopy(copy, size, Date.now()) ? file.uri : null;
       } catch {
         return null;
       }
@@ -149,13 +172,34 @@ export function createExpoReceivedFiles(data?: KeyValueStore): ReceivedFiles {
       copyInto(src, dir, name, mime);
       return dir.name || 'your folder';
     },
+    view: launcher
+      ? async (uri, mime) => {
+          const src = new File(uri);
+          if (!src.exists) throw new Error(CACHE_GONE);
+          try {
+            // Resolves when the viewer returns to the app (its result is always "cancelled").
+            await launcher.startActivityAsync(ACTION_VIEW, { data: src.contentUri, type: mime, flags: FLAG_GRANT_READ_URI_PERMISSION });
+            return 'opened';
+          } catch (e) {
+            if (noViewerApp(e)) return 'no-app';
+            throw e;
+          }
+        }
+      : undefined,
+    share: sharing
+      ? async (uri, name, mime) => {
+          const src = new File(uri);
+          if (!src.exists) throw new Error(CACHE_GONE);
+          await sharing.shareAsync(src.uri, { mimeType: mime, dialogTitle: name });
+        }
+      : undefined,
     prune() {
       try {
         if (!root.exists) return;
         const files = root.list().flatMap((d) =>
           d instanceof Directory ? d.list().flatMap((x) => (x instanceof File ? [{ file: x, dir: d, size: x.size, mtime: x.lastModified ?? 0 }] : [])) : [],
         );
-        for (const f of toPrune(files, Date.now())) {
+        for (const f of toPrune(files, Date.now(), RECEIVED_KEEP_MS)) {
           f.file.delete();
           if (f.dir.list().length === 0) f.dir.delete();
         }
