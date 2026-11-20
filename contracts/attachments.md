@@ -155,8 +155,9 @@ event's `files` paths (`message.assistant`, `turn.done`, on the stream and in hi
   (PDF, Office, zip, bigger text, HEIC, audio, video) opens in the phone's own app for its type:
   `ACTION_VIEW` on a `content://` uri from the app's FileProvider with `FLAG_GRANT_READ_URI_PERMISSION`
   (no permission; only that one file, only for that app). The type is the server's `mime`, made specific
-  from the extension when it is `application/octet-stream`; text goes out as `text/plain` (CSV, TSV and
-  HTML keep theirs). An APK is never opened from the chat. When no app opens the type, Arpit is told so
+  from the extension when it is `application/octet-stream`; text goes out as `text/plain` (CSV, TSV,
+  HTML, `text/calendar`, `text/vcard` and `text/x-vcard` keep theirs). App packages are never opened from
+  the chat: the APK type, or a name ending `.apk`, `.apks`, `.xapk`, `.apkm` or `.aab` (any case). When no app opens the type, Arpit is told so
   and offered Share or Save. A long press offers Share (the system share sheet) and Save (a folder Arpit
   picks once with Android's folder picker, e.g. Download/EDITH; no storage permission). The folder is
   asked for again only when it is gone or its access was taken back; any other failure is shown as it is.

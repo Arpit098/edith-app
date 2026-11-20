@@ -101,6 +101,8 @@ const EXT_MIME: Record<string, string> = {
   apk: 'application/vnd.android.package-archive',
   csv: 'text/csv',
   tsv: 'text/tab-separated-values',
+  ics: 'text/calendar',
+  vcf: 'text/vcard',
   html: 'text/html',
   htm: 'text/html',
   svg: 'image/svg+xml',
@@ -130,18 +132,29 @@ function extOf(name: string): string {
  * The type Android's viewer is asked for: the server's type (from the name, contracts/attachments.md
  * §4) without parameters, made specific from the extension when it is generic. Text that would open
  * in the app but is too big goes out as text/plain (few phones have an app for text/markdown or
- * JSON); CSV, TSV and HTML keep theirs (spreadsheet apps and browsers take them).
+ * JSON); CSV, TSV, HTML, calendar and contact files keep theirs (spreadsheet, browser, calendar and
+ * contacts apps take them).
  */
+const KEPT_TEXT = new Set(['text/csv', 'text/tab-separated-values', 'text/html', 'text/calendar', 'text/vcard', 'text/x-vcard']);
+
 export function viewerMime(name: string, mime: string): string {
   let m = (mime.split(';')[0] ?? '').trim().toLowerCase();
   if (!m.includes('/') || m === 'application/octet-stream') m = EXT_MIME[extOf(name)] ?? (TEXT_EXT.test(name) ? 'text/plain' : 'application/octet-stream');
-  if (m === 'text/csv' || m === 'text/html' || m === 'text/tab-separated-values') return m;
+  if (KEPT_TEXT.has(m)) return m;
   if (m.startsWith('text/') || m === 'application/json' || m === 'application/xml') return 'text/plain';
   return m;
 }
 
-/** Types never opened from the chat: an APK would start installing an app. Share or Save instead. */
+/**
+ * Never opened from the chat (Share or Save instead): an app package would start installing an app.
+ * By type, and by name whatever type the server gave (split APKs, bundles and store formats).
+ */
 const NOT_OPENED = new Set(['application/vnd.android.package-archive']);
+const NOT_OPENED_EXT = /\.(apk|apks|xapk|apkm|aab)$/i;
+
+export function neverOpened(name: string, mime: string): boolean {
+  return NOT_OPENED.has(mime) || NOT_OPENED_EXT.test(name);
+}
 
 /** What Arpit is told when no app on the phone opens a file's type. */
 export function noViewerMessage(name: string): string {
@@ -329,7 +342,7 @@ export function createReceivedModel({ transport, files }: { transport: Transport
     const mime = viewerMime(file.name, file.mime);
     const view = files!.view;
     if (!view) return Promise.resolve({ noViewer: noViewerMessage(file.name) });
-    if (NOT_OPENED.has(mime)) return Promise.resolve({ noViewer: `${file.name} isn't opened from the chat. Share it, or save it to a folder.` });
+    if (neverOpened(file.name, mime)) return Promise.resolve({ noViewer: `${file.name} isn't opened from the chat. Share it, or save it to a folder.` });
     return withCopy<Outcome>(
       file,
       uri,

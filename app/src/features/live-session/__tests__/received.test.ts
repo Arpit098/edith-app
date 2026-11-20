@@ -11,6 +11,7 @@ import {
   EXPIRED,
   isNoViewer,
   launchError,
+  neverOpened,
   noViewerMessage,
   OFFLINE,
   ROW_MAX_CHARS,
@@ -93,6 +94,22 @@ describe('viewerMime', () => {
     expect(viewerMime('data.csv', 'text/csv')).toBe('text/csv');
     expect(viewerMime('data.tsv', 'application/octet-stream')).toBe('text/tab-separated-values');
     expect(viewerMime('page.html', 'text/html; charset=utf-8')).toBe('text/html');
+  });
+
+  it('keeps calendar and contact types for their apps', () => {
+    expect(viewerMime('invite.ics', 'text/calendar; charset=utf-8')).toBe('text/calendar');
+    expect(viewerMime('invite.ics', 'application/octet-stream')).toBe('text/calendar');
+    expect(viewerMime('arpit.vcf', 'text/vcard')).toBe('text/vcard');
+    expect(viewerMime('arpit.vcf', 'text/x-vcard')).toBe('text/x-vcard');
+    expect(viewerMime('arpit.vcf', 'application/octet-stream')).toBe('text/vcard');
+  });
+});
+
+describe('neverOpened', () => {
+  it('refuses app packages by type or by extension, any case', () => {
+    expect(neverOpened('x.bin', 'application/vnd.android.package-archive')).toBe(true);
+    for (const n of ['a.apk', 'A.APK', 'b.apks', 'c.XAPK', 'd.apkm', 'e.aab', 'F.Aab']) expect(neverOpened(n, 'application/zip')).toBe(true);
+    for (const n of ['a.pdf', 'apk.txt', 'notes.apk.md', 'x.aabb', 'grab']) expect(neverOpened(n, 'application/pdf')).toBe(false);
   });
 });
 
@@ -333,6 +350,13 @@ describe('createReceivedModel', () => {
     f.finish();
     const o = await opened;
     expect(isNoViewer(o) && o.noViewer).toMatch(/isn't opened from the chat/);
+    expect(f.viewed).toEqual([]);
+    // A store-format package the server calls a zip: not opened either.
+    const xapk = m.open({ id: 'c'.repeat(32), name: 'Game.XAPK', size: 5, mime: 'application/zip', error: null });
+    await flush();
+    f.finish();
+    const ox = await xapk;
+    expect(isNoViewer(ox) && ox.noViewer).toMatch(/isn't opened from the chat/);
     expect(f.viewed).toEqual([]);
     // Without the viewer module (an older APK) any document offers Share/Save too.
     f.port.view = undefined;
